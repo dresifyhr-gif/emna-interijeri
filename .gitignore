@@ -22,3 +22,6 @@ yarn-error.log*
 
 # Claude
 .claude/
+.vercel
+.superpowers/
+*.tsbuildinfo

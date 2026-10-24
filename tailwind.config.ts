@@ -2,40 +2,48 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: [
-    "./pages/**/*.{js,ts,jsx,tsx,mdx}",
-    "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./lib/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
       fontFamily: {
-        serif: ["var(--font-raleway)", "system-ui", "sans-serif"],
-        sans: ["var(--font-dm-sans)", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "system-ui", "sans-serif"],
+        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
       },
       colors: {
+        // dark "studio" surfaces
+        ink: {
+          DEFAULT: "#0B0B0C",
+          900: "#060607",
+          800: "#0B0B0C",
+          700: "#111113",
+          600: "#18181B",
+          500: "#222226",
+        },
+        // warm light "paper" surfaces
+        paper: {
+          DEFAULT: "#EEEAE3",
+          dark: "#E4DED3",
+          line: "#CFC7B9",
+        },
+        fg: "#F2EFE9", // text on dark
+        mut: {
+          DEFAULT: "#8F897E", // muted text on dark
+          paper: "#6D675D", // muted text on paper
+        },
         accent: {
           DEFAULT: "#C9B99A",
-          light: "#E5D9CB",
-          dark: "#A89278",
+          deep: "#8A7A5C", // accent on paper
         },
-        brand: {
-          black: "#0A0A0A",
-          dark: "#1A1A1A",
-          mid: "#3A3A3A",
-        },
-        stone: {
-          50: "#FAFAF8",
-          75: "#F5F0EB",
-          100: "#F0EDE8",
-          200: "#E8E4DF",
-          300: "#D8D4CE",
-          400: "#B8B4AE",
-          500: "#98948E",
-          600: "#78746E",
-          700: "#58544E",
-          800: "#38342E",
-          900: "#18140E",
-        },
+      },
+      letterSpacing: {
+        tightest: "-0.04em",
+        label: "0.28em",
+      },
+      transitionTimingFunction: {
+        premium: "cubic-bezier(.2,.8,.2,1)",
       },
     },
   },
