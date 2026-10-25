@@ -55,6 +55,19 @@ export function useEngineView(apiRef: RefObject<StudioEngineApi | null>, live: b
   }, [apiRef, live]);
 }
 
+/**
+ * A question pinned to the foot of a scrolling picker (position: sticky) must not hide the tile it asks about: scroll
+ * the nearest scrolling ancestor of `tile` just enough that the tile sits above `bar` (no-op when it already does).
+ */
+export function keepAbove(tile: HTMLElement | null, bar: HTMLElement | null, gap = 10): void {
+  if (!tile || !bar) return;
+  let box: HTMLElement | null = tile.parentElement;
+  while (box && !(box.scrollHeight > box.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+  if (!box) return;
+  const over = tile.getBoundingClientRect().bottom - bar.getBoundingClientRect().top + gap;
+  if (over > 0) box.scrollTop += over;
+}
+
 /** focus is in a text field (keyboard shortcuts must leave it alone) */
 export function isTyping(el: EventTarget | null): boolean {
   const h = el as HTMLElement | null;

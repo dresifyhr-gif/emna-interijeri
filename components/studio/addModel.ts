@@ -1,12 +1,12 @@
 /**
  * What the add picker (AddPicker.tsx) shows, as plain data — kept apart from React so it is tested
- * (lib/studio/ui.test.ts): the widths offered as chips and the one preselected, the six common elements first and the
- * rest grouped for "Više elemenata", and the width each tile gets.
+ * (lib/studio/ui.test.ts): the widths offered as chips and the one preselected, the six common elements first (a tall
+ * unit among them whenever one fits) and the rest grouped for "Više elemenata", and the width each tile gets.
  */
 import { groupsFor, type TypeChoice } from "@/lib/studio/edit";
 import type { PlanGap } from "@/lib/studio/plan";
 
-/** a type the picker offers; `tall` = a tall unit (at a run's end, next to base cabinets) */
+/** a type the picker offers; `tall` = a tall unit standing in a wall's base run (insert with zone "tall") */
 export interface AddItem {
   t: TypeChoice;
   tall: boolean;
@@ -80,6 +80,13 @@ export function addModel(items: AddItem[], zone: AddZone, stretch: number | null
     if (!top.includes(it)) top.push(it);
   }
   const shown = top.slice(0, SHOWN);
+  // a tall unit fits here: one of them is always among the common tiles (the owner: "na plusić stisnuti i staviti stup"),
+  // the most common first, in place of the last tile
+  if (shown.length === SHOWN && !shown.some((it) => it.tall)) {
+    const tall = fit.filter((it) => it.tall);
+    const pick = COMMON.tall.map((id) => tall.find((it) => it.t.id === id)).find(Boolean) ?? tall[0];
+    if (pick) shown[SHOWN - 1] = pick;
+  }
   const rest = fit.filter((it) => !shown.includes(it));
   const names = new Map<string, string>(groupsFor(zone === "island" ? "base" : zone).map((g) => [g.id, g.name]));
   const groups: AddModel["groups"] = [];
@@ -93,7 +100,7 @@ export function addModel(items: AddItem[], zone: AddZone, stretch: number | null
   return { fit, chips, best, top: shown, rest, groups };
 }
 
-/** the list a picker of a row offers: its own types, and at a run's end the tall units after them */
+/** the list a picker of a row offers: its own types, and in a wall's base row the tall units after them */
 export const addItems = (types: TypeChoice[], tall: TypeChoice[] = []): AddItem[] => [
   ...types.map((t) => ({ t, tall: false })),
   ...tall.map((t) => ({ t, tall: true })),

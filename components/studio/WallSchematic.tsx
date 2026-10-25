@@ -128,15 +128,17 @@ export function WallSchematic({ plan, focus, className = "" }: { plan: KitchenPl
         const on = hot(`k-${r.wall}`) || hot(r.wall);
         return (
           <g key={r.wall}>
-            {r.worktop && (
+            {/* the worktop's pieces (a tall unit standing in the run interrupts it — RunPlan.worktops) */}
+            {(r.worktops ?? (r.worktop ? [r.worktop] : [])).map((w, i) => (
               <polygon
-                points={band(r.wall, r.worktop.from, r.worktop.to, 0, DIM.baseDepth)}
+                key={`w${i}`}
+                points={band(r.wall, w.from, w.to, 0, DIM.baseDepth)}
                 fill={on ? "rgba(201,185,154,.2)" : "rgba(201,185,154,.1)"}
                 stroke={on ? "rgba(201,185,154,.75)" : "rgba(201,185,154,.38)"}
                 strokeWidth="0.75"
                 style={{ transition: "fill .4s cubic-bezier(.2,.8,.2,1), stroke .4s cubic-bezier(.2,.8,.2,1)" }}
               />
-            )}
+            ))}
             {r.talls.map((t, i) => (
               <polygon
                 key={i}

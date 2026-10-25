@@ -9,6 +9,10 @@
  * is a pure function of the config; <Studio> applies the result, follows the element to its new id and keeps an
  * undo step.
  *
+ * A base cabinet or wall unit of a wall run can become a tall unit ("Visoki element umjesto ovoga" — it takes the place
+ * of both; when that takes another element away, one short line asks first, tallSwap.ts) and gets tall units beside
+ * it under "Dodaj lijevo / desno"; a tall unit standing in the run can become a base cabinet again.
+ *
  * "Left" and "right" are always the left and right of the drawing at the top (the island is mirrored so this
  * matches the default 3D view, see meta.isFlipped).
  */
@@ -48,12 +52,13 @@ import {
   UndoIcon,
 } from "./icons";
 import { ChipRadio } from "./controls";
-import { EASE, isFlipped, islandOf, noRoomText, rowSlots, runName, sideHint, slotPlace, wallEndName } from "./meta";
-import { AddPicker, addItems } from "./AddPicker";
-import { moveFocus } from "./overlay";
+import { EASE, isFlipped, isInRunTall, islandOf, noRoomText, rowOf, rowSlots, runName, sideHint, slotPlace, wallEndName } from "./meta";
+import { AddPicker, addItems, type AddItem } from "./AddPicker";
+import { keepAbove, moveFocus } from "./overlay";
 import { PriceBlock } from "./Price";
 import { RunElevation } from "./RunElevation";
 import s from "./studio.module.css";
+import { baseChoices, tallSwap } from "./tallSwap";
 
 export interface EditNote {
   text: string;
@@ -134,9 +139,25 @@ export function ElementEditor({
   // "add an element" picker, open for one element only (an edit or another element closes it)
   const [adding, setAdding] = useState<{ id: string; side: Side } | null>(null);
   const addSide = adding && adding.id === slotId ? adding.side : null;
+  /** a tall unit picked that takes another element away: the question waiting for its one click */
+  const [ask, setAsk] = useState<{ id: string; cfg: KitchenConfig; type: string; text: string; essentials: string[] } | null>(null);
+  const asking = ask && ask.id === slotId && ask.cfg === cfg ? ask : null;
+  const askRef = useRef<HTMLButtonElement>(null);
+  const askingType = asking?.type ?? null;
 
   const own = useMemo(() => (shared !== undefined ? null : slotEditInfo(cfg, slotId)), [shared, cfg, slotId]);
   const info = shared !== undefined ? (shared && shared.slot.id === slotId ? shared : null) : own;
+  // a tall unit standing in a base run: the base cabinets it can become again
+  const backTypes = useMemo(() => (info && isInRunTall(info.slot) ? baseChoices(cfg, info.slot) : []), [cfg, info]);
+
+  // the question before a tall unit takes another element away: focus on its "Da, zamijeni" (Enter confirms)
+  useEffect(() => {
+    if (!askingType) return;
+    askRef.current?.focus({ preventScroll: true });
+    // the tile it asks about stays in view above the question pinned to the foot of the editor's body
+    const bar = askRef.current?.closest<HTMLElement>('[role="group"]') ?? null;
+    keepAbove(bar?.parentElement?.querySelector<HTMLElement>("[data-asking]") ?? null, bar);
+  }, [askingType]);
 
   useEffect(() => {
     if (focusKey > 0) titleRef.current?.focus({ preventScroll: true });
@@ -163,7 +184,8 @@ export function ElementEditor({
   const name = slot.corner && def && !def.corner ? `Kutni element: ${lower(def.name)}` : (def?.name ?? "Element");
   const spacer = Boolean(def?.spacer);
   const flip = isFlipped(slot.run);
-  const row = rowSlots(plan.slots, slot.run, slot.zone);
+  const inRunTall = isInRunTall(slot);
+  const row = rowSlots(plan.slots, slot.run, rowOf(slot).zone);
   const idx = row.findIndex((x) => x.id === slot.id);
   const prev = idx > 0 ? row[idx - 1] : null;
   const next = idx >= 0 && idx < row.length - 1 ? row[idx + 1] : null;
@@ -171,21 +193,25 @@ export function ElementEditor({
   const width = Math.round(slot.width);
 
   /** the four directional actions, mapped to the drawing's left / right */
+  const tallZone = (tall?: boolean) => (tall ? ("tall" as const) : undefined);
   const side = {
     left: {
       canMove: flip ? info.canMoveRight : info.canMoveLeft,
       move: () => (flip ? moveRight : moveLeft)(cfg, slot.id),
       options: flip ? info.insertAfter : info.insertBefore,
-      insert: (type: string, w?: number) => (flip ? insertAfter : insertBefore)(cfg, slot.id, type, w),
+      /** tall units that can stand there in the base run (insert with zone "tall") */
+      tall: flip ? info.insertAfterTall : info.insertBeforeTall,
+      insert: (type: string, w?: number, tall?: boolean) => (flip ? insertAfter : insertBefore)(cfg, slot.id, type, w, tallZone(tall)),
     },
     right: {
       canMove: flip ? info.canMoveLeft : info.canMoveRight,
       move: () => (flip ? moveLeft : moveRight)(cfg, slot.id),
       options: flip ? info.insertBefore : info.insertAfter,
-      insert: (type: string, w?: number) => (flip ? insertBefore : insertAfter)(cfg, slot.id, type, w),
+      tall: flip ? info.insertBeforeTall : info.insertAfterTall,
+      insert: (type: string, w?: number, tall?: boolean) => (flip ? insertBefore : insertAfter)(cfg, slot.id, type, w, tallZone(tall)),
     },
   };
-  const canAdd = (sd: Side) => side[sd].options.some((o) => o.width !== null);
+  const canAdd = (sd: Side) => [...side[sd].options, ...side[sd].tall].some((o) => o.width !== null);
   const noRoom = noRoomText(slot, info.free);
 
   const widthOf = (r: EditResult) => (r.slotId ? planKitchen(r.cfg).slots.find((x) => x.id === r.slotId)?.width : undefined);
@@ -204,8 +230,30 @@ export function ElementEditor({
     const r = side[sd].move();
     onEdit(r, { say: `Pomaknuto ${sd === "left" ? "lijevo" : "desno"}.` });
   };
-  const doInsert = (sd: Side, t: TypeChoice, width?: number) => {
-    const r = side[sd].insert(t.id, width);
+  /** the tall unit in this element's place; when that takes another element away, ask first (a second press confirms) */
+  const pickTall = (t: TypeChoice, confirmed = false) => {
+    if (t.width === null) {
+      setAsk(null);
+      refuse(changeType(cfg, slot.id, t.id, "tall").warning ?? `${t.name} ovdje ne stane.`);
+      return;
+    }
+    const sw = tallSwap(cfg, plan, slot, t.id);
+    if (!sw.result.ok) {
+      setAsk(null);
+      refuse(sw.result.warning ?? `${t.name} ovdje ne stane.`);
+      return;
+    }
+    if (sw.ask && !confirmed && askingType !== t.id) {
+      setAsk({ id: slot.id, cfg, type: t.id, text: sw.ask, essentials: sw.essentials });
+      return;
+    }
+    setAsk(null);
+    const w = widthOf(sw.result);
+    // like an edit on the kitchen itself: the toast says what went and offers "Poništi"
+    onEdit(sw.result, { toast: `${t.name}${w ? `, ${Math.round(w)} cm` : ""}.` });
+  };
+  const doInsert = (sd: Side, { t, tall }: AddItem, width?: number) => {
+    const r = side[sd].insert(t.id, width, tall);
     const w = widthOf(r);
     if (onEdit(r, { say: `Dodan element ${sd === "left" ? "lijevo" : "desno"}: ${lower(t.name)}${w ? `, ${Math.round(w)} cm` : ""}.` })) {
       setAdding(null);
@@ -234,7 +282,7 @@ export function ElementEditor({
   const tallList = slot.zone === "tall" && slot.list && isTallList(slot.list.id) ? (slot.list.id as "tall" | TallListId) : null;
   const ownColumn = tallList !== null && tallList !== "tall";
   const resetLabel =
-    slot.zone === "tall"
+    slot.zone === "tall" && !inRunTall
       ? ownColumn
         ? "Ukloni ovaj visoki stup"
         : "Vrati zadani visoki stup"
@@ -251,7 +299,8 @@ export function ElementEditor({
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
       e.stopPropagation();
-      if (addSide) setAdding(null);
+      if (asking) setAsk(null);
+      else if (addSide) setAdding(null);
       else onClose();
     }
   };
@@ -315,7 +364,8 @@ export function ElementEditor({
   const noteBox = (
     <div aria-live="polite" aria-atomic="true" className={`shrink-0 ${desktop ? "px-7" : "px-4"}`}>
       <AnimatePresence initial={false} mode="popLayout">
-        {note && (
+        {/* while a tall unit's question is open it is the one thing to read (an earlier refusal would contradict it) */}
+        {note && !asking && (
           <motion.p
             key={note.n}
             initial={{ opacity: 0, height: 0 }}
@@ -350,10 +400,68 @@ export function ElementEditor({
     </Section>
   );
 
+  // a base cabinet / wall unit of a wall run: a tall unit in its place (the one below / above it goes too — asked first)
+  const tallTiles =
+    info.tall.length > 0 ? (
+      <Section title="Visoki element umjesto ovoga" id={`${titleId}-tall`}>
+        <Tiles labelledBy={`${titleId}-tall`} items={info.tall} zone="tall" strip={!desktop} badge="visoki" pressedId={askingType} onPick={(t) => pickTall(t)} />
+        {asking ? (
+          // pinned to the foot of the scrolling body while the tiles are in view, so it is seen wherever the tile was
+          <div
+            role="group"
+            aria-label="Potvrda zamjene"
+            className="sticky bottom-2 z-[1] mt-3 rounded-xl border border-accent/30 bg-[rgba(24,23,22,0.97)] px-3 py-2.5 shadow-[0_-12px_30px_-12px_rgba(0,0,0,.8)] backdrop-blur-md"
+          >
+            <p aria-live="assertive" className="text-[12.5px] font-medium leading-snug text-fg">
+              {asking.text}
+            </p>
+            {asking.essentials.length > 0 && <p className="mt-1 text-[11.5px] leading-snug text-[#E9AE9C]">Uklanja se i {asking.essentials.join(", ")}.</p>}
+            <div className="mt-2.5 flex items-center gap-2">
+              <button
+                ref={askRef}
+                type="button"
+                onClick={() => {
+                  const t = info.tall.find((x) => x.id === asking.type);
+                  if (t) pickTall(t, true);
+                }}
+                className="h-10 rounded-full bg-accent px-4 text-[12.5px] font-semibold tracking-wide text-ink transition-colors duration-300 ease-premium hover:bg-fg"
+              >
+                Da, zamijeni
+              </button>
+              <button
+                type="button"
+                onClick={() => setAsk(null)}
+                className="h-10 rounded-full px-3 text-[12.5px] font-medium text-mut transition-colors duration-300 hover:text-fg"
+              >
+                Odustani
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 text-[11.5px] leading-snug text-mut">Visoki element stoji od poda do vrha — na njegovom mjestu nema donjeg ni gornjeg elementa.</p>
+        )}
+      </Section>
+    ) : null;
+
+  // a tall unit standing in the run: a base cabinet in its place again
+  const backTiles =
+    backTypes.length > 0 ? (
+      <Section title="Donji element umjesto ovoga" id={`${titleId}-back`}>
+        <Tiles
+          labelledBy={`${titleId}-back`}
+          items={backTypes}
+          zone="base"
+          strip={!desktop}
+          onPick={(t) => (t.width === null ? refuse(notFit(t, info.free, changeType(cfg, slot.id, t.id).warning)) : pickType(t))}
+        />
+      </Section>
+    ) : null;
+
   const widthChips =
     info.widths.length > 1 ? (
       <Section title="Širina" id={`${titleId}-widths`}>
-        <div role="group" aria-labelledby={`${titleId}-widths`} className={`flex gap-1.5 ${desktop ? "flex-wrap" : `${s.noScrollbar} -mx-4 overflow-x-auto px-4`}`}>
+        {/* every width in view, on a phone too (a sideways scroll hid the wider ones behind the edge) */}
+        <div role="group" aria-labelledby={`${titleId}-widths`} className="flex flex-wrap gap-1.5">
           <WidthChips
             widths={info.widths}
             onPick={(w, fits) => (fits ? pickWidth(w) : refuse(changeWidth(cfg, slot.id, w).warning ?? `Za ${w} cm nema mjesta.`))}
@@ -504,7 +612,7 @@ export function ElementEditor({
       </div>
       <p className="mt-2 text-[12px] leading-relaxed text-mut">
         {info.free >= 1
-          ? `${slot.zone === "tall" ? "U visokom stupu" : "Na ovom nizu"} slobodno je još ${Math.floor(info.free)} cm.`
+          ? `${slot.zone === "tall" && !inRunTall ? "U visokom stupu" : "Na ovom nizu"} slobodno je još ${Math.floor(info.free)} cm.`
           : "Novi element zauzima slobodan prostor do njega."}
       </p>
       <div
@@ -518,11 +626,11 @@ export function ElementEditor({
       >
         <AddPicker
           key={`${slot.id}-${addSide}`}
-          items={addItems(side[addSide].options)}
+          items={addItems(side[addSide].options, side[addSide].tall)}
           zone={slot.zone}
           stretch={info.free >= 15 ? info.free : null}
           docked={!desktop}
-          onPick={(it, w) => doInsert(addSide, it.t, w)}
+          onPick={(it, w) => doInsert(addSide, it, w)}
         />
       </div>
     </div>
@@ -565,6 +673,8 @@ export function ElementEditor({
         {addPanel || (
           <>
             {typeTiles}
+            {tallTiles}
+            {backTiles}
             {widthChips}
             {actions}
             {placeSection}
@@ -663,6 +773,8 @@ function Tiles({
   zone,
   strip,
   pressed = false,
+  pressedId = null,
+  badge,
   labelledBy,
   onPick,
 }: {
@@ -672,6 +784,10 @@ function Tiles({
   strip: boolean;
   /** the tiles are a choice with a current one (aria-pressed) */
   pressed?: boolean;
+  /** a tile shown pressed (its question is open) */
+  pressedId?: string | null;
+  /** a small pill before each tile's width ("visoki") */
+  badge?: string;
   labelledBy: string;
   onPick: (t: TypeChoice) => void;
 }) {
@@ -701,6 +817,7 @@ function Tiles({
       {items.map((t, i) => {
         const fits = t.width !== null;
         const sub = t.current ? "odabrano" : fits ? `${t.width} cm` : "ne stane";
+        const on = t.current || pressedId === t.id;
         return (
           <button
             key={t.id}
@@ -708,7 +825,9 @@ function Tiles({
               refs.current[i] = el;
             }}
             type="button"
-            aria-pressed={pressed ? t.current : undefined}
+            aria-pressed={pressed || pressedId !== null ? on : undefined}
+            data-asking={(pressedId !== null && pressedId === t.id) || undefined}
+            aria-label={badge ? `${t.name}, ${badge} element, ${sub}` : undefined}
             aria-disabled={!fits || undefined}
             tabIndex={i === tabIdx ? 0 : -1}
             title={t.description}
@@ -723,7 +842,7 @@ function Tiles({
             className={`group relative flex flex-col items-center rounded-xl border px-1.5 pb-2 pt-2.5 text-center transition-[border-color,background-color] duration-300 ease-premium ${
               strip ? "w-[92px] shrink-0 snap-start" : ""
             } ${
-              t.current
+              on
                 ? "border-accent/70 bg-accent/[0.09]"
                 : fits
                   ? "border-white/[0.08] bg-white/[0.015] hover:border-white/25 hover:bg-white/[0.04]"
@@ -736,7 +855,10 @@ function Tiles({
               className={`h-9 w-9 transition-colors duration-300 ${t.current ? "text-accent" : "text-fg/65 group-hover:text-fg"}`}
             />
             <span className={`mt-1.5 line-clamp-2 min-h-[2.4em] text-[11.5px] leading-[1.2] ${t.current ? "text-fg" : "text-fg/80"}`}>{t.name}</span>
-            <span className={`mt-1 text-[10.5px] tabular-nums leading-none ${t.current ? "text-accent" : "text-mut"}`}>{sub}</span>
+            <span className={`mt-1 flex flex-wrap items-center justify-center gap-x-1 gap-y-1 text-[10.5px] tabular-nums leading-none ${t.current ? "text-accent" : "text-mut"}`}>
+              {badge && <span className={s.tileBadge}>{badge}</span>}
+              <span className="whitespace-nowrap">{sub}</span>
+            </span>
           </button>
         );
       })}

@@ -41,12 +41,13 @@ const ZONE_FRONT_LABEL: Record<FrontZone, string> = {
 /**
  * Friendly name of a plan slot for people (owner e-mail, studio summary):
  * "a-base-1" → "Zid A · 2. donji slijeva", "tall-0" → "Visoki stup · 1. slijeva",
+ * "a-tall-0" → "Zid A · 1. visoki slijeva" (a tall unit standing in the base run),
  * "isl-1" → "Otok · 2. slijeva". Counted left → right, standing in the room facing that wall
  * (the island from the wall-A side). Unknown ids come back as "Element <id>".
  */
 export function slotName(id: string, layout?: Layout): string {
-  const m = /^([abc])-(base|upper)-(\d+)$/.exec(id);
-  if (m) return `Zid ${m[1].toUpperCase()} · ${Number(m[3]) + 1}. ${m[2] === "base" ? "donji" : "gornji"} slijeva`;
+  const m = /^([abc])-(base|upper|tall)-(\d+)$/.exec(id);
+  if (m) return `Zid ${m[1].toUpperCase()} · ${Number(m[3]) + 1}. ${m[2] === "base" ? "donji" : m[2] === "tall" ? "visoki" : "gornji"} slijeva`;
   const t = /^tall-(\d+)$/.exec(id);
   if (t) return `Visoki stup · ${Number(t[1]) + 1}. slijeva`;
   // a KitchenConfig.tallRuns column: "tall-bl-0" = wall B, left end
@@ -111,8 +112,11 @@ export function composition(cfg: KitchenConfig, plan: KitchenPlan = planKitchen(
   for (const l of plan.lists) {
     const run = isTallList(l.id) || l.id === "isl" ? null : (l.id[0] as WallId);
     const zone: SlotZone = l.zone;
+    // a wall's base row: its corner units, its cabinets and the tall units standing in it (CabinetSpec.tall)
     const slots = plan.slots
-      .filter((s) => (isTallList(l.id) ? s.zone === "tall" && s.list?.id === l.id : l.id === "isl" ? s.zone === "island" : s.run === run && s.zone === zone))
+      .filter((s) =>
+        isTallList(l.id) ? s.zone === "tall" && s.list?.id === l.id : l.id === "isl" ? s.zone === "island" : s.run === run && (s.zone === zone || (s.list?.id === l.id && s.zone === "tall")),
+      )
       .sort((p, q) => p.x - q.x);
     if (!slots.length) continue;
     const edited = l.explicit || slots.some((s) => s.cornerId && c.corners?.[s.cornerId]);
@@ -310,6 +314,11 @@ export function summarize(cfg: KitchenConfig): string[] {
     if (!tallListEnd(l.id)) continue;
     const names = tallNames(l.id);
     if (names.length) lines.push(`${tallLabel(l.id)}: ${names.join(", ")}`);
+  }
+  // tall units standing in a wall's base run (between its cabinets)
+  for (const w of plan.walls) {
+    const names = tallNames(w);
+    if (names.length) lines.push(`Visoki elementi u nizu uz zid ${WALL_NAME[w]}: ${names.join(", ")}`);
   }
 
   const led = finishDef("leds", c.finish?.led ?? FINISH_DEFAULTS.led)?.name.toLowerCase();

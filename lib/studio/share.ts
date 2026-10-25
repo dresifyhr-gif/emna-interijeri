@@ -8,7 +8,9 @@
  *   └ verzija
  *
  *   then only what differs from the defaults, one `key-value` field each:
- *     ra / rb / rc / ri   base run of wall A / B / C / the island: type codes + widths, "l60s80d60" ("0" = empty)
+ *     ra / rb / rc / ri   base run of wall A / B / C / the island: type codes + widths, "l60s80d60" ("0" = empty); a tall
+ *                         unit standing in a wall's run (CabinetSpec.tall) is its tall code after a capital T ("l60Tr60d60"
+ *                         = drawers, a fridge column, the dishwasher), the filler strip at a wall / corner end "f3"
  *     ua / ub / uc        wall units of wall A / B / C (same)
  *     t                   tall column, left → right (same)
  *     kbl kbr kul kur     blind-corner type codes (base-l, base-r, upper-l, upper-r)
@@ -147,8 +149,9 @@ function encodeList(list: CabinetSpec[], zone: ModuleZone): string {
   if (!list.length) return "0";
   return list
     .map((e) => {
-      const code = moduleDef(zone, e.type)?.code;
-      return code ? `${code}${Math.round(e.width)}` : "";
+      // a tall unit standing in a base run: "T" + its tall code
+      const code = moduleDef(e.tall ? "tall" : zone, e.type)?.code;
+      return code ? `${e.tall ? "T" : ""}${code}${Math.round(e.width)}` : "";
     })
     .join("");
 }
@@ -156,11 +159,13 @@ function encodeList(list: CabinetSpec[], zone: ModuleZone): string {
 function decodeList(s: string, zone: ModuleZone): CabinetSpec[] {
   if (s === "0") return [];
   const out: CabinetSpec[] = [];
-  const re = /([a-z]+)(\d{1,3})/g;
+  const re = /(T?)([a-z]+)(\d{1,3})/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(s)) && out.length < 40) {
-    const def = moduleByCode(zone, m[1]);
-    if (def) out.push({ type: def.id, width: Number(m[2]) });
+    const tall = m[1] === "T";
+    // (sanitizeConfig drops a tall unit from any list but a wall's base run)
+    const def = moduleByCode(tall ? "tall" : zone, m[2]);
+    if (def) out.push(tall ? { type: def.id, width: Number(m[3]), tall: true } : { type: def.id, width: Number(m[3]) });
   }
   return out;
 }

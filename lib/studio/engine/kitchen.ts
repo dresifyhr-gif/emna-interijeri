@@ -28,6 +28,8 @@ export interface RunRT {
   worktop: THREE.Group | null;
   worktopFrom: number;
   worktopTo: number;
+  /** wall runs: the worktop's pieces (m, run-local) — a tall unit standing in the run interrupts it (RunPlan.worktops) */
+  worktopPieces?: [number, number][];
   wall: THREE.Group | null;
   /** counter centre (m, run-local) for door hinge decisions */
   center: number;
@@ -808,25 +810,40 @@ export function syncKitchenLabels(K: KitchenRT, plan: KitchenPlan): boolean {
 
 const surfacesOf = (run: RunRT) => (run.surfaces ??= { backsplash: null, plinthLed: null, shadow: null, floor: null });
 
-/** the worktop of a wall run with its sink cut-outs, into the run's group (null without a worktop) */
+/** the worktop pieces of a wall run (m, run-local): RunPlan.worktops — a plan of an older shape: its one range */
+const worktopPiecesOf = (r: RunPlan): [number, number][] =>
+  (r.worktops ?? (r.worktop ? [r.worktop] : [])).map((p): [number, number] => [cm(p.from), cm(p.to)]);
+
+/** one mesh of worktop boxes over `pieces` (m, run-local) with the sink cut-outs, relative to the group at `from` */
+function worktopMesh(K: KitchenRT, runId: RunId, pieces: [number, number][], from: number, top: THREE.Material): THREE.Mesh {
+  const { topY: TOP_Y, workY: WORK_Y } = heightsOf(K.plan);
+  const holes = [...K.modules.values()]
+    .filter((m) => m.slot.run === runId && m.hole)
+    .map((m) => ({ x0: m.hole!.x0 - from, x1: m.hole!.x1 - from, z0: m.hole!.z0, z1: m.hole!.z1 }));
+  const specs = pieces.flatMap(([a, b]) => slabWithHoles(a - from, b - from, TOP_Y, WORK_Y, 0, D.worktopDepth, holes));
+  return mesh(boxes(specs, [from, 0, 0]), top);
+}
+
+/**
+ * the worktop of a wall run with its sink cut-outs, into the run's group (null without a worktop): one mesh over its
+ * pieces (a tall unit standing in the run interrupts it), the group at its first piece (it grows from there)
+ */
 function worktopGroup(K: KitchenRT, r: RunPlan, top: THREE.Material): THREE.Group | null {
   const run = K.runs.get(r.wall);
-  if (!run || !r.worktop) return null;
-  const { topY: TOP_Y, workY: WORK_Y } = heightsOf(K.plan);
-  const from = cm(r.worktop.from);
-  const to = cm(r.worktop.to);
+  const pieces = worktopPiecesOf(r);
+  if (!run || !pieces.length) return null;
+  const from = pieces[0][0];
+  const to = pieces[pieces.length - 1][1];
   const g = new THREE.Group();
   g.position.x = from;
-  const holes = [...K.modules.values()]
-    .filter((m) => m.slot.run === r.wall && m.hole)
-    .map((m) => ({ x0: m.hole!.x0 - from, x1: m.hole!.x1 - from, z0: m.hole!.z0, z1: m.hole!.z1 }));
-  const wt = mesh(boxes(slabWithHoles(0, to - from, TOP_Y, WORK_Y, 0, D.worktopDepth, holes), [from, 0, 0]), top);
+  const wt = worktopMesh(K, r.wall, pieces, from, top);
   g.add(wt);
   K.tops.push(wt);
   run.group.add(g);
   run.worktop = g;
   run.worktopFrom = from;
   run.worktopTo = to;
+  run.worktopPieces = pieces;
   return g;
 }
 
@@ -846,20 +863,26 @@ function backsplashGroup(K: KitchenRT, r: RunPlan, top: THREE.Material): THREE.G
   return bg;
 }
 
-/** the LED strip in the plinth along the base cabinets (plan RunPlan.counter) */
+/**
+ * the LED strip in the plinth along the base cabinets (plan RunPlan.counters: one strip per stretch between the tall
+ * units standing in the run), in one group at the first strip (it grows from there)
+ */
 function plinthLedGroup(K: KitchenRT, r: RunPlan, mats: Materials): THREE.Group | null {
   const run = K.runs.get(r.wall);
-  if (!run || !r.counter) return null;
-  const x0 = cm(r.counter.from) + 0.02;
-  const x1 = cm(r.counter.to) - 0.02;
-  if (x1 - x0 <= 0.2) return null;
+  const ranges = (r.counters ?? (r.counter ? [r.counter] : []))
+    .map((c) => [cm(c.from) + 0.02, cm(c.to) - 0.02] as const)
+    .filter(([x0, x1]) => x1 - x0 > 0.2);
+  if (!run || !ranges.length) return null;
+  const g0 = ranges[0][0];
   const g = new THREE.Group();
-  g.position.x = x0;
+  g.position.x = g0;
   const z = BASE_FACE - D.plinthRecess;
-  const strip = mesh(boxes([[0, 0.004, z + 0.001, x1 - x0, 0.009, z + 0.007]]), mats.led, false, false);
-  g.add(strip);
+  for (const [x0, x1] of ranges) {
+    const strip = mesh(boxes([[x0 - g0, 0.004, z + 0.001, x1 - g0, 0.009, z + 0.007]]), mats.led, false, false);
+    g.add(strip);
+    K.leds.push({ mesh: strip, length: x1 - x0, kind: "plinth" });
+  }
   run.group.add(g);
-  K.leds.push({ mesh: strip, length: x1 - x0, kind: "plinth" });
   surfacesOf(run).plinthLed = g;
   return g;
 }
@@ -935,7 +958,7 @@ export function syncRunSurfaces(K: KitchenRT, mats: Materials, plan: KitchenPlan
     const o = old.runs.find((x) => x.wall === r.wall);
     const run = K.runs.get(r.wall);
     if (!o || !run) continue;
-    const key = (x: RunPlan) => JSON.stringify([x.worktop, x.backsplash, x.counter, x.talls ?? x.tall, x.free ?? []]);
+    const key = (x: RunPlan) => JSON.stringify([x.worktops ?? x.worktop, x.backsplash, x.counters ?? x.counter, x.talls ?? x.tall, x.free ?? []]);
     if (key(o) === key(r)) continue;
     changed = true;
     const sf = surfacesOf(run);
@@ -1152,9 +1175,7 @@ export function rebuildWorktop(K: KitchenRT, runId: RunId, top: THREE.Material):
     me = mesh(boxes(islandSlab(K.plan.island, TOP_Y, WORK_Y, mods.map((m) => m.hole!))), top);
   } else {
     const from = run.worktopFrom;
-    const to = run.worktopTo;
-    const holes = mods.map((m) => ({ x0: m.hole!.x0 - from, x1: m.hole!.x1 - from, z0: m.hole!.z0, z1: m.hole!.z1 }));
-    me = mesh(boxes(slabWithHoles(0, to - from, TOP_Y, WORK_Y, 0, D.worktopDepth, holes), [from, 0, 0]), top);
+    me = worktopMesh(K, runId, run.worktopPieces ?? [[from, run.worktopTo]], from, top);
   }
   g.add(me);
   K.tops.push(me);

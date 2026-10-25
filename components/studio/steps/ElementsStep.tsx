@@ -3,7 +3,8 @@
 /**
  * "Elementi": every cabinet of the kitchen, wall by wall, without having to click in 3D (important on a phone).
  * A front-view drawing of the wall (clickable) and the rows below it open the element editor; pointing at a row
- * (or focusing it) lights the element up in 3D.
+ * (or focusing it) lights the element up in 3D. A tall unit standing in a wall's base run is listed in the base row, in
+ * its place between the cabinets ("visoki"); "Visoki stup" lists the columns at the run's ends.
  */
 import { useEffect } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
@@ -11,8 +12,9 @@ import { isEdited } from "@/lib/studio/edit";
 import { planGaps, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { Notes, Segmented, SectionLabel, ToggleRow } from "../controls";
 import { ChevronRight, ModuleGlyph, PlusIcon, ResetIcon } from "../icons";
-import { islandWord, rowName, rowSlots, runName, sideHint, type RowZone } from "../meta";
+import { isInRunTall, islandWord, rowName, rowSlots, runName, sideHint, type RowZone } from "../meta";
 import { RunElevation } from "../RunElevation";
+import css from "../studio.module.css";
 import type { StepProps } from "./types";
 
 export interface ElementsUi {
@@ -36,8 +38,10 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
   useEffect(() => () => onHover(null), [onHover]);
   const runs: RunId[] = [...plan.walls, ...(plan.island ? (["isl"] as const) : [])];
   const run = runs.includes(elements.runTab) ? elements.runTab : runs[0];
-  const tallSlot = plan.slots.find((s) => s.zone === "tall");
+  // the main column at a run's end (the switch below); tall units standing in a base run are not it
+  const tallSlot = plan.slots.find((s) => s.zone === "tall" && s.list?.id === "tall");
   const tallWall = tallSlot?.run ?? null;
+  const inRun = plan.slots.filter(isInRunTall);
 
   const rows: RowZone[] = run === "isl" ? ["island"] : ["upper", "base", "tall"];
   const wallEdited =
@@ -136,6 +140,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
           description={
             <>
               Hladnjak i pećnica u visini očiju. Aparati nisu u okvirnoj cijeni.
+              {inRun.length > 0 && " Visoki elementi u nizu između donjih ostaju i kad je stup isključen."}
               {tallWall && tallWall !== run && (
                 <>
                   {" "}
@@ -167,6 +172,10 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
               ? "Sve je popunjeno: znak + između dva elementa dodaje novi, a susjedni se suzi i napravi mu mjesto."
               : "Sve je popunjeno: kliknite element pa + lijevo ili + desno — element se suzi i napravi mjesto novome."}
         </p>
+      )}
+      {engine && run !== "isl" && (
+        // the owner: "kako mogu ubaciti stup na drugi zid" — on any wall, also where no "+" is left
+        <p className="mt-2 pl-[34px] text-[12px] leading-snug text-mut">Visoki element (stup) ide na „+” ili umjesto postojećeg: kliknite element pa „Zamijeni”.</p>
       )}
 
       {isEdited(cfg) && (
@@ -201,6 +210,8 @@ function ElementRow({
   const def = moduleDef(slot.zone, slot.type);
   const spacer = Boolean(def?.spacer);
   const name = slot.corner && def && !def.corner ? `Kutni element: ${lower(def.name)}` : (def?.name ?? slot.type);
+  /** a tall unit standing in the base run (listed with the base cabinets) */
+  const tall = isInRunTall(slot);
   return (
     <button
       type="button"
@@ -210,7 +221,7 @@ function ElementRow({
       onPointerLeave={(e) => e.pointerType === "mouse" && onHover(null)}
       onFocus={() => onHover(slot.id)}
       onBlur={() => onHover(null)}
-      aria-label={`${index + 1}. ${name}, ${Math.round(slot.width)} cm. Uredi.`}
+      aria-label={`${index + 1}. ${name}${tall ? ", visoki element" : ""}, ${Math.round(slot.width)} cm. Uredi.`}
       className={`group flex w-full items-center gap-3 rounded-xl border px-2.5 py-2 text-left transition-[border-color,background-color] duration-300 ease-premium ${
         on ? "border-accent/60 bg-accent/[0.08]" : "border-white/[0.07] hover:border-white/20 hover:bg-white/[0.03]"
       } ${spacer ? "border-dashed" : ""}`}
@@ -223,7 +234,10 @@ function ElementRow({
         zone={slot.zone}
         className={`h-8 w-8 shrink-0 transition-colors duration-300 ${on ? "text-accent" : spacer ? "text-fg/35" : "text-fg/60 group-hover:text-fg"}`}
       />
-      <span className={`min-w-0 flex-1 text-[13px] leading-tight ${spacer ? "text-fg/55" : on ? "text-fg" : "text-fg/85 group-hover:text-fg"}`}>{name}</span>
+      <span className={`flex min-w-0 flex-1 items-center gap-2 text-[13px] leading-tight ${spacer ? "text-fg/55" : on ? "text-fg" : "text-fg/85 group-hover:text-fg"}`}>
+        <span className="min-w-0">{name}</span>
+        {tall && <span className={`${css.tileBadge} shrink-0`}>visoki</span>}
+      </span>
       <span className="shrink-0 text-[12px] tabular-nums text-mut">{Math.round(slot.width)} cm</span>
       <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-fg/35 transition-colors group-hover:text-accent" />
     </button>

@@ -53,11 +53,20 @@ export interface WindowSpec {
 
 /**
  * One cabinet in an explicit run (see KitchenConfig.runs). `type` is a catalog.modules id of the run's zone,
- * `width` is in cm and must be one of that type's widths (spacer types — "slobodno" / "prazno" — take any width).
+ * `width` is in cm and must be one of that type's widths (spacer types — "slobodno" / "prazno" — and the filler strip
+ * "filer" take any width in their range).
+ *
+ * A wall's base run (KitchenConfig.runs.a / b / c) may also hold TALL units standing in it (`tall: true`, `type` a
+ * catalog tall id): consecutive tall entries are one column with a cover panel on each outer side, and at a column the
+ * worktop, the backsplash, the plinth LED, the wall units and the top row stop. Absent = an entry of the list's own zone
+ * (every older link). Edit through lib/studio/edit.ts (changeType with a tall type, insertAtGap / insertBefore / After
+ * with zone "tall").
  */
 export interface CabinetSpec {
   type: string;
   width: number;
+  /** a tall unit (catalog zone "tall") standing in a wall's base run; anywhere else it is dropped by sanitizeConfig */
+  tall?: true;
 }
 
 /** base cabinet runs: the three walls and the island (or the peninsula — layouts "poluotok" / "G" use the same run) */
@@ -226,7 +235,10 @@ export interface KitchenConfig {
    * Explicit base cabinet sequence of a run, left → right (run-local, as seen facing that wall; the island from
    * the wall-A side), once the customer edits that run. Blind-corner units are not in the list (see `corners`).
    * The planner places exactly these cabinets, closes the remainder with a filler and, when a wall change makes
-   * the list too long, leaves elements out from the end (sink / hob / dishwasher last) with a warning.
+   * the list too long, leaves elements out from the end (sink / hob / dishwasher last) with a warning. A wall's list
+   * may hold tall units standing in the run (CabinetSpec.tall — fridge / oven columns between base cabinets) and the
+   * planner's filler strip at a wall / corner / column end ("filer": kept where it was, so the cabinets do not slide
+   * when the run changes; it gives way first when room is needed).
    * Absent = the planner fills the run itself. Edit through lib/studio/edit.ts, never by hand.
    */
   runs?: Partial<Record<BaseRunId, CabinetSpec[]>>;

@@ -129,7 +129,12 @@ describe('a full row: "+" between its elements (the owner: "nema na zidu plus da
       const seams = planGaps(p).filter((g) => g.kind === "seam");
       assert.ok(seams.some((g) => g.zone === "upper"), `${layout}: ${planGaps(p).map((g) => g.id).join(", ")}`);
       for (const g of seams) {
-        assert.equal(g.label, g.zone === "upper" ? GAP_LABEL.upper : GAP_LABEL.base);
+        // between base cabinets of a wall run a tall unit can stand too (it says so when one fits); the island's own
+        const tall = gapOptions(c, g.id)!.tall.some((t) => (t.fitting?.length ?? 0) > 0);
+        const want =
+          g.zone === "upper" ? GAP_LABEL.upper : g.zone === "island" ? (layout === "otok" ? GAP_LABEL.island : GAP_LABEL.peninsula) : tall ? GAP_LABEL.baseOrTall : GAP_LABEL.base;
+        assert.equal(g.label, want, `${layout} ${g.id}`);
+        if (g.zone === "island") assert.ok(!tall, "no tall unit on the island");
         assert.ok(g.maxWidth >= 30, `${layout} ${g.id}: ${g.maxWidth}`);
         assert.ok(g.split && g.split <= g.maxWidth);
         const [l, r] = g.between!.map((id) => p.slots.find((s) => s.id === id)!);
@@ -264,7 +269,7 @@ describe("review round: what a '+' says and where it stands", () => {
   /** the owner's case as the studio makes it: L 300 / room B 450 / kitchen B 300 at the corner */
   const owner = () => kitchen({ layout: "L", walls: { a: 300, b: 450, c: 220 }, extents: { b: { length: 300 } } });
 
-  it("the end of a run names what it really offers: no tall unit once a wall unit hangs over the bare floor there", () => {
+  it("the end of a run names what it really offers; a tall unit there takes the place of a wall unit over the bare floor", () => {
     const c = owner();
     assert.equal(gapOf(c, "end:b-left")?.label, GAP_LABEL.baseOrTall);
     const r = insertAtGap(c, "upend:b-left", "vrata", 60);
@@ -272,8 +277,19 @@ describe("review round: what a '+' says and where it stands", () => {
     const g = gapOf(r.cfg, "end:b-left")!;
     assert.ok(g, "the end '+' is still there");
     const o = gapOptions(r.cfg, g.id)!;
-    assert.ok(!o.tall.some((t) => (t.fitting?.length ?? 0) > 0), "nothing tall fits under the new wall unit");
-    assert.equal(g.label, GAP_LABEL.base, "so the '+' does not promise one");
+    // the wall unit hung over the bare floor makes way for a tall unit there (the owner: "da se maknu odmah")
+    const t = o.tall.find((x) => x.id === "hladnjak");
+    assert.ok(t && t.fitting?.includes(60), JSON.stringify(o.tall.map((x) => [x.id, x.fitting])));
+    assert.equal(g.label, GAP_LABEL.baseOrTall);
+    const wu = planKitchen(r.cfg).slots.find((s) => s.id === r.slotId)!;
+    const col = insertAtGap(r.cfg, g.id, "hladnjak", 60, "tall");
+    assert.ok(col.ok, col.warning ?? "");
+    assert.match(col.warning ?? "", /Gornji element iznad visokog elementa je uklonjen/);
+    const p2 = planKitchen(col.cfg);
+    const fr = p2.slots.find((s) => s.id === col.slotId)!;
+    assert.equal(fr.zone, "tall");
+    assert.ok(!p2.slots.some((s) => s.run === "b" && s.zone === "upper" && s.x < fr.x + fr.width && s.x + s.width > fr.x && !s.corner), "no wall unit above the column");
+    assert.equal(p2.slots.filter((s) => s.run === "b" && s.zone === "upper" && s.type === wu.type).length, planKitchen(r.cfg).slots.filter((s) => s.run === "b" && s.zone === "upper" && s.type === wu.type).length - 1);
     for (const layout of LAYOUTS)
       for (const x of gapsOf(kitchen({ layout, walls: { a: 420, b: 360, c: 360 }, extents: { a: { length: 300 }, b: { length: 250 }, c: { length: 250 } } }))) {
         if (x.kind !== "end") continue;
@@ -292,16 +308,30 @@ describe("review round: what a '+' says and where it stands", () => {
     for (const g of inner) assert.ok(g.at.z > 20, `${g.id}: z ${g.at.z}`);
   });
 
-  it("a base cabinet added beyond a tall column joins the cabinets and says the column moved", () => {
+  it("a base cabinet added at the '+' beyond a tall column goes there: beyond it (the column joins the run)", () => {
     let c = owner();
     const sbs = insertAtGap(c, "end:b-left", "hladnjak-sbs", undefined, "tall");
     assert.ok(sbs.ok, sbs.warning ?? "");
     c = sbs.cfg;
     const g = gapOf(c, "end:b-left");
     assert.ok(g?.tallList, "the end '+' stands beyond the side-by-side column");
+    const col0 = planKitchen(c).slots.find((s) => s.zone === "tall" && s.run === "b")!;
     const r = insertAtGap(c, g!.id, "ladice", 45);
     assert.ok(r.ok, r.warning ?? "");
-    assert.match(r.warning ?? "", /visoki stup pomaknut/);
+    assert.match(r.warning ?? "", /s vanjske strane visokog stupa/);
+    const p = planKitchen(r.cfg);
+    const sl = p.slots.find((s) => s.id === r.slotId)!;
+    const col = p.slots.find((s) => s.zone === "tall" && s.run === "b")!;
+    assert.equal(col.type, "hladnjak-sbs");
+    assert.ok(sl.x + sl.width <= col.x, `the cabinet stands beyond the column: ${sl.x}+${sl.width} vs ${col.x}`);
+    assert.equal(col.x, col0.x, "the column stays where it was");
+    assert.equal(col.list?.id, "b", "the column now stands in wall B's run");
+    assert.deepEqual(r.cfg.runs?.b?.[0], { type: "ladice", width: 45 });
+    // "+ desno" beside the last cabinet before a column at a run's end: the cabinet joins the others, the column moves out
+    const first = planKitchen(c).slots.filter((s) => s.run === "b" && s.zone === "base").sort((x, y) => x.x - y.x)[0];
+    const side = insertBefore(c, first.id, "ladice", 45);
+    assert.ok(side.ok, side.warning ?? "");
+    assert.match(side.warning ?? "", /visoki stup pomaknut/);
   });
 });
 

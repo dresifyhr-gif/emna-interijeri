@@ -2,9 +2,11 @@
 
 /**
  * The one "add an element" picker — the same at a "+" in 3D (GapLayer) and behind "+ lijevo / + desno" of the element
- * toolbar: a row of widths, preselected to what fits the free place best, then big tiles of the six most common
- * elements that fit there, and "Više elemenata" for the rest (grouped). A tile shows the width it will get — the
- * chosen one, or the nearest its type comes in — and a click adds it at once.
+ * toolbar and editor: a row of widths, preselected to what fits the free place best, then big tiles of the six most
+ * common elements that fit there, and "Više elemenata" for the rest (grouped). Tall units are among them wherever one
+ * can stand (a "+" in a wall's base row, at a run's end, between two cabinets, beside a cabinet), with a small "visoki"
+ * badge. A tile shows the width it will get — the chosen one, or the nearest its type comes in — and a click adds it
+ * at once.
  *
  * Keyboard: the widths are row 0, the tiles the rows after it (overlay.moveFocus: arrows walk them, Home / End jump).
  * The caller focuses the first tile ([data-tile]) when it opens.
@@ -64,9 +66,9 @@ export function AddPicker({
             >
               <ModuleGlyph type={it.t.id} zone={it.tall ? "tall" : zone} className={`shrink-0 ${docked ? "h-9 w-9" : "h-8 w-8"}`} />
               <span className="mt-1 line-clamp-2 text-[11px] leading-[1.2]">{it.t.name}</span>
-              <span className={`mt-auto pt-1 text-[10.5px] tabular-nums leading-none ${exact ? "text-fg/85" : "text-mut"}`}>
-                {it.tall ? "visoki · " : ""}
-                {w} cm
+              <span className={`mt-auto flex flex-wrap items-center justify-center gap-x-1 gap-y-1 pt-1 text-[10.5px] tabular-nums leading-none ${exact ? "text-fg/85" : "text-mut"}`}>
+                {it.tall && <span className={s.tileBadge}>visoki</span>}
+                <span className="whitespace-nowrap">{w} cm</span>
               </span>
             </button>
           );

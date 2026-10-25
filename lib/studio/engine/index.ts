@@ -216,6 +216,12 @@ class Engine {
   private region: Region = { x0: 0, x1: 1, y0: 0, y1: 1 };
   private fitD = 8;
   private userMoved = false;
+  /**
+   * studio: the angles a running camera tween (the intro, a reframe after a rebuild) frames the kitchen at, and when it
+   * lands (engine clock) — a resize while it runs (the desktop panel's inset arriving, the window changing size) frames
+   * again at these angles, so the tween never lands on a framing made for another size
+   */
+  private camGoal: { az: number; el: number; end: number } | null = null;
   private ledK = 1;
 
   // showcase
@@ -939,12 +945,33 @@ class Engine {
     c.maxAzimuthAngle = v.limit[1];
     c.maxDistance = Math.max(6, f.distance * 1.8);
     if (initial) {
+      this.tweens.cancel("camera");
+      this.camGoal = null;
       this.camera.position.copy(f.position);
       c.target.copy(f.target);
       c.update();
     } else {
-      this.tweenCamera(f.position, f.target, this.reduced ? 0.01 : 1.2);
+      const dur = this.reduced ? 0.01 : 1.2;
+      this.tweenCamera(f.position, f.target, dur);
+      this.camGoal = { az, el, end: this.time + dur };
     }
+  }
+
+  /**
+   * studio: the container changed size (or the UI's insets did) while a camera tween runs: frame the kitchen again at the
+   * tween's angles for the new size and glide there in the time the tween had left
+   */
+  private retargetCamera(): void {
+    const g = this.camGoal;
+    const c = this.controls;
+    if (!g || !c) return;
+    const f = this.fitAt(g.az, g.el);
+    if (!f) return;
+    this.fitD = f.distance;
+    c.maxDistance = Math.max(c.maxDistance, f.distance * 1.8);
+    const left = Math.max(this.reduced ? 0.01 : 0.35, g.end - this.time);
+    this.tweenCamera(f.position, f.target, left);
+    this.camGoal = { ...g, end: this.time + left };
   }
 
   private introCamera(instant: boolean): void {
@@ -965,6 +992,7 @@ class Engine {
     c.target.copy(f.target).add(new THREE.Vector3(0, 0.45, 0));
     c.update();
     this.tweenCamera(f.position, f.target, 4.4);
+    this.camGoal = { az: v.az, el: v.el, end: this.time + 4.4 };
   }
 
   private tweenCamera(pos: THREE.Vector3, target: THREE.Vector3, dur: number): void {
@@ -2604,6 +2632,8 @@ class Engine {
     if (this.kitchen && !this.booting) {
       if (this.mode === "showcase") this.frameCamera(false);
       else if (!this.userMoved && !this.tweens.has("camera")) this.frameCamera(true);
+      // a tween under way (the intro, a reframe): it lands on the framing for the new size, not the one it started for
+      else if (!this.userMoved && this.camGoal) this.retargetCamera();
     }
     this.dirty = true;
   }

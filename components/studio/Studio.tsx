@@ -15,8 +15,10 @@
  * over it (ElementToolbar — add left / right, width, replace, remove, mechanism, "Više" for the full ElementEditor in the
  * panel); a dimension label opens the length editor there (DimEditor — the room's wall, or the kitchen run on it, or the
  * island); a "+" (GapLayer: in every step, quiet outside "Elementi"; on a full row one between two elements, where a
- * neighbour gets narrower — only in "Elementi" / while editing) opens the add picker (AddPicker, tall units at a run's
- * end); a wall or the floor, when nothing else is hit and nothing was open, opens its finishes (SurfacePicker).
+ * neighbour gets narrower — only in "Elementi" / while editing) opens the add picker (AddPicker, tall units wherever
+ * one can stand in a wall's base row); a wall or the floor, when nothing else is hit and nothing was open, opens its
+ * finishes (SurfacePicker). "Zamijeni" turns a base cabinet or a wall unit into a tall unit (both go — asked first
+ * when that takes another element away).
  * Those edits say what they did in a toast with "Poništi" (Ctrl / ⌘ + Z works too). Rows of the "Elementi" list light
  * their element up in 3D. Overlays follow the view through the engine's ViewInfo (overlay.ts) and never make the engine
  * render.
@@ -1014,6 +1016,7 @@ export function Studio() {
             key={coach}
             apiRef={apiRef}
             live={live}
+            plan={plan}
             state={coach}
             docked={!desktop}
             touch={touch}

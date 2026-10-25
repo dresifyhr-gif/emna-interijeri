@@ -8,11 +8,15 @@
  *
  * `overlay` (the element editor) takes the shell's place while it is open: the steps stay mounted underneath
  * (inert, faded out), so their scroll position and state are there again when the editor closes.
+ *
+ * Reduced motion comes from hooks.ts useReducedMotionSafe (known after mount), so the server render and the hydrating
+ * render are the same whatever the visitor's setting.
  */
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { Arrow } from "@/components/ui/Button";
 import { CopyLinkButton } from "./CopyLink";
+import { useReducedMotionSafe } from "./hooks";
 import { ChevronLeft, ChevronUp, CloseIcon } from "./icons";
 import { EASE, STEPS } from "./meta";
 import { PriceBlock } from "./Price";
@@ -97,7 +101,7 @@ export function DesktopPanel({
   onSummary: (open: boolean) => void;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
-  const reduce = useReducedMotion();
+  const reduce = useReducedMotionSafe();
   const covered = Boolean(overlay);
   return (
     <motion.aside
@@ -212,7 +216,7 @@ export function MobileSheet({
   scrollRef: RefObject<HTMLDivElement | null>;
   sheetRef: RefObject<HTMLElement | null>;
 }) {
-  const reduce = useReducedMotion();
+  const reduce = useReducedMotionSafe();
   const drag = useRef<{ y: number; id: number } | null>(null);
   const tall = STEPS[step].id === "posalji";
   const editing = Boolean(overlay);
@@ -328,7 +332,7 @@ export function MobileSummary({
   getUrl: () => string;
   onClose: () => void;
 }) {
-  const reduce = useReducedMotion();
+  const reduce = useReducedMotionSafe();
   return (
     <motion.div
       role="dialog"

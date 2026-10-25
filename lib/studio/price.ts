@@ -193,7 +193,8 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
   // "do stropa": the cornice strip up to the ceiling, priced like a filler
   for (const c of plan.heights.cornices) cabinets += front(c.zone).pricePerMeter * ZONE_FACTOR.filler * m(c.to - c.from);
 
-  let worktopM = plan.runs.reduce((sum, r) => sum + (r.worktop ? m(r.worktop.to - r.worktop.from) : 0), 0);
+  // the worktop's pieces (a tall unit standing in a run interrupts it: RunPlan.worktops)
+  let worktopM = plan.runs.reduce((sum, r) => sum + r.worktops.reduce((n, w) => n + m(w.to - w.from), 0), 0);
   let islandTotal = 0;
   let barTop = 0;
   let backRowM = 0;

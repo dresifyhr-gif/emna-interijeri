@@ -2,9 +2,12 @@
 
 /**
  * Element toolbar — a small glass bar that floats right above the element selected in 3D, with the edits a customer
- * reaches for most: add a cabinet on the left / right (a picker of the types that fit there, with their widths),
- * the width, another type in the same place, remove (with a 3 s "Poništi" toast), the mechanism demo, and "Više"
- * for the full element editor in the panel.
+ * reaches for most: add a cabinet on the left / right (a picker of the types that fit there, with their widths — tall
+ * units too, beside a base cabinet of a wall run), the width, another type in the same place (on a base cabinet or a
+ * wall unit of a wall run also a tall unit: it takes the place of both, and when that takes another element away a
+ * short line asks first — "Ukloniti donji i gornji element i staviti visoki?"; a tall unit standing in the run can
+ * become a base cabinet again), remove (with a 3 s "Poništi" toast), the mechanism demo, and "Više" for the full
+ * element editor in the panel.
  *
  * Position: from the engine's ViewInfo (api.subscribe), written straight into the DOM — no React render per frame,
  * and nothing here asks the engine to render. It sits above the element and clear of the engine's "60 cm" tag,
@@ -20,7 +23,7 @@
  * "Left" and "right" are those of the drawing (the island is mirrored, see meta.isFlipped), like in the editor.
  */
 import { useIsPresent } from "framer-motion";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type FocusEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type FocusEvent, type ReactNode, type RefObject } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
 import {
   changeType,
@@ -35,13 +38,14 @@ import {
 } from "@/lib/studio/edit";
 import { planGaps, planKitchen, type KitchenPlan, type PlanSlot } from "@/lib/studio/plan";
 import type { KitchenConfig, StudioEngineApi, ViewInfo } from "@/lib/studio/types";
-import { AddPicker, addItems } from "./AddPicker";
+import { AddPicker, addItems, type AddItem } from "./AddPicker";
 import { gapStretch } from "./addModel";
 import type { ApplyOptions } from "./ElementEditor";
 import { ChevronDown, CloseIcon, InsertIcon, ModuleGlyph, MoreIcon, PlayIcon, SwapIcon, TrashIcon } from "./icons";
-import { clamp, isFlipped, islandWord, noRoomText, rowSlots } from "./meta";
-import { areaOf, moveFocus, useEngineView, type Area, type Insets } from "./overlay";
+import { clamp, isFlipped, isInRunTall, islandWord, noRoomText, rowOf, rowSlots } from "./meta";
+import { areaOf, keepAbove, moveFocus, useEngineView, type Area, type Insets } from "./overlay";
 import s from "./studio.module.css";
+import { baseChoices, tallSwap } from "./tallSwap";
 
 type Side = "left" | "right";
 type PopKind = "add-left" | "add-right" | "width" | "type";
@@ -134,6 +138,10 @@ export function ElementToolbar({
   const kind = !hidden && pop && pop.id === slot.id ? pop.kind : null;
   const [reason, setReason] = useState<{ id: string; kind: PopKind; text: string } | null>(null);
   const reasonText = reason && reason.id === slot.id && reason.kind === kind ? reason.text : null;
+  /** a tall unit picked in "Zamijeni" that takes another element away too: the question waiting for its one click */
+  const [ask, setAsk] = useState<{ id: string; cfg: KitchenConfig; type: string; text: string; essentials: string[] } | null>(null);
+  const asking = ask && ask.id === slot.id && ask.cfg === cfg && kind === "type" ? ask : null;
+  const askRef = useRef<HTMLButtonElement>(null);
 
   /* ---------------------------------------------------------------- what this element can do */
 
@@ -141,14 +149,24 @@ export function ElementToolbar({
     const before = sd === "left" ? !flip : flip;
     return {
       options: before ? info.insertBefore : info.insertAfter,
-      insert: (type: string, w?: number) => (before ? insertBefore : insertAfter)(cfg, slot.id, type, w),
+      /** tall units that can stand on that side in the base run (insert with zone "tall") */
+      tall: before ? info.insertBeforeTall : info.insertAfterTall,
+      insert: (type: string, w?: number, tall?: boolean) => (before ? insertBefore : insertAfter)(cfg, slot.id, type, w, tall ? "tall" : undefined),
     };
   };
-  const fitsOn = (sd: Side) => sideOf(sd).options.filter((o) => o.width !== null && (o.fitting?.length ?? 1) > 0);
+  const fitting = (list: TypeChoice[]) => list.filter((o) => o.width !== null && (o.fitting?.length ?? 1) > 0);
+  const fitsOn = (sd: Side) => fitting(sideOf(sd).options);
+  const tallOn = (sd: Side) => fitting(sideOf(sd).tall);
+  const canAdd = (sd: Side) => fitsOn(sd).length + tallOn(sd).length > 0;
   const addReason = (sd: Side): string => {
-    if (!sideOf(sd).options.length) return `${sd === "left" ? "Lijevo" : "Desno"} od ovog elementa nastavlja se susjedni zid.`;
+    if (!sideOf(sd).options.length && !sideOf(sd).tall.length) return `${sd === "left" ? "Lijevo" : "Desno"} od ovog elementa nastavlja se susjedni zid.`;
     return noRoomText(slot, info.free);
   };
+  /** the zone of the row the element stands in (a tall unit standing in a base run: the base row) */
+  const rowZone = rowOf(slot).zone;
+  const inRunTall = isInRunTall(slot);
+  // a tall unit standing in the run: the base cabinets it can become again (planned only while "Zamijeni" is open)
+  const backTypes = useMemo(() => (kind === "type" && inRunTall ? baseChoices(cfg, slot) : []), [kind, inRunTall, cfg, slot]);
   const removeLabel = spacer ? "Zatvori razmak" : slot.zone === "upper" ? "Ukloni (zid ostaje prazan)" : "Ukloni element";
   const removeReason = () => remove(cfg, slot.id).warning ?? "Ovaj element se ne može ukloniti.";
   const widthNote = spacer
@@ -370,6 +388,15 @@ export function ElementToolbar({
     first.focus({ preventScroll: true });
   }, [kind, placePop]);
 
+  // the question before a tall unit takes another element away: focus on its "Da, zamijeni" (Enter confirms)
+  const askingType = asking?.type ?? null;
+  useEffect(() => {
+    if (!askingType) return;
+    askRef.current?.focus({ preventScroll: true });
+    // the tile it asks about stays in view above the question pinned to the picker's foot
+    keepAbove(popRef.current?.querySelector<HTMLElement>("[data-asking]") ?? null, askRef.current?.closest<HTMLElement>('[role="group"]') ?? null);
+  }, [askingType]);
+
   // a picker closes on a press anywhere else (the 3D view, the panel)
   useEffect(() => {
     if (!kind) return;
@@ -384,22 +411,27 @@ export function ElementToolbar({
 
   /* ---------------------------------------------------------------- actions */
 
-  const open = (k: PopKind) => setPop(kind === k ? null : { id: slot.id, kind: k });
+  const open = (k: PopKind) => {
+    setAsk(null);
+    setPop(kind === k ? null : { id: slot.id, kind: k });
+  };
   const closePop = (refocus: boolean) => {
     const k = kind;
     setPop(null);
+    setAsk(null);
     if (refocus && k) triggers.current[k]?.focus({ preventScroll: true });
   };
   const after = (ok: boolean, k: PopKind) => {
     if (!ok) return;
     setPop(null);
+    setAsk(null);
     // the bar stays (it follows the element): focus back on the button the picker came from
     window.setTimeout(() => triggers.current[k]?.focus({ preventScroll: true }), 0);
   };
   const widthOf = (r: EditResult) => (r.slotId ? planKitchen(r.cfg).slots.find((x) => x.id === r.slotId)?.width : undefined);
 
-  const doInsert = (sd: Side, t: TypeChoice, w: number) => {
-    const r = sideOf(sd).insert(t.id, w);
+  const doInsert = (sd: Side, { t, tall }: AddItem, w: number) => {
+    const r = sideOf(sd).insert(t.id, w, tall);
     const got = widthOf(r) ?? w;
     after(onEdit(r, { toast: `Dodano ${sd === "left" ? "lijevo" : "desno"}: ${lower(t.name)}, ${Math.round(got)} cm.` }), sd === "left" ? "add-left" : "add-right");
   };
@@ -413,17 +445,40 @@ export function ElementToolbar({
     const w = widthOf(r);
     after(onEdit(r, { toast: `Element je sada ${lower(t.name)}${w ? `, ${Math.round(w)} cm` : ""}.` }), "type");
   };
+  const typeOrRefuse = (t: TypeChoice) =>
+    t.width === null ? setReason({ id: slot.id, kind: "type", text: changeType(cfg, slot.id, t.id).warning ?? `${t.name} ovdje ne stane.` }) : doType(t);
+  /** the tall unit in this element's place; when that takes another element away, ask first (a second press confirms) */
+  const doTall = (t: TypeChoice, confirmed = false) => {
+    if (t.width === null) {
+      setAsk(null);
+      setReason({ id: slot.id, kind: "type", text: changeType(cfg, slot.id, t.id, "tall").warning ?? `${t.name} ovdje ne stane.` });
+      return;
+    }
+    const sw = tallSwap(cfg, plan, slot, t.id);
+    if (!sw.result.ok) {
+      setAsk(null);
+      setReason({ id: slot.id, kind: "type", text: sw.result.warning ?? `${t.name} ovdje ne stane.` });
+      return;
+    }
+    if (sw.ask && !confirmed && !(asking && asking.type === t.id)) {
+      setReason(null);
+      setAsk({ id: slot.id, cfg, type: t.id, text: sw.ask, essentials: sw.essentials });
+      return;
+    }
+    const w = widthOf(sw.result);
+    after(onEdit(sw.result, { toast: `${t.name}${w ? `, ${Math.round(w)} cm` : ""}.` }), "type");
+  };
   const doRemove = () => (info.canRemove ? onRemove() : onRefuse(removeReason()));
-  const addOrRefuse = (sd: Side) => (fitsOn(sd).length ? open(sd === "left" ? "add-left" : "add-right") : onRefuse(addReason(sd)));
+  const addOrRefuse = (sd: Side) => (canAdd(sd) ? open(sd === "left" ? "add-left" : "add-right") : onRefuse(addReason(sd)));
 
   /** the neighbouring element in the drawing (← →), or the wall unit above / base cabinet below (↑ ↓) */
   const neighbour = (key: string): PlanSlot | null => {
     if (key === "ArrowLeft" || key === "ArrowRight") {
-      const row = rowSlots(plan.slots, slot.run, slot.zone);
+      const row = rowSlots(plan.slots, slot.run, rowZone);
       const i = row.findIndex((x) => x.id === slot.id);
       return row[i + (key === "ArrowLeft" ? -1 : 1)] ?? null;
     }
-    const to = key === "ArrowUp" ? (slot.zone === "base" ? "upper" : null) : slot.zone === "upper" ? "base" : null;
+    const to = key === "ArrowUp" ? (rowZone === "base" ? "upper" : null) : rowZone === "upper" ? "base" : null;
     if (!to || slot.run === "isl") return null;
     const c = slot.x + slot.width / 2;
     const row = rowSlots(plan.slots, slot.run, to);
@@ -441,6 +496,10 @@ export function ElementToolbar({
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
+      if (asking) {
+        setAsk(null);
+        return;
+      }
       if (kind) closePop(true);
       else onClose();
       return;
@@ -465,7 +524,7 @@ export function ElementToolbar({
   /* ---------------------------------------------------------------- render */
 
   const hintId = `studio-tb-hint-${slot.id}`;
-  const sideRefuse = (sd: Side) => (fitsOn(sd).length ? undefined : addReason(sd));
+  const sideRefuse = (sd: Side) => (canAdd(sd) ? undefined : addReason(sd));
   const popTitle: Record<PopKind, string> = {
     "add-left": "Novi element lijevo",
     "add-right": "Novi element desno",
@@ -477,7 +536,7 @@ export function ElementToolbar({
    * grow into, the island's own end) — an insert on that side grows the run like that "+" does (edit.ts insertWays)
    */
   const endGap = (sd: Side) => {
-    const row = rowSlots(plan.slots, slot.run, slot.zone);
+    const row = rowSlots(plan.slots, slot.run, rowZone);
     if (row[row.findIndex((x) => x.id === slot.id) + (sd === "left" ? -1 : 1)] || !slot.list) return null;
     const local = (sd === "left") !== flip ? "left" : "right";
     return planGaps(plan).find((g) => g.list === slot.list?.id && g.side === local && g.kind !== "free") ?? null;
@@ -485,7 +544,7 @@ export function ElementToolbar({
   /** no free room on that side (no empty space beside it, no free end): the element makes room by getting narrower (edit.ts) */
   const tight = (sd: Side) => {
     if (info.free >= 15 || endGap(sd)) return false;
-    const row = rowSlots(plan.slots, slot.run, slot.zone);
+    const row = rowSlots(plan.slots, slot.run, rowZone);
     const nb = row[row.findIndex((x) => x.id === slot.id) + (sd === "left" ? -1 : 1)];
     return !(nb && (nb.type === "slobodno" || nb.type === "prazno"));
   };
@@ -506,6 +565,7 @@ export function ElementToolbar({
       return info.free >= 1 ? `Slobodno je još ${Math.floor(info.free)} cm.` : "Novi element zauzima slobodan prostor do njega.";
     }
     if (k === "width") return widthNote ?? `${name} · sada ${width} cm`;
+    if (inRunTall) return `${name}, ${width} cm — drugi visoki element ili opet donji element na ovom mjestu.`;
     return `${name}, ${width} cm — odaberite što će stajati na ovom mjestu.`;
   };
 
@@ -633,6 +693,22 @@ export function ElementToolbar({
                 <div className="min-w-0 flex-1">
                   <p className="eyebrow text-accent">{popTitle[kind]}</p>
                   {popSub(kind) && <p className="mt-1.5 text-[11.5px] leading-snug text-mut">{popSub(kind)}</p>}
+                  {/* the tall units come after the element's own types, at the foot of a long list: one tap down to them */}
+                  {kind === "type" && info.tall.some((t) => t.width !== null) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const b = popRef.current?.querySelector<HTMLElement>('[data-block="tall"]');
+                        const box = popRef.current;
+                        if (b && box) box.scrollTop += b.getBoundingClientRect().top - box.getBoundingClientRect().top - 8;
+                        b?.querySelector<HTMLElement>("button:not([aria-disabled])")?.focus({ preventScroll: true });
+                      }}
+                      className={`mt-1.5 inline-flex items-center gap-1.5 text-[11.5px] font-medium text-accent underline decoration-accent/40 underline-offset-4 transition-colors hover:text-fg ${docked ? "min-h-11" : "min-h-7"}`}
+                    >
+                      Visoki element (stup) umjesto ovoga
+                      <span aria-hidden="true">↓</span>
+                    </button>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -647,11 +723,11 @@ export function ElementToolbar({
                 {(kind === "add-left" || kind === "add-right") && (
                   <AddPicker
                     key={`${slot.id}-${kind}`}
-                    items={addItems(fitsOn(kind === "add-left" ? "left" : "right"))}
+                    items={addItems(fitsOn(kind === "add-left" ? "left" : "right"), tallOn(kind === "add-left" ? "left" : "right"))}
                     zone={slot.zone}
                     stretch={addStretch(kind === "add-left" ? "left" : "right")}
                     docked={docked}
-                    onPick={(it, w) => doInsert(kind === "add-left" ? "left" : "right", it.t, w)}
+                    onPick={(it, w) => doInsert(kind === "add-left" ? "left" : "right", it, w)}
                   />
                 )}
                 {kind === "width" && (
@@ -668,16 +744,57 @@ export function ElementToolbar({
                     groups={groupsFor(info.zone)}
                     zone={slot.zone}
                     docked={docked}
-                    onPick={(t) =>
-                      t.width === null
-                        ? setReason({ id: slot.id, kind: "type", text: changeType(cfg, slot.id, t.id).warning ?? `${t.name} ovdje ne stane.` })
-                        : doType(t)
-                    }
+                    asking={asking?.type ?? null}
+                    extra={[
+                      // a tall unit in this element's place (a base cabinet / wall unit of a wall run)
+                      { key: "tall", name: "Visoki element umjesto ovoga", zone: "tall", tall: true, items: info.tall, onPick: (t) => doTall(t) },
+                      // a tall unit standing in the run: a base cabinet again
+                      { key: "base", name: "Donji element umjesto ovoga", zone: "base", tall: false, items: backTypes, onPick: (t) => typeOrRefuse(t) },
+                    ]}
+                    onPick={typeOrRefuse}
                   />
                 )}
               </div>
+              {/* a tall unit that takes another element away: one short question, one click (pinned to the picker's foot) */}
+              {asking && (
+                <div className="sticky bottom-0 z-[1] border-t border-white/[0.08] bg-[rgba(17,17,19,0.97)] px-4 pb-3 pt-2.5" role="group" aria-label="Potvrda zamjene">
+                  <p aria-live="assertive" className="text-[12px] font-medium leading-snug text-fg">
+                    {asking.text}
+                  </p>
+                  {asking.essentials.length > 0 && (
+                    <p className="mt-1 text-[11px] leading-snug text-[#E9AE9C]">Uklanja se i {asking.essentials.join(", ")}.</p>
+                  )}
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      ref={askRef}
+                      type="button"
+                      data-row={999}
+                      data-col={0}
+                      onClick={() => {
+                        const t = info.tall.find((x) => x.id === asking.type);
+                        if (t) doTall(t, true);
+                      }}
+                      className={`rounded-full bg-accent px-4 text-[12px] font-semibold tracking-wide text-ink transition-colors duration-300 ease-premium hover:bg-fg ${docked ? "h-11" : "h-8"}`}
+                    >
+                      Da, zamijeni
+                    </button>
+                    <button
+                      type="button"
+                      data-row={999}
+                      data-col={1}
+                      onClick={() => setAsk(null)}
+                      className={`rounded-full px-3 text-[12px] font-medium text-mut transition-colors duration-300 hover:text-fg ${docked ? "h-11" : "h-8"}`}
+                    >
+                      Odustani
+                    </button>
+                  </div>
+                </div>
+              )}
               {/* why an option does not fit: its own reserved lines, so nothing moves under the pointer */}
-              {(kind === "width" ? info.widths.some((w) => !w.fits && !w.current) : kind === "type" && info.types.some((t) => t.width === null)) && (
+              {!asking &&
+                (kind === "width"
+                  ? info.widths.some((w) => !w.fits && !w.current)
+                  : kind === "type" && [...info.types, ...info.tall, ...backTypes].some((t) => t.width === null)) && (
                 <p aria-live="polite" className={`min-h-[4.2em] px-4 pb-3 text-[11.5px] leading-snug ${reasonText ? "text-[#E9AE9C]" : "text-mut/80"}`}>
                   {reasonText ?? (kind === "width" ? "Precrtane širine ovdje ne stanu — odaberite jednu i vidjet ćete zašto." : "Prigušeni elementi ovdje ne stanu — odaberite jedan i vidjet ćete zašto.")}
                 </p>
@@ -861,31 +978,44 @@ function TypeGrid({
   types,
   groups,
   zone,
+  extra = [],
+  asking = null,
   docked,
   onPick,
 }: {
   types: TypeChoice[];
   groups: { id: string; name: string }[];
   zone: string;
+  /** more blocks after the element's own types (a tall unit in its place; a tall unit's way back to a base cabinet) — empty ones are left out */
+  extra?: { key: string; name: string; zone: string; tall: boolean; items: TypeChoice[]; onPick: (t: TypeChoice) => void }[];
+  /** the tall type whose question is open (its tile shows pressed) */
+  asking?: string | null;
   docked: boolean;
   onPick: (t: TypeChoice) => void;
 }) {
   let row = 0;
   const known = new Set(groups.map((g) => g.id));
-  const blocks = [...groups, ...(types.some((t) => !known.has(t.group)) ? [{ id: "", name: "Ostalo" }] : [])]
-    .map((g) => ({ g, items: types.filter((t) => (g.id ? t.group === g.id : !known.has(t.group))) }))
-    .filter((b) => b.items.length);
+  const own = [...groups, ...(types.some((t) => !known.has(t.group)) ? [{ id: "", name: "Ostalo" }] : [])].map((g) => ({
+    key: g.id || "other",
+    name: g.name,
+    zone,
+    tall: false,
+    items: types.filter((t) => (g.id ? t.group === g.id : !known.has(t.group))),
+    onPick,
+  }));
+  const blocks = [...own, ...extra].filter((b) => b.items.length);
   return (
     <div className="space-y-3 px-1.5 pb-1">
-      {blocks.map(({ g, items }) => {
+      {blocks.map((b) => {
         const base = row;
-        row += Math.ceil(items.length / 3);
+        row += Math.ceil(b.items.length / 3);
         return (
-          <div key={g.id || "other"}>
-            {blocks.length > 1 && <p className="mb-1.5 px-1 text-[10px] font-medium uppercase tracking-[0.2em] text-mut/90">{g.name}</p>}
+          <div key={b.key} data-block={b.key}>
+            {blocks.length > 1 && <p className="mb-1.5 px-1 text-[10px] font-medium uppercase tracking-[0.2em] text-mut/90">{b.name}</p>}
             <div className="grid grid-cols-3 gap-1.5">
-              {items.map((t, j) => {
+              {b.items.map((t, j) => {
                 const fits = t.width !== null;
+                const pressed = t.current || (b.tall && asking === t.id);
                 return (
                   <button
                     key={t.id}
@@ -893,16 +1023,20 @@ function TypeGrid({
                     data-row={base + Math.floor(j / 3)}
                     data-col={j % 3}
                     data-current={t.current || undefined}
-                    aria-pressed={t.current}
+                    data-asking={(b.tall && asking === t.id) || undefined}
+                    aria-pressed={pressed}
                     aria-disabled={!fits || undefined}
-                    aria-label={`${t.name}${t.current ? ", odabrano" : fits ? `, ${t.width} cm` : ", ne stane"}`}
+                    aria-label={`${t.name}${b.tall ? ", visoki element" : ""}${t.current ? ", odabrano" : fits ? `, ${t.width} cm` : ", ne stane"}`}
                     title={t.description}
-                    onClick={() => onPick(t)}
+                    onClick={() => b.onPick(t)}
                     className={`${s.popTile} ${docked ? "min-h-[92px]" : "min-h-[84px]"}`}
                   >
-                    <ModuleGlyph type={t.id} zone={zone} className="h-8 w-8 shrink-0" />
+                    <ModuleGlyph type={t.id} zone={b.zone} className="h-8 w-8 shrink-0" />
                     <span className="mt-1 line-clamp-2 text-[11px] leading-[1.2]">{t.name}</span>
-                    <span className="mt-0.5 text-[10px] tabular-nums leading-none text-mut">{t.current ? "odabrano" : fits ? `${t.width} cm` : "ne stane"}</span>
+                    <span className="mt-auto flex flex-wrap items-center justify-center gap-x-1 gap-y-1 pt-1 text-[10px] tabular-nums leading-none text-mut">
+                      {b.tall && <span className={s.tileBadge}>visoki</span>}
+                      <span className="whitespace-nowrap">{t.current ? "odabrano" : fits ? `${t.width} cm` : "ne stane"}</span>
+                    </span>
                   </button>
                 );
               })}

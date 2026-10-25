@@ -492,6 +492,22 @@
 .popTile[aria-disabled="true"] {
   opacity: 0.42;
 }
+/* a tall unit among the tiles (it takes the base and the wall-unit place): a small pill before its width */
+.tileBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 5px;
+  border: 1px solid rgba(201, 185, 154, 0.42);
+  border-radius: 999px;
+  background: rgba(201, 185, 154, 0.08);
+  color: #c9b99a;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+}
 
 /* the hit area over the engine's "60 cm" tag of the selected element */
 .tagHit {
@@ -897,6 +913,27 @@
   border-bottom: 0;
   border-right: 0;
 }
+/* mark 1: a ring on the cabinet the card points at (positioned by its centre) */
+.coachDot {
+  position: absolute;
+  left: -11px;
+  top: -11px;
+  z-index: 23;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid rgba(201, 185, 154, 0.9);
+  border-radius: 999px;
+  background: rgba(201, 185, 154, 0.16);
+  box-shadow: 0 0 0 0 rgba(201, 185, 154, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+.coachDot[data-on] {
+  opacity: 1;
+  animation: coachGlow 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.5s 3;
+}
 
 /* ---------------------------------------------------------------- the finishes of a clicked wall / the floor */
 
@@ -932,7 +969,8 @@
   }
   .gapLayer[data-pulse] .gap[data-on] .gapDot,
   .stage[data-coach="dims"] :global(.emna-studio-dim[role="button"]),
-  .coachCard {
+  .coachCard,
+  .coachDot[data-on] {
     animation: none;
   }
   .tb,

@@ -253,6 +253,11 @@ export interface ModuleTypeDef {
   hood?: boolean;
   /** empty space (no cabinet), any width — shown as a clickable outline in the studio */
   spacer?: boolean;
+  /**
+   * the front-coloured filler strip of an edited base run (base "filer", any width minWidth–maxWidth): no cabinet, drawn
+   * and priced like the planner's own filler; never offered in a picker (moduleTypes / slotOptions leave it out)
+   */
+  filler?: boolean;
   /** share of the zone's per-metre front price this type uses (1 = carcass + front; open units less; spacers 0) */
   frontShare?: number;
   /** false = nothing moves (open shelves, empty space) — no mechanism demo */
@@ -1154,6 +1159,23 @@ export const catalog: Catalog = {
       frontShare: 0,
       demo: false,
     }),
+    // ---- the planner's filler strip kept in an edited base run (never offered: moduleTypes leaves it out)
+    mod({
+      id: "filer",
+      name: "Ispuna (filer)",
+      zone: "base",
+      code: "f",
+      group: "prazno",
+      description: "Uska ploča u boji fronte između elemenata i zida, kutnog elementa ili visokog stupa.",
+      // priced like the planner's own filler (price.ts: a plan piece), not as a cabinet
+      priceAdd: 0,
+      widths: [],
+      minWidth: 1,
+      maxWidth: 29,
+      filler: true,
+      frontShare: 0,
+      demo: false,
+    }),
     // ---- blind corner units (corner slots only)
     mod({
       id: "kutni",
@@ -1581,13 +1603,16 @@ export function isModuleTypeId(id: string): boolean {
 }
 /** the widths a type can be placed at: its catalogue widths (spacers: any whole cm between min and max) */
 export function widthAllowed(def: ModuleTypeDef, width: number): boolean {
-  if (def.spacer) return width >= def.minWidth - 1e-6 && width <= def.maxWidth + 1e-6;
+  if (def.spacer || def.filler) return width >= def.minWidth - 1e-6 && width <= def.maxWidth + 1e-6;
   return def.widths.includes(Math.round(width)) && Math.abs(width - Math.round(width)) < 1e-6;
 }
-/** module types of a zone, in catalogue order (island = base types allowed on the island; corner types excluded) */
+/**
+ * module types of a zone, in catalogue order (island = base types allowed on the island; corner types and the filler
+ * strip excluded — what an element can be switched to or what can be added)
+ */
 export function moduleTypes(zone: ModuleZone | "island"): ModuleTypeDef[] {
   const z: ModuleZone = zone === "island" ? "base" : zone;
-  return catalog.modules.filter((m) => m.zone === z && !m.corner && (zone !== "island" || m.island));
+  return catalog.modules.filter((m) => m.zone === z && !m.corner && !m.filler && (zone !== "island" || m.island));
 }
 /** types a corner slot of this zone accepts (blind corners, L-shaped and diagonal units, and the `cornerOk` doors) */
 export function cornerTypes(zone: "base" | "upper"): ModuleTypeDef[] {

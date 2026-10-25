@@ -193,6 +193,15 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     }
   }
   addGroup("Visoki elementi", plan.slots.filter((s) => s.zone === "tall" && s.list?.id === "tall"), "tall", ZONE_WEIGHT.tall * hs.tall);
+  // tall units standing in a wall's base run (CabinetSpec.tall: a fridge / oven column between the base cabinets): a line per wall
+  for (const wall of walls) {
+    addGroup(
+      `Visoki elementi u nizu – zid ${String(wall).toUpperCase()}`,
+      plan.slots.filter((s) => s.zone === "tall" && s.run === wall && s.list?.id === wall),
+      "tall",
+      ZONE_WEIGHT.tall * hs.tall,
+    );
+  }
   // more tall columns at other run ends (KitchenConfig.tallRuns): a line each
   for (const l of plan.lists) {
     const end = tallListEnd(l.id);
@@ -299,7 +308,11 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   }
 
   /* ---------------- worktop (walls by the metre, island slab as one piece) */
-  const wallTopM = plan.runs.reduce((sum, r) => sum + (r.worktop ? cmToM(r.worktop.to - r.worktop.from) : 0), 0);
+  // its pieces (tall units standing in a run interrupt it: RunPlan.worktops); an older plan shape: the one range
+  const wallTopM = plan.runs.reduce(
+    (sum, r) => sum + (Array.isArray(r.worktops) ? r.worktops.reduce((n, w) => n + cmToM(w.to - w.from), 0) : r.worktop ? cmToM(r.worktop.to - r.worktop.from) : 0),
+    0,
+  );
   let islandSlab = 0;
   // the bar / table top has its own line (it may be in another material)
   const barTop = ic?.barTop ?? 0;

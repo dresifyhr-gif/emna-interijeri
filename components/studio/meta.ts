@@ -154,17 +154,28 @@ const ROW_SHORT: Record<RowZone, string> = { upper: "gornji", base: "donji", tal
  */
 export const isFlipped = (run: RunId) => run === "isl";
 
-/** the slots of one row, in on-screen order (left → right as drawn) */
+/**
+ * A tall unit standing in a wall's base run (CabinetSpec.tall: slot "a-tall-0", zone "tall", its list the wall's base list
+ * "a") — not one of the tall columns at a run's end (list "tall" / "tall:b-left"). The UI shows it in the base row.
+ */
+export const isInRunTall = (s: Pick<PlanSlot, "zone" | "run" | "list">): boolean => s.zone === "tall" && s.run !== "isl" && s.list?.id === s.run;
+
+/**
+ * The slots of one row, in on-screen order (left → right as drawn). The base row of a wall includes the tall units
+ * standing in it (in their place between the cabinets); the tall row is the columns at the run's ends only.
+ */
 export function rowSlots(slots: PlanSlot[], run: RunId, zone: RowZone): PlanSlot[] {
-  const out = slots.filter((s) => s.run === run && s.zone === zone).sort((p, q) => p.x - q.x);
+  const inRow = (s: PlanSlot) => s.run === run && (zone === "base" ? s.zone === "base" || isInRunTall(s) : s.zone === zone && !(zone === "tall" && isInRunTall(s)));
+  const out = slots.filter(inRow).sort((p, q) => p.x - q.x);
   return isFlipped(run) ? out.reverse() : out;
 }
 
-/** the row a slot belongs to */
-export const rowOf = (s: PlanSlot): { run: RunId; zone: RowZone } => ({ run: s.run, zone: s.zone });
+/** the row a slot belongs to (a tall unit standing in a base run: the base row) */
+export const rowOf = (s: PlanSlot): { run: RunId; zone: RowZone } => ({ run: s.run, zone: isInRunTall(s) ? "base" : s.zone });
 
-/** "Zid A · donji" / "Visoki stup · zid B" / "Otok" */
+/** "Zid A · donji" / "Zid A · visoki" (a tall unit standing in the run) / "Visoki stup · zid B" / "Otok" */
 export function slotPlace(s: PlanSlot, layout?: Layout): string {
+  if (isInRunTall(s)) return `${runName(s.run)} · visoki`;
   if (s.zone === "tall") return s.run === "isl" ? "Visoki stup" : `Visoki stup · zid ${s.run.toUpperCase()}`;
   if (s.zone === "island") return islandWord(layout);
   return `${runName(s.run)} · ${ROW_SHORT[s.zone]}`;
@@ -178,6 +189,8 @@ export function sideHint(run: RunId, layout?: Layout): string {
 
 /** the list a reset of this slot's run should clear (resetRun arguments): a tall column of its own resets alone */
 export function resetTarget(s: PlanSlot): { run: WallId | "isl" | "tall" | Extract<ListId, `tall:${string}`>; zone?: "base" | "upper" } {
+  // a tall unit standing in a base run is part of that wall's base list
+  if (isInRunTall(s)) return { run: s.run as WallId, zone: "base" };
   if (s.zone === "tall") return { run: s.list && s.list.id.startsWith("tall:") ? (s.list.id as Extract<ListId, `tall:${string}`>) : "tall" };
   if (s.zone === "island") return { run: "isl" };
   return { run: s.run as WallId, zone: s.zone === "upper" ? "upper" : "base" };
@@ -191,7 +204,8 @@ export const listOfSlot = (s: PlanSlot): ListId | null => s.list?.id ?? null;
  */
 export function noRoomText(s: PlanSlot, free: number): string {
   const left = free >= 1 ? ` — slobodno je još ${Math.floor(free)} cm` : "";
-  if (s.zone === "tall") {
+  // a tall unit standing in a base run: `free` is the base run's (edit.ts SlotEditInfo)
+  if (s.zone === "tall" && !isInRunTall(s)) {
     const wall = String(s.run).toUpperCase();
     return `Visoki stup uz zid ${wall} je pun${left}. Produžite kuhinju na zidu ${wall} ili suzite, zamijenite ili uklonite neki visoki element.`;
   }

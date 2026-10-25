@@ -2,7 +2,7 @@
 
 /**
  * Front view of one run, to scale, as a technical drawing: the wall with its window, wall units, base cabinets,
- * the tall column, fillers and the worktop. Cabinets are clickable (they select the element); keyboard and
+ * the tall columns (at its ends and standing in it), fillers and the worktop. Cabinets are clickable (they select the element); keyboard and
  * assistive tech use the element list next to it, so the drawing itself is one image.
  *
  * The island is drawn mirrored (as seen from the room, towards wall A) — see meta.isFlipped.
@@ -169,19 +169,13 @@ export function RunElevation({
         />
       ))}
 
-      {/* worktop */}
+      {/* worktop: its pieces (a tall unit standing in the run interrupts it — RunPlan.worktops) */}
       {isl ? (
         <rect x={0} y={Y(worktop)} width={len} height={DIM.worktopT} fill="rgba(242,239,233,.32)" />
       ) : (
-        runPlan?.worktop && (
-          <rect
-            x={runPlan.worktop.from}
-            y={Y(worktop)}
-            width={runPlan.worktop.to - runPlan.worktop.from}
-            height={4}
-            fill="rgba(242,239,233,.32)"
-          />
-        )
+        (runPlan?.worktops ?? (runPlan?.worktop ? [runPlan.worktop] : [])).map((w, i) => (
+          <rect key={`w${i}`} x={w.from} y={Y(worktop)} width={w.to - w.from} height={4} fill="rgba(242,239,233,.32)" />
+        ))
       )}
 
       {/* fillers and end panels */}

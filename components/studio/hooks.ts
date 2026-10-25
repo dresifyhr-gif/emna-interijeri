@@ -21,6 +21,14 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
+/**
+ * prefers-reduced-motion, false on the server AND in the hydrating render (then the real value, right after mount).
+ * framer-motion's useReducedMotion is null on the server but already true / false in the client's first render: a style
+ * that depends on it renders differently there — a hydration mismatch. The shells that render with the page (TopBar,
+ * DesktopPanel, MobileSheet) take this one.
+ */
+export const useReducedMotionSafe = (): boolean => useMediaQuery("(prefers-reduced-motion: reduce)");
+
 const noop = () => () => {};
 
 /** the window's inner size, re-read on resize (0 × 0 on the server) */

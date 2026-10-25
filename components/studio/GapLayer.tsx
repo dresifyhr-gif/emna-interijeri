@@ -11,8 +11,8 @@
  *
  * A click opens the add picker anchored at the "+" (AddPicker: widths preselected to what fills the place, the common
  * elements as big tiles, "Više elemenata" for the rest — lib/studio/edit.ts gapOptions checks every width by planning
- * it; at a run's end the tall units are in it too). A pick inserts it (insertAtGap); the new element is selected, so
- * its toolbar takes over.
+ * it; in a wall's base row — empty space, a run's end, between two cabinets — the tall units are in it too, with a
+ * "visoki" badge). A pick inserts it (insertAtGap); the new element is selected, so its toolbar takes over.
  *
  * Position: from ViewInfo (api.subscribe), written straight into the DOM — no React render per frame, and nothing here
  * asks the engine to render. React renders only when the plan changes (the set of gaps). A "+" that would sit on a

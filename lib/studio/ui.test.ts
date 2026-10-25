@@ -1,8 +1,10 @@
 /**
- * Studio UI helpers (components/studio/meta.ts, room.ts, addModel.ts) on top of lib/studio/edit.ts: the names the room /
- * kitchen controls use (wall ends, "+" places, the peninsula), what "Cijeli zid" off, the kitchen-length editor,
- * "Podigni strop na X cm" and the bar's length switch do, that every "+" the studio can show offers something to add,
- * and that what the add picker offers first (its first tile at the preselected width) can be added.
+ * Studio UI helpers (components/studio/meta.ts, room.ts, addModel.ts, tallSwap.ts) on top of lib/studio/edit.ts: the
+ * names the room / kitchen controls use (wall ends, "+" places, the peninsula), what "Cijeli zid" off, the kitchen-length
+ * editor, "Podigni strop na X cm" and the bar's length switch do, that every "+" the studio can show offers something to
+ * add, that what the add picker offers first (its first tile at the preselected width) can be added, and tall units
+ * standing in a base run as the UI shows them (their row, the question before "Zamijeni" takes another element away,
+ * the way back to a base cabinet).
  *
  *   npx tsx --test lib/studio/ui.test.ts
  */
@@ -10,8 +12,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { extentRange, offsetFrom, raiseForTall, shorterBar, shorterKitchen } from "../../components/studio/room";
 import { addItems, addModel, bestWidth, gapStretch, widthFor, type AddZone } from "../../components/studio/addModel";
-import { gapPlace, isRoomCorner, islandWord, resetTarget, runName, seatsText, wallEndName } from "../../components/studio/meta";
-import { gapOptions, gapsOf, heightChoices, insertAtGap, islandChoices, kitchenExtent, remove, setBar, setKitchenExtent } from "./edit";
+import { gapPlace, isInRunTall, isRoomCorner, islandWord, noRoomText, resetTarget, rowOf, rowSlots, runName, seatsText, slotPlace, wallEndName } from "../../components/studio/meta";
+import { baseChoices, elementsWord, swapQuestion, tallSwap } from "../../components/studio/tallSwap";
+import { moduleDef } from "./catalog";
+import { changeType, gapOptions, gapsOf, heightChoices, insertAtGap, islandChoices, kitchenExtent, remove, setBar, setKitchenExtent, slotEditInfo } from "./edit";
 import { planKitchen, sanitizeConfig } from "./plan";
 import { configFromQuery, encodeConfig } from "./share";
 import { DEFAULT_CONFIG, type KitchenConfig, type Layout } from "./types";
@@ -262,3 +266,133 @@ describe("add picker", () => {
     assert.equal(m.best, 60);
   });
 });
+
+describe("tall units standing in a base run (the UI)", () => {
+  /** L: a 30 cm tall unit at the "+" between wall A's sink and dishwasher */
+  const withTall = () => {
+    const cfg = cfgOf({ layout: "L" });
+    const r = insertAtGap(cfg, "seam:a:2", "ormar", 30, "tall");
+    assert.ok(r.ok, r.warning ?? "");
+    return { cfg: r.cfg, id: r.slotId! };
+  };
+
+  it("is listed in the base row in its place, not in the tall column's row; its reset is the wall's", () => {
+    const { cfg, id } = withTall();
+    const p = planKitchen(cfg);
+    const t = p.slots.find((s) => s.id === id)!;
+    assert.equal(t.zone, "tall");
+    assert.ok(isInRunTall(t));
+    assert.ok(!p.slots.filter((s) => s.list?.id === "tall").some(isInRunTall), "the end columns are not in the run");
+    const base = rowSlots(p.slots, "a", "base");
+    const i = base.findIndex((s) => s.id === id);
+    assert.ok(i > 0 && i < base.length - 1, "between the cabinets");
+    for (let k = 1; k < base.length; k++) assert.ok(base[k].x >= base[k - 1].x + base[k - 1].width - 0.5, "left to right, no overlap");
+    assert.ok(!rowSlots(p.slots, "a", "tall").some((s) => s.id === id));
+    assert.ok(rowSlots(p.slots, "a", "tall").length > 0, "the end column stays in its own row");
+    assert.deepEqual(rowOf(t), { run: "a", zone: "base" });
+    assert.deepEqual(resetTarget(t), { run: "a", zone: "base" });
+    assert.equal(slotPlace(t), "Zid A · visoki");
+    assert.doesNotMatch(noRoomText(t, 4), /Visoki stup/);
+  });
+
+  it('"Zamijeni": asks only when another element goes, in plain Croatian, and names a lost sink / hob / dishwasher', () => {
+    assert.equal(swapQuestion(1, 1), "Ukloniti donji i gornji element i staviti visoki?");
+    assert.equal(swapQuestion(1, 2), "Ukloniti donji element i 2 gornja elementa i staviti visoki?");
+    assert.equal(swapQuestion(0, 1), "Ukloniti gornji element i staviti visoki?");
+    assert.equal(elementsWord(5, "gornji"), "5 gornjih elemenata");
+    assert.equal(elementsWord(22, "donji"), "22 donja elementa");
+    const cfg = cfgOf({ layout: "L" });
+    const p = planKitchen(cfg);
+    // a wall unit over the dishwasher: the dishwasher goes too
+    const up = p.slots.find((s) => s.run === "a" && s.zone === "upper" && !s.corner && s.x >= 170)!;
+    const sw = tallSwap(cfg, p, up, "hladnjak");
+    assert.ok(sw.result.ok, sw.result.warning ?? "");
+    assert.equal(sw.ask, "Ukloniti donji i gornji element i staviti visoki?");
+    assert.deepEqual(sw.essentials, ["perilica posuđa"]);
+    assert.match(sw.result.warning ?? "", /Gornji i donji element zamijenjeni visokim elementom/);
+    // the same edit as changeType (what the toolbar applies on "Da, zamijeni")
+    assert.equal(JSON.stringify(sw.result.cfg), JSON.stringify(changeType(cfg, up.id, "hladnjak", "tall").cfg));
+    // a base cabinet with only bare wall above it: nothing else goes — no question
+    let bare = cfg;
+    for (const id of ["b-upper-2", "b-upper-3"]) bare = remove(bare, id).cfg;
+    const pb = planKitchen(bare);
+    const b = pb.slots.find((s) => s.id === "b-base-2")!;
+    const free = tallSwap(bare, pb, b, "ormar");
+    assert.ok(free.result.ok, free.result.warning ?? "");
+    assert.equal(free.base, 1);
+    assert.equal(free.upper, 0);
+    assert.equal(free.ask, null);
+  });
+
+  it("every tall unit the studio offers in an element's place goes in, and the question matches what went", () => {
+    let seen = 0;
+    for (const layout of LAYOUTS) {
+      const cfg = cfgOf({ layout });
+      const p = planKitchen(cfg);
+      for (const s of p.slots.filter((x) => x.run !== "isl" && (x.zone === "base" || x.zone === "upper") && !x.corner)) {
+        const info = slotEditInfo(cfg, s.id);
+        for (const t of info?.tall.filter((x) => x.width !== null) ?? []) {
+          const sw = tallSwap(cfg, p, s, t.id);
+          assert.ok(sw.result.ok, `${layout} ${s.id} ${t.id}: ${sw.result.warning}`);
+          const after = planKitchen(sw.result.cfg);
+          assert.ok(after.slots.some((x) => x.id === sw.result.slotId && x.zone === "tall"), `${layout} ${s.id}: the tall unit is selected`);
+          // the core's note says how many wall units went (edit.ts commitTall): the question counts the same
+          const w = sw.result.warning ?? "";
+          if (/Gornji i donji element zamijenjeni/.test(w) && !/iznad visokog/.test(w)) assert.deepEqual([sw.base, sw.upper], [1, 1], `${layout} ${s.id} ${t.id}: ${w}`);
+          const m = /Donji element i (\d+) gornja? elementa? zamijenjeni/.exec(w);
+          if (m) assert.equal(sw.upper, Number(m[1]), `${layout} ${s.id} ${t.id}: ${w}`);
+          if (sw.ask === null) assert.equal(sw.base + sw.upper, Number(!moduleDefSpacer(s)), `${layout} ${s.id} ${t.id}: nothing else went`);
+          seen++;
+        }
+      }
+    }
+    assert.ok(seen >= 40, `only ${seen}`);
+  });
+
+  it("a tall unit standing in the run can be a base cabinet again", () => {
+    const { cfg, id } = withTall();
+    const t = planKitchen(cfg).slots.find((s) => s.id === id)!;
+    const t0 = performance.now();
+    const back = baseChoices(cfg, t);
+    assert.ok(performance.now() - t0 < 200, "planned quickly enough for a picker");
+    const fit = back.filter((c) => c.width !== null);
+    assert.ok(fit.some((c) => c.id === "ladice" || c.id === "vrata"), JSON.stringify(back.map((c) => [c.id, c.width])));
+    const r = changeType(cfg, id, fit[0].id);
+    assert.ok(r.ok, r.warning ?? "");
+    const now = planKitchen(r.cfg).slots.find((s) => s.id === r.slotId)!;
+    assert.equal(now.zone, "base");
+    assert.equal(now.width, fit[0].width);
+    // other slots: nothing to go back to
+    assert.deepEqual(baseChoices(cfg, planKitchen(cfg).slots.find((s) => s.zone === "base" && !s.corner)!), []);
+  });
+
+  it("a tall unit that fits is always among the common tiles", () => {
+    const t = (id: string, group = "ladice") => ({ id, name: id, description: "", group: group as "ladice", widths: [15, 30], width: 15, current: false, fitting: [15] });
+    const items = addItems(["ladice", "vrata", "perilica", "smece", "boce", "police", "sudoper"].map((id) => t(id)), [t("smocnica", "visoki")]);
+    const m = addModel(items, "base", 15);
+    assert.equal(m.top.length, 6);
+    assert.equal(m.top[5].t.id, "smocnica");
+    assert.ok(m.top[5].tall);
+    assert.equal(m.top.length + m.rest.length, m.fit.length);
+    assert.ok(!m.rest.some((x) => x.tall));
+  });
+
+  it("the add picker at a wall's base '+' between cabinets mixes tall units into the common tiles", () => {
+    const cfg = cfgOf({ layout: "L" });
+    const g = gapsOf(cfg).find((x) => x.id === "seam:a:2");
+    assert.ok(g);
+    const o = gapOptions(cfg, g.id)!;
+    const m = addModel(addItems(o.types, o.tall), "base", gapStretch(g));
+    assert.ok(m.top.some((x) => x.tall), JSON.stringify(m.top.map((x) => x.t.id)));
+    const first = m.top.find((x) => x.tall)!;
+    const r = insertAtGap(cfg, g.id, first.t.id, widthFor(first, m.best) ?? undefined, "tall");
+    assert.ok(r.ok, r.warning ?? "");
+  });
+});
+
+/** empty space / a filler strip (not a cabinet) */
+function moduleDefSpacer(s: { zone: "base" | "upper" | "tall" | "island"; type: string }): boolean {
+  const d = moduleDef(s.zone, s.type);
+  return Boolean(d?.spacer || d?.filler);
+}
+

@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import type { Mood } from "@/lib/studio/types";
 import { Wordmark } from "@/components/site/Wordmark";
 import { Segmented } from "./controls";
+import { useReducedMotionSafe } from "./hooks";
 import { CloseIcon, ListIcon, MoonIcon, SunIcon } from "./icons";
 import { EASE, STEPS } from "./meta";
 
@@ -26,7 +27,8 @@ export function TopBar({
   controls: boolean;
   onSummary: () => void;
 }) {
-  const reduce = useReducedMotion();
+  // known only after mount (hooks.ts useReducedMotionSafe): the server and the hydrating render agree
+  const reduce = useReducedMotionSafe();
   const st = STEPS[step];
   const fade = {
     initial: false as const,

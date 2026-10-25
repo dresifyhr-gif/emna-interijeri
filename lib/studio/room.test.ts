@@ -333,9 +333,11 @@ describe("gaps (the studio's \"+\")", () => {
     const ext = setKitchenExtent(kitchen({ ...OWNER, walls: { a: 400, b: 450, c: 220 } }), "a", { length: 300 }).cfg;
     const r = insertAtGap(ext, "end:a-right", "ladice", 60);
     assert.ok(r.ok, r.warning ?? "");
-    assert.deepEqual(kitchenRange(r.cfg, "a"), { from: 0, to: 360 });
+    // the tall column stood at that end: the cabinet goes beyond it, the run grows by it and the end panel beyond it
+    assert.deepEqual(kitchenRange(r.cfg, "a"), { from: 0, to: 362 });
     const sl = planKitchen(r.cfg).slots.find((s) => s.id === r.slotId)!;
     assert.equal(sl.type, "ladice");
+    assert.ok(planKitchen(r.cfg).slots.filter((s) => s.zone === "tall").every((s) => s.x + s.width <= sl.x), "beyond the column");
     assert.ok(!insertAtGap(ext, "end:a-right", "ladice", 120).ok, "more than the bare wall");
     const isl = insertAtGap(kitchen({ layout: "otok", island: 200 }), "isl:right", "ladice", 60);
     assert.ok(isl.ok);
