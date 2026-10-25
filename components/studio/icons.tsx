@@ -633,6 +633,43 @@ export const InsertIcon = ({ side, ...p }: P & { side: "left" | "right" }) => (
   </Svg>
 );
 
+export const ChevronDown = (p: P) => (
+  <Svg {...p}>
+    <path d="M6.5 9.5 12 15l5.5-5.5" {...line} strokeWidth={1.4} />
+  </Svg>
+);
+
+/** "Zamijeni": another type in the same place */
+export const SwapIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M5 9h12.5M14.5 5.5 18 9l-3.5 3.5" {...line} />
+    <path d="M19 15H6.5M9.5 11.5 6 15l3.5 3.5" {...line} />
+  </Svg>
+);
+
+/** "Više": the full element editor */
+export const MoreIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M6.5 12h.01M12 12h.01M17.5 12h.01" {...line} strokeWidth={2.2} />
+  </Svg>
+);
+
+/** a width between two ticks (the width chip, wall lengths) */
+export const WidthIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4.5 7v10M19.5 7v10" {...line} strokeOpacity={0.7} />
+    <path d="M7.5 12h9M10 9.5 7.5 12l2.5 2.5M14 9.5l2.5 2.5-2.5 2.5" {...line} />
+  </Svg>
+);
+
+/** a height between two ticks (cabinet heights, "do stropa") */
+export const HeightIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M7 4.5h10M7 19.5h10" {...line} strokeOpacity={0.7} />
+    <path d="M12 7.5v9M9.5 10 12 7.5l2.5 2.5M9.5 14l2.5 2.5 2.5-2.5" {...line} />
+  </Svg>
+);
+
 export const LayersIcon = (p: P) => (
   <Svg {...p}>
     <rect x="4.5" y="4.5" width="15" height="6.5" rx="1" {...line} />

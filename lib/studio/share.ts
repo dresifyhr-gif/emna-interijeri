@@ -15,6 +15,8 @@
  *     fb fu ft fi         front of the base / upper / tall / island zone
  *     hc si ta ap pl le   handle colour, sink, tap, appliances, plinth, LED (catalogue finish ids)
  *     zw zf               room: wall colour, floor
+ *     h                   heights (KitchenConfig.heights): mode n / s / c (standard / do-stropa / custom), then
+ *                         u<wall-unit height> t<tall column top> (custom) and p<worktop> (not 90): "s", "sp95", "cu90t240"
  *
  * v1 (still decoded):
  *   1.L.380.220.220.260.antracit.mramor.bez.1.240.1.0.0 — the 14th field holds positional element edits
@@ -27,7 +29,7 @@
 
 import { moduleByCode, moduleDef, type ModuleZone } from "./catalog";
 import { sanitizeConfig } from "./plan";
-import { DEFAULT_CONFIG, type BaseRunId, type CabinetSpec, type CornerId, type FrontZone, type KitchenConfig, type WallId } from "./types";
+import { DEFAULT_CONFIG, type BaseRunId, type CabinetSpec, type CornerId, type FrontZone, type HeightSpec, type KitchenConfig, type WallId } from "./types";
 
 export { sanitizeConfig };
 
@@ -155,7 +157,31 @@ export function encodeConfig(input: KitchenConfig): string {
   }
   if (c.room?.wall && SAFE_ID.test(c.room.wall)) parts.push(`zw-${c.room.wall}`);
   if (c.room?.floor && SAFE_ID.test(c.room.floor)) parts.push(`zf-${c.room.floor}`);
+  if (c.heights) parts.push(`h-${encodeHeights(c.heights)}`);
   return parts.join(".");
+}
+
+const HEIGHT_MODE: Record<HeightSpec["mode"], string> = { standard: "n", "do-stropa": "s", custom: "c" };
+
+function encodeHeights(h: HeightSpec): string {
+  let out = HEIGHT_MODE[h.mode];
+  if (h.mode === "custom") {
+    if (h.upper !== undefined) out += `u${Math.round(h.upper)}`;
+    if (h.tallTop !== undefined) out += `t${Math.round(h.tallTop)}`;
+  }
+  if (h.worktop !== undefined) out += `p${Math.round(h.worktop)}`;
+  return out;
+}
+
+function decodeHeights(s: string): HeightSpec | null {
+  const m = /^([nsc])(?:u(\d{2,3}))?(?:t(\d{3}))?(?:p(\d{2,3}))?$/.exec(s);
+  if (!m) return null;
+  const mode = (Object.keys(HEIGHT_MODE) as HeightSpec["mode"][]).find((k) => HEIGHT_MODE[k] === m[1]) ?? "standard";
+  const out: HeightSpec = { mode };
+  if (m[2]) out.upper = Number(m[2]);
+  if (m[3]) out.tallTop = Number(m[3]);
+  if (m[4]) out.worktop = Number(m[4]);
+  return out;
 }
 
 function fromBase64Url(s: string): string | null {
@@ -268,6 +294,10 @@ export function decodeConfig(s: string): KitchenConfig | null {
       }
       if (key === "zw") room.wall = val;
       else if (key === "zf") room.floor = val;
+      else if (key === "h") {
+        const h = decodeHeights(val);
+        if (h) cfg.heights = h;
+      }
     }
     if (Object.keys(runs).length) cfg.runs = runs;
     if (Object.keys(upperRuns).length) cfg.upperRuns = upperRuns;

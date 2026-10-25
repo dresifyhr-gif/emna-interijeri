@@ -134,6 +134,17 @@ export function summarize(cfg: KitchenConfig): string[] {
     lines.push(`Zid ${WALL_NAME[w]} (${WALL_HINT[w]}): ${c.walls[w]} cm`);
   }
   lines.push(`Visina stropa: ${c.ceiling} cm`);
+  // heights other than the standard ones (KitchenConfig.heights), as the plan fitted them under the ceiling
+  if (c.heights) {
+    const H = plan.heights;
+    const r = Math.round;
+    const parts = [`radna ploča ${r(H.worktop)} cm`, `gornji elementi ${r(H.upperTop - H.upperBottom)} cm (${r(H.upperBottom)}–${r(H.upperTop)} cm od poda)`];
+    if (H.topRow) parts.push(`nadgradni ormarići ${r(H.topRow.to - H.topRow.from)} cm (do ${r(H.topRow.to)} cm)`);
+    if (plan.slots.some((s) => s.zone === "tall")) parts.push(`visoki stup do ${r(H.tallTop)} cm`);
+    if (H.cornice) parts.push(`lajsna do stropa ${r(H.cornice.to - H.cornice.from)} cm`);
+    const mode = H.mode === "do-stropa" ? "do stropa" : H.mode === "custom" ? "po mjeri" : "standardne";
+    lines.push(`Visine: ${mode} — ${parts.join(", ")}`);
+  }
 
   if (plan.window) {
     const w = plan.window;

@@ -46,6 +46,7 @@ import {
   type FinishSpec,
   type FrontZone,
   type HandleStyle,
+  type HeightSpec,
   type KitchenConfig,
   type Layout,
   type RoomSpec,
@@ -98,15 +99,51 @@ export const DIM = {
   islandOverhangMax: 20,
   /** stone backsplash board between worktop and wall units */
   backsplashT: 1.2,
+  /** worktop thickness (worktop surface = plinth + base carcass + this) */
+  worktopT: 4,
+  /** standard distance from the worktop surface up to the bottom of the wall units */
+  upperGap: 57,
+  /** the least that distance may shrink to when tall wall units must fit under a low ceiling */
+  upperGapMin: 45,
+  /** standard (and custom) heights: the cabinets stay at least this far below the ceiling (fitting room) */
+  ceilingGap: 3,
+  /** "do stropa": the front-coloured cornice strip between the cabinets' top line and the ceiling */
+  cornice: 2,
+  /** "do stropa": one row of wall units up to this height, a second row of top cabinets above it */
+  upperRowMax: 105,
+  /** "do stropa": wall units of the main row under a second row: from the standard 72 cm up to this */
+  upperMainMax: 120,
+  /** "do stropa": the second row of top cabinets (nadgradni ormarići) */
+  topRowMin: 30,
+  topRowMax: 60,
+  /** tall units taller than this (carcass) are split into the unit and a top box */
+  tallOnePiece: 245,
+  /** custom heights: lowest top of the tall column */
+  tallTopMin: 180,
   /** a window sill at least this far above the worktop gets an inside sill ledge */
   sillLedgeMin: 5,
   /** how far that ledge reaches below the sill (the backsplash under the window stops there) */
   sillLedgeDrop: 2.3,
 } as const;
 
-/** explicit lists: at most this many cabinets per run, this many tall units */
+/** explicit lists: at most this many cabinets per run, this many tall units (any mix of widths, as long as they fit) */
 export const MAX_LIST = 30;
-export const MAX_TALL = 3;
+export const MAX_TALL = 6;
+
+/** worktop heights the studio offers (cm, surface above the floor) */
+export const WORKTOP_HEIGHTS = [85, 90, 95] as const;
+/** wall-unit heights for custom heights (cm) */
+export const UPPER_HEIGHTS = [60, 72, 80, 90, 105, 120] as const;
+/** the standard heights, as every older link has them */
+export const STANDARD_HEIGHTS: Readonly<Required<Pick<HeightSpec, "mode" | "worktop">>> = { mode: "standard", worktop: 90 };
+
+/** plinth and base carcass (cm) for a worktop height: 85 = 5 + 76 + 4, 90 = 10 + 76 + 4, 95 = 15 + 76 + 4 */
+export function baseHeights(worktop: number): { plinth: number; carcass: number } {
+  // the 76 cm carcass (and every front on it) stays; the adjustable legs / plinth take the difference
+  // TODO(vlasnik): 85 cm s postoljem od 5 cm — ili korpus 72 cm + postolje 9 cm (treba podršku u engine/modules.ts)
+  const carcass = DIM.worktopTop - DIM.plinth - DIM.worktopT;
+  return { plinth: Math.max(5, Math.round(worktop) - carcass - DIM.worktopT), carcass };
+}
 /** an explicit run's remainder at least this wide stays free space (no filler) */
 const FREE_MIN = 30;
 
@@ -284,6 +321,30 @@ function cleanFinish(v: unknown): FinishSpec | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
+/**
+ * A valid HeightSpec, or undefined for the standard heights. Values snap to the offered options (worktop, wall-unit
+ * height) and to a sane range (tall column); fitting them under this config's ceiling is the planner's job
+ * (plan.heights, with a note), so a lower ceiling never loses what the customer asked for.
+ */
+function cleanHeights(v: unknown): HeightSpec | undefined {
+  if (!isObj(v)) return undefined;
+  const mode = v.mode === "do-stropa" || v.mode === "custom" ? v.mode : "standard";
+  const out: HeightSpec = { mode };
+  const wt = num(v.worktop, NaN);
+  if (Number.isFinite(wt)) {
+    const w = nearest(WORKTOP_HEIGHTS, wt);
+    if (w !== STANDARD_HEIGHTS.worktop) out.worktop = w;
+  }
+  if (mode === "custom") {
+    const up = num(v.upper, NaN);
+    out.upper = Number.isFinite(up) ? nearest(UPPER_HEIGHTS, up) : 72;
+    const tt = num(v.tallTop, NaN);
+    if (Number.isFinite(tt)) out.tallTop = Math.round(clamp(tt, DIM.tallTopMin, 350));
+  }
+  if (mode === "standard" && out.worktop === undefined) return undefined;
+  return out;
+}
+
 function cleanRoom(v: unknown): RoomSpec | undefined {
   if (!isObj(v)) return undefined;
   const out: RoomSpec = {};
@@ -390,6 +451,8 @@ function sanitizeShallow(input: unknown): KitchenConfig {
   if (finish) cfg.finish = finish;
   const room = cleanRoom(src.room);
   if (room) cfg.room = room;
+  const heights = cleanHeights(src.heights);
+  if (heights) cfg.heights = heights;
   return cfg;
 }
 
@@ -424,6 +487,8 @@ export function geometryKey(cfg: KitchenConfig): string {
     // the tall column's width moves the base runs and the worktop
     cfg.tall ? (cfg.tallRun ? cfg.tallRun.map((t) => t.width) : 1) : 0,
     cfg.layout === "otok" ? cfg.island : 0,
+    // cabinet heights: every module, the worktop and the walls' framing change
+    cfg.heights ? [cfg.heights.mode, cfg.heights.worktop ?? 0, cfg.heights.upper ?? 0, cfg.heights.tallTop ?? 0] : 0,
   ]);
 }
 
@@ -475,7 +540,35 @@ export interface Range {
 
 /** one piece of the stone backsplash (run-local x range, cm) */
 export interface BacksplashPiece extends Range {
-  /** top edge above the floor (cm); every piece starts on the worktop surface (DIM.worktopTop) */
+  /** top edge above the floor (cm); every piece starts on the worktop surface (plan.heights.worktop) */
+  top: number;
+}
+
+/**
+ * The cabinet heights of a plan (cm above the floor) — what KitchenConfig.heights asks for, fitted under the ceiling.
+ * The engine, the price and the summary read these, never the config.
+ */
+export interface HeightPlan {
+  mode: HeightSpec["mode"];
+  /** worktop surface */
+  worktop: number;
+  plinth: number;
+  /** base carcass (plinth + carcass + DIM.worktopT = worktop) */
+  carcass: number;
+  /** wall units (their main row) */
+  upperBottom: number;
+  upperTop: number;
+  /** "do stropa" on a tall ceiling: a second row of top cabinets on every wall unit, carcass from → to; else null */
+  topRow: Range | null;
+  /** top of the tall column */
+  tallTop: number;
+  /** tall units are split here into the unit and a top box (on the wall units' line when there is one); null = one piece */
+  tallSplit: number | null;
+  /** "do stropa": the cornice strip from the cabinets' top line up to the ceiling; else null */
+  cornice: Range | null;
+  /** cornice strips along the cabinets that reach the line (run-local x, cm) — "upper" over wall units, "tall" over the column */
+  cornices: { run: WallId; zone: "upper" | "tall"; from: number; to: number }[];
+  /** the highest cabinet edge */
   top: number;
 }
 
@@ -540,8 +633,11 @@ export interface KitchenPlan {
   cfg: KitchenConfig;
   walls: WallId[];
   ceiling: number;
+  /** = heights.upperBottom / heights.upperTop (the wall units' main row) */
   upperBottom: number;
   upperTop: number;
+  /** every cabinet height (KitchenConfig.heights fitted under the ceiling) */
+  heights: HeightPlan;
   window: WindowPlan | null;
   runs: RunPlan[];
   island: IslandPlan | null;
@@ -1068,6 +1164,9 @@ interface PlanCtx {
   upperTop: number;
   upperBottom: number;
   win: WindowPlan | null;
+  heights: HeightPlan;
+  /** notes from fitting the heights under the ceiling */
+  heightNotes: string[];
   /** window opening on that wall incl. DIM.windowMargin, or null */
   winRange: (wall: WallId) => Range | null;
   /** width of the tall column incl. both cover panels (cm) */
@@ -1080,8 +1179,8 @@ function planCtx(cfg: KitchenConfig): PlanCtx {
   const layout = cfg.layout;
   const walls = wallsFor(layout);
   const L = { a: cfg.walls.a, b: cfg.walls.b, c: cfg.walls.c };
-  const upperTop = Math.min(DIM.upperTopMax, cfg.ceiling - 3);
-  const upperBottom = Math.min(DIM.upperBottom, upperTop - 50);
+  const { heights, notes: heightNotes } = planHeights(cfg);
+  const { upperTop, upperBottom } = heights;
 
   let win: WindowPlan | null = null;
   if (cfg.window && walls.includes(cfg.window.wall)) {
@@ -1092,13 +1191,109 @@ function planCtx(cfg: KitchenConfig): PlanCtx {
       const offset = clamp(cfg.window.offset, 0, len - width);
       const top = windowTop(cfg.ceiling);
       const sill = clamp(cfg.window.sill, 0, top - DIM.windowMinHeight);
-      win = { wall: cfg.window.wall, offset, width, sill, top, ledge: sill >= DIM.worktopTop + DIM.sillLedgeMin };
+      win = { wall: cfg.window.wall, offset, width, sill, top, ledge: sill >= heights.worktop + DIM.sillLedgeMin };
     }
   }
   const winRange = (wall: WallId): Range | null =>
     win && win.wall === wall ? { from: win.offset - DIM.windowMargin, to: win.offset + win.width + DIM.windowMargin } : null;
   const tallZone = cfg.tallRun && cfg.tallRun.length ? cfg.tallRun.reduce((s, t) => s + t.width, 0) + 2 * DIM.panel : DIM.tallZone;
-  return { cfg, layout, walls, L, upperTop, upperBottom, win, winRange, tallZone };
+  return { cfg, layout, walls, L, upperTop, upperBottom, win, heights, heightNotes, winRange, tallZone };
+}
+
+const nearestBelow = (list: readonly number[], max: number): number | undefined => [...list].filter((x) => x <= max + 1e-6).sort((a, b) => b - a)[0];
+
+/**
+ * Cabinet heights for a config (cm). Standard: wall units 72 cm with the top at most 219 cm (+ worktop offset) and
+ * 3 cm below the ceiling, tall column on the same line — exactly the older kitchens. "do-stropa": everything up to
+ * the ceiling minus DIM.cornice; a second row of top cabinets once the wall units would exceed DIM.upperRowMax.
+ * Custom: the requested wall-unit height and tall-column top, lowered (with a note) when the ceiling is too low.
+ */
+export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: string[] } {
+  const spec = cfg.heights;
+  const mode = spec?.mode ?? "standard";
+  const worktop = spec?.worktop ?? STANDARD_HEIGHTS.worktop;
+  const { plinth, carcass } = baseHeights(worktop);
+  const C = cfg.ceiling;
+  const notes: string[] = [];
+  const maxTop = C - DIM.ceilingGap;
+  let ub = worktop + DIM.upperGap;
+  let ut: number;
+  let topRow: Range | null = null;
+  let tallTop: number;
+  let tallSplit: number | null = null;
+  let cornice: Range | null = null;
+
+  if (mode === "do-stropa") {
+    const line = C - DIM.cornice;
+    // a very low ceiling: wall units at least 50 cm, the gap to the worktop gives way first
+    if (line - ub < 50) ub = Math.max(worktop + DIM.upperGapMin, line - 50);
+    const avail = line - ub;
+    if (avail <= DIM.upperRowMax) ut = line;
+    else {
+      // main row 72–105 cm with a 30–45 cm top row; on very high ceilings up to 120 + 60 (the cornice takes the rest)
+      let main = clamp(avail - 45, 72, DIM.upperRowMax);
+      let top = avail - main;
+      if (top > DIM.topRowMax) {
+        main = Math.min(DIM.upperMainMax, avail - DIM.topRowMax);
+        top = Math.min(DIM.topRowMax, avail - main);
+      }
+      if (top < DIM.topRowMin) {
+        main = avail - DIM.topRowMin;
+        top = DIM.topRowMin;
+      }
+      ut = ub + main;
+      topRow = { from: ut, to: ut + top };
+    }
+    tallTop = topRow ? topRow.to : ut;
+    tallSplit = topRow ? topRow.from : tallTop - plinth > DIM.tallOnePiece ? tallTop - 45 : null;
+    cornice = { from: tallTop, to: C };
+  } else if (mode === "custom") {
+    const want = spec?.upper ?? 72;
+    let h = want;
+    if (ub + h > maxTop) {
+      ub = Math.max(worktop + DIM.upperGapMin, maxTop - h);
+      if (ub + h > maxTop) {
+        h = nearestBelow(UPPER_HEIGHTS, maxTop - worktop - DIM.upperGapMin) ?? Math.max(30, maxTop - worktop - DIM.upperGapMin);
+        ub = Math.min(worktop + DIM.upperGap, maxTop - h);
+        notes.push(`Gornji elementi od ${want} cm ne stanu ispod stropa od ${C} cm — prikazani su s ${h} cm.`);
+      }
+    }
+    ut = ub + h;
+    const wantTall = spec?.tallTop ?? ut;
+    tallTop = Math.max(DIM.tallTopMin, Math.min(wantTall, maxTop));
+    if (spec?.tallTop !== undefined && wantTall > maxTop) {
+      notes.push(`Visoki stup do ${wantTall} cm ne stane ispod stropa od ${C} cm — snižen je na ${Math.round(tallTop)} cm.`);
+    }
+    if (tallTop - plinth > DIM.tallOnePiece) {
+      // the split sits on the wall units' top line when that leaves a sensible top box, else 45 cm below the top
+      tallSplit = ut > tallTop - 70 && ut < tallTop - DIM.topRowMin ? ut : tallTop - 45;
+    }
+  } else {
+    ut = Math.min(DIM.upperTopMax + (worktop - STANDARD_HEIGHTS.worktop), maxTop);
+    ub = Math.min(ub, ut - 50);
+    tallTop = ut;
+  }
+  const heights: HeightPlan = {
+    mode,
+    worktop,
+    plinth,
+    carcass,
+    upperBottom: ub,
+    upperTop: ut,
+    topRow,
+    tallTop,
+    tallSplit,
+    cornice,
+    cornices: [],
+    top: Math.max(topRow ? topRow.to : ut, tallTop),
+  };
+  return { heights, notes };
+}
+
+/** a wall unit that carries a top box in the second row ("do stropa"): every cabinet, not empty space or an open shelf */
+export function hasTopBox(type: string): boolean {
+  const def = moduleDef("upper", type);
+  return Boolean(def && !def.spacer && type !== "polica");
 }
 
 /** possible places for the tall column, best first (open end of the run, clear of the window) */
@@ -1132,6 +1327,34 @@ const cutCount = (p: KitchenPlan) =>
 /** The single source of truth for cabinet positions. */
 export function planKitchen(input: KitchenConfig): KitchenPlan {
   return planCore(sanitizeConfig(input));
+}
+
+/**
+ * The widest the tall column may get (cm, its units without the two cover panels) where it stands now: the planner
+ * keeps it and leaves out no more cabinets of edited runs than it does today. 0 when the kitchen has no column.
+ * Binary search over the column width (~10 plans, ~1.5 ms); lib/studio/edit.ts uses it for "fits" and its notes.
+ */
+export function tallCapacity(input: KitchenConfig): number {
+  const cfg = sanitizeConfig(input);
+  if (!cfg.tall) return 0;
+  const now = planCore(cfg);
+  const used = now.slots.filter((s) => s.zone === "tall").reduce((n, s) => n + s.width, 0);
+  if (!used) return 0;
+  const cut0 = cutCount(now);
+  // a stand-in column of one unit `w` wide (only its width matters to where it fits)
+  const ok = (w: number) => {
+    const p = planCore({ ...cfg, tallRun: [{ type: "ormar", width: w }] });
+    return p.slots.some((s) => s.zone === "tall") && cutCount(p) <= cut0;
+  };
+  let lo = used;
+  let hi = Math.max(...wallsFor(cfg.layout).map((w) => cfg.walls[w]));
+  if (ok(hi)) return hi;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (ok(mid)) lo = mid;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /** plan of an already sanitized config; `legacy` applies cfg.overrides (sanitizeConfig's migration only) */
@@ -1248,7 +1471,7 @@ function migrateOverrides(cfg: KitchenConfig): KitchenConfig {
 /** cabinets for one tall-column choice (null = no column) */
 function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
   const { cfg, layout, walls, L, upperTop, upperBottom, win, winRange } = ctx;
-  const warnings: string[] = [];
+  const warnings: string[] = [...ctx.heightNotes];
   const lists: PlanList[] = [];
 
   // ---- run skeletons (base spans, upper spans, corners)
@@ -1536,7 +1759,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
       upperItems,
       tall: t,
       worktop,
-      backsplash: worktop ? backsplashOf(s.wall, s.length, worktop, upperBottom, win) : [],
+      backsplash: worktop ? backsplashOf(s.wall, s.length, worktop, upperBottom, win, ctx.heights.worktop) : [],
       counter: { from: s.cornerBaseLeft ? 0 : s.baseSpan.from, to: s.cornerBaseRight ? s.length : s.baseSpan.to },
       openLeft: s.openLeft,
       openRight: s.openRight,
@@ -1792,12 +2015,33 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     if (gx >= FREE_MIN) warnings.push(`${runLabel(b.wall)}: ${Math.round(gx)} cm ispod radne ploče ostaje bez elementa.`);
   }
 
+  // ---- "do stropa": cornice strips along everything that reaches the line (wall units with their top row, the column)
+  const heights: HeightPlan = { ...ctx.heights, cornices: [] };
+  if (heights.cornice) {
+    for (const b of builds) {
+      const ups = slots
+        .filter((s) => s.zone === "upper" && s.run === b.wall && hasTopBox(s.type))
+        .map((s) => ({ from: s.x, to: s.x + s.width }))
+        .concat(pieces.filter((p) => p.zone === "upper" && p.run === b.wall && p.kind === "filler").map((p) => ({ from: p.x, to: p.x + p.width })))
+        .sort((p, q) => p.from - q.from);
+      const merged: Range[] = [];
+      for (const r of ups) {
+        const last = merged[merged.length - 1];
+        if (last && r.from - last.to < 1.5) last.to = Math.max(last.to, r.to);
+        else merged.push({ ...r });
+      }
+      for (const r of merged) heights.cornices.push({ run: b.wall, zone: "upper", from: r.from, to: r.to });
+      if (b.tall) heights.cornices.push({ run: b.wall, zone: "tall", from: b.tall.from, to: b.tall.to });
+    }
+  }
+
   return {
     cfg,
     walls,
     ceiling: cfg.ceiling,
     upperBottom,
     upperTop,
+    heights,
     window: win,
     runs,
     island,
@@ -1821,7 +2065,7 @@ function setCorner(sl: PlanSlot, cid: CornerId, type: string): void {
  * (under a window that sits above the worktop it only reaches the sill). B and C reach into the corner,
  * up to the face of wall A's backsplash. The engine draws exactly these pieces and price.ts prices them.
  */
-function backsplashOf(wall: WallId, length: number, worktop: Range, upperBottom: number, win: WindowPlan | null): BacksplashPiece[] {
+function backsplashOf(wall: WallId, length: number, worktop: Range, upperBottom: number, win: WindowPlan | null, surface: number): BacksplashPiece[] {
   const from = wall === "c" ? DIM.backsplashT : worktop.from;
   const to = wall === "b" ? length - DIM.backsplashT : worktop.to;
   const out: BacksplashPiece[] = [];
@@ -1831,11 +2075,11 @@ function backsplashOf(wall: WallId, length: number, worktop: Range, upperBottom:
     if (wo > from) out.push({ from, to: Math.min(wo, to), top: upperBottom });
     if (we < to) out.push({ from: Math.max(we, from), to, top: upperBottom });
     const sillTop = win.sill - (win.ledge ? DIM.sillLedgeDrop : 0);
-    if (sillTop > DIM.worktopTop + 2) out.push({ from: Math.max(wo, from), to: Math.min(we, to), top: Math.min(sillTop, upperBottom) });
+    if (sillTop > surface + 2) out.push({ from: Math.max(wo, from), to: Math.min(we, to), top: Math.min(sillTop, upperBottom) });
   } else {
     out.push({ from, to, top: upperBottom });
   }
-  return out.filter((p) => p.to - p.from > 0.5 && p.top > DIM.worktopTop + 0.5);
+  return out.filter((p) => p.to - p.from > 0.5 && p.top > surface + 0.5);
 }
 
 function mkSlot(

@@ -6,6 +6,7 @@
  * assistive tech use the element list next to it, so the drawing itself is one image.
  *
  * The island is drawn mirrored (as seen from the room, towards wall A) — see meta.isFlipped.
+ * Heights come from plan.heights (worktop 85 / 90 / 95, wall units, the top row and cornice of "do stropa").
  */
 import { useState } from "react";
 import { DIM, type KitchenPlan, type PlanSlot, type RunId } from "@/lib/studio/plan";
@@ -14,13 +15,13 @@ import { ModuleGlyph } from "./icons";
 import { isFlipped, runName } from "./meta";
 
 const ACCENT = "#C9B99A";
-const BASE_TOP = DIM.worktopTop - 4;
 
 export function RunElevation({
   plan,
   run,
   selected = null,
   onPick,
+  onHover,
   boxWidth = 336,
   boxHeight = 132,
   className = "",
@@ -29,17 +30,29 @@ export function RunElevation({
   run: RunId;
   selected?: string | null;
   onPick?: (slotId: string) => void;
+  /** the pointer is over a cabinet (null: left the drawing) — e.g. to light it up in 3D */
+  onHover?: (slotId: string | null) => void;
   /** the rendered size in px (to decide whether a cabinet is big enough for its little drawing) */
   boxWidth?: number;
   boxHeight?: number;
   className?: string;
 }) {
-  const [hover, setHover] = useState<string | null>(null);
+  const [hover, setHoverState] = useState<string | null>(null);
+  const setHover = (id: string | null) => {
+    setHoverState(id);
+    onHover?.(id);
+  };
   const isl = run === "isl";
   const len = isl ? (plan.island?.length ?? 0) : plan.cfg.walls[run];
   if (!len) return null;
   const flip = isFlipped(run);
-  const top = isl ? DIM.worktopTop + 8 : Math.min(plan.ceiling, Math.max(plan.upperTop, plan.window?.top ?? 0) + 14);
+  const hp = plan.heights;
+  const worktop = hp.worktop;
+  const baseTop = worktop - DIM.worktopT;
+  // wall units with the top row of "do stropa" on them, the tall column to its own top
+  const upperTop = hp.topRow ? hp.topRow.to : hp.upperTop;
+  const cornice = hp.cornice;
+  const top = isl ? worktop + 8 : Math.min(plan.ceiling, Math.max(hp.top, upperTop, plan.window?.top ?? 0) + 14);
   const mx = Math.max(6, len * 0.025);
   const vbW = len + mx * 2;
   const vbH = top + 8;
@@ -53,9 +66,9 @@ export function RunElevation({
   const runPlan = isl ? null : plan.runs.find((r) => r.wall === run);
 
   const zoneY = (z: PlanSlot["zone"] | "filler-base" | "filler-upper" | "filler-tall"): [number, number] => {
-    if (z === "upper" || z === "filler-upper") return [plan.upperBottom, plan.upperTop];
-    if (z === "tall" || z === "filler-tall") return [DIM.plinth, plan.upperTop];
-    return [DIM.plinth, BASE_TOP];
+    if (z === "upper" || z === "filler-upper") return [hp.upperBottom, upperTop];
+    if (z === "tall" || z === "filler-tall") return [hp.plinth, hp.tallTop];
+    return [hp.plinth, baseTop];
   };
 
   // the blind part of wall A's corner unit, seen on walls B / C
@@ -65,8 +78,8 @@ export function RunElevation({
     const has = (id: string) => plan.slots.some((s) => s.cornerId === id);
     const baseId = atEnd ? "base-l" : "base-r";
     const upId = atEnd ? "upper-l" : "upper-r";
-    if (has(baseId)) cornerZones.push({ x: atEnd ? len - DIM.baseDepth : 0, w: DIM.baseDepth, y0: DIM.plinth, y1: BASE_TOP });
-    if (has(upId)) cornerZones.push({ x: atEnd ? len - DIM.upperDepth : 0, w: DIM.upperDepth, y0: plan.upperBottom, y1: plan.upperTop });
+    if (has(baseId)) cornerZones.push({ x: atEnd ? len - DIM.baseDepth : 0, w: DIM.baseDepth, y0: hp.plinth, y1: baseTop });
+    if (has(upId)) cornerZones.push({ x: atEnd ? len - DIM.upperDepth : 0, w: DIM.upperDepth, y0: hp.upperBottom, y1: upperTop });
   }
 
   const counts = { base: 0, upper: 0, tall: 0, island: 0 };
@@ -129,12 +142,12 @@ export function RunElevation({
 
       {/* worktop */}
       {isl ? (
-        <rect x={0} y={Y(DIM.worktopTop)} width={len} height={4} fill="rgba(242,239,233,.32)" />
+        <rect x={0} y={Y(worktop)} width={len} height={DIM.worktopT} fill="rgba(242,239,233,.32)" />
       ) : (
         runPlan?.worktop && (
           <rect
             x={runPlan.worktop.from}
-            y={Y(DIM.worktopTop)}
+            y={Y(worktop)}
             width={runPlan.worktop.to - runPlan.worktop.from}
             height={4}
             fill="rgba(242,239,233,.32)"
@@ -156,6 +169,22 @@ export function RunElevation({
           />
         );
       })}
+
+      {/* "do stropa": the cornice strip from the cabinets' top line to the ceiling */}
+      {!isl &&
+        cornice &&
+        hp.cornices
+          .filter((c) => c.run === run && c.to > c.from)
+          .map((c, i) => (
+            <rect
+              key={`c${i}`}
+              x={X(c.from, c.to - c.from)}
+              y={Y(cornice.to)}
+              width={c.to - c.from}
+              height={cornice.to - cornice.from}
+              fill="rgba(242,239,233,.1)"
+            />
+          ))}
 
       {/* cabinets */}
       {slots.map((s) => {
@@ -188,6 +217,19 @@ export function RunElevation({
               vectorEffect="non-scaling-stroke"
               style={{ transition: "fill .3s cubic-bezier(.2,.8,.2,1), stroke .3s cubic-bezier(.2,.8,.2,1)" }}
             />
+            {/* the top row on a wall unit / the top box on a tall unit ("do stropa") */}
+            {!spacer && ((s.zone === "upper" && hp.topRow) || (s.zone === "tall" && hp.tallSplit !== null)) && (
+              <line
+                x1={x + 0.6}
+                x2={x + s.width - 0.6}
+                y1={Y(s.zone === "upper" ? hp.upperTop : (hp.tallSplit ?? hp.tallTop))}
+                y2={Y(s.zone === "upper" ? hp.upperTop : (hp.tallSplit ?? hp.tallTop))}
+                stroke="currentColor"
+                strokeOpacity={0.55}
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
             {showGlyph && !spacer && (
               <ModuleGlyph type={s.type} zone={s.zone} x={x + (s.width - g) / 2} y={Y(y0 + (h + g) / 2)} width={g} height={g} />
             )}

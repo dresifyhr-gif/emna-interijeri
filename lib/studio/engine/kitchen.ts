@@ -12,7 +12,7 @@
 import * as THREE from "three";
 import { DIM, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId, type RunPlan } from "../plan";
 import type { FrontZone, HandleStyle, WallId } from "../types";
-import { BASE_FACE, D, TOP_Y, UPPER_FACE, WORK_Y, cm } from "./dims";
+import { BASE_FACE, D, UPPER_FACE, cm, heightsOf } from "./dims";
 import { boxes, disposeGeometries, mesh, type BoxSpec, type GeoCache } from "./geo";
 import { dimLine, type DimLabel } from "./labels";
 import type { LedLight, WindowLight } from "./lights";
@@ -109,6 +109,7 @@ export function moduleCtx(env: ModuleEnv, plan: KitchenPlan, run: RunRT | undefi
   const centre = run ? run.center : 0;
   const mid = cm(slot.x + slot.width / 2);
   const fid = env.fronts[slot.zone];
+  const h = heightsOf(plan);
   return {
     mats,
     geos: env.geos,
@@ -116,10 +117,13 @@ export function moduleCtx(env: ModuleEnv, plan: KitchenPlan, run: RunRT | undefi
     carcass: mats.carcass(fid),
     plinth: plinthMat(env, slot.zone),
     handles: env.handles,
-    ub: cm(plan.upperBottom),
-    ut: cm(plan.upperTop),
+    ub: h.ub,
+    // tall units: the top of the unit itself, module-local (the module stands h.lift higher; a top box above
+    // h.tallSplit and the cornice are drawn by modules.ts buildHeightExtras)
+    ut: slot.zone === "tall" ? (h.tallSplit ?? h.tallTop) - h.lift : h.ut,
     hinge: mid < centre ? "left" : "right",
     tallHinge: tallSideOf(plan, slot.run),
+    h,
   };
 }
 
@@ -200,8 +204,12 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   const { mats, doc } = env;
   const A = cm(plan.cfg.walls.a);
   const ceil = cm(plan.ceiling);
-  const ub = cm(plan.upperBottom);
-  const ut = cm(plan.upperTop);
+  const H = heightsOf(plan);
+  const ub = H.ub;
+  /** the kitchen's highest cabinet edge (wall units with their top row, the tall column) */
+  const ut = Math.max(H.ut, H.topRow?.y1 ?? 0, H.tallTop);
+  const TOP_Y = H.topY;
+  const WORK_Y = H.workY;
   const top: Mat = mats.top(env.topId);
 
   const root = new THREE.Group();
@@ -608,7 +616,7 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   };
   for (const r of plan.runs) {
     const run = K.runs.get(r.wall)!;
-    addLocal(run.group, 0, run.length, 0, ut + 0.12, 0, 0.62);
+    addLocal(run.group, 0, run.length, 0, Math.min(ceil, ut + 0.12), 0, 0.62);
   }
   if (plan.island && islandGroup) addLocal(islandGroup, 0, cm(plan.island.length), 0, WORK_Y, -cm(DIM.islandOverhang) - 0.35, 0.64);
   K.box = box;
@@ -692,8 +700,13 @@ export function removeUnderLeds(K: KitchenRT, run: RunId): void {
  */
 function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPlan): { front: THREE.Mesh[]; carcass: THREE.Mesh[]; plinth: THREE.Mesh[] } {
   const mats = env.mats;
-  const ub = cm(plan.upperBottom);
-  const ut = cm(plan.upperTop);
+  const H = heightsOf(plan);
+  const ub = H.ub;
+  // fillers and end panels of the wall units cover the top row too, the cornice ("do stropa") runs on above them
+  const ut = H.topRow ? H.topRow.y1 : H.ut;
+  const up = H.cornice ? H.cornice.y1 : ut;
+  const tallUp = H.cornice ? H.cornice.y1 : H.tallTop;
+  const TOP_Y = H.topY;
   const gola = env.handles === "bez";
   const lip = gola ? D.upperLip : 0;
   const cx = cm(p.x + p.width / 2);
@@ -706,19 +719,19 @@ function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPl
   const cs: BoxSpec[] = [];
   const plinth: THREE.Mesh[] = [];
   if (p.zone === "upper") {
-    if (p.kind === "panel") fm.push([x0, ub - lip, 0, x1, ut, UPPER_FACE]);
+    if (p.kind === "panel") fm.push([x0, ub - lip, 0, x1, up, UPPER_FACE]);
     else {
-      fm.push([x0 + 0.0015, ub - lip, D.upperCarcass + D.frontOff, x1 - 0.0015, ut, UPPER_FACE]);
+      fm.push([x0 + 0.0015, ub - lip, D.upperCarcass + D.frontOff, x1 - 0.0015, up, UPPER_FACE]);
       cs.push([x0 + 0.001, ub, 0.004, x1 - 0.001, ut, D.upperCarcass]);
     }
   } else if (p.zone === "tall") {
-    fm.push([x0, 0, 0, x1, ut, BASE_FACE]);
+    fm.push([x0, 0, 0, x1, tallUp, BASE_FACE]);
   } else if (p.kind === "panel") {
     fm.push([x0, 0, 0, x1, TOP_Y, BASE_FACE]);
   } else {
-    fm.push([x0 + 0.0015, D.plinth + 0.0015, D.carcass + D.frontOff, x1 - 0.0015, TOP_Y - (gola ? D.golaH : 0) - 0.0015, BASE_FACE]);
-    cs.push([x0 + 0.001, D.plinth, 0.004, x1 - 0.001, TOP_Y, D.carcass]);
-    const pm = mesh(boxes([[x0 + 0.001, 0, 0.03, x1 - 0.001, D.plinth - 0.002, BASE_FACE - D.plinthRecess]], uv), plinthMat(env, zone));
+    fm.push([x0 + 0.0015, H.plinth + 0.0015, D.carcass + D.frontOff, x1 - 0.0015, TOP_Y - (gola ? D.golaH : 0) - 0.0015, BASE_FACE]);
+    cs.push([x0 + 0.001, H.plinth, 0.004, x1 - 0.001, TOP_Y, D.carcass]);
+    const pm = mesh(boxes([[x0 + 0.001, 0, 0.03, x1 - 0.001, H.plinth - 0.002, BASE_FACE - D.plinthRecess]], uv), plinthMat(env, zone));
     pm.userData.fz = zone;
     g.add(pm);
     plinth.push(pm);
@@ -810,6 +823,7 @@ export function rebuildWorktop(K: KitchenRT, runId: RunId, top: THREE.Material):
     if (i >= 0) K.tops.splice(i, 1);
   }
   const mods = [...K.modules.values()].filter((m) => m.slot.run === runId && m.hole);
+  const { topY: TOP_Y, workY: WORK_Y } = heightsOf(K.plan);
   let me: THREE.Mesh;
   if (runId === "isl") {
     const L = run.length;

@@ -292,10 +292,76 @@ function mod(d: Omit<ModuleTypeDef, "minWidth" | "maxWidth"> & { minWidth?: numb
   return { ...d, minWidth: d.minWidth ?? Math.min(...d.widths), maxWidth: d.maxWidth ?? Math.max(...d.widths) };
 }
 
-const W_ALL = [30, 40, 45, 50, 60, 80, 90];
+/*
+ * Carcass widths (cm) — what Croatian carpenters build from 18 mm board, per type (TODO(vlasnik): potvrditi):
+ *
+ *   base   ladice / četiri ladice      30 40 45 50 60 80 90 100 120   (≥ 100: one wide drawer, full-extension 1200 runners)
+ *          dvije duboke ladice         40 45 50 60 80 90 100 120
+ *          ladice s unutarnjom         45 50 60 80 90 100 120
+ *          vrata (jedna)               30 40 45 50 60
+ *          dvoja vrata                 60 80 90 100 120               (60 kept: v2 links have it)
+ *          sudoper                     45 50 60 80 90 100 120         (≥ 100: a 1½-bowl sink)
+ *          perilica posuđa             45 60
+ *          koš za smeće                30 40 45 50 60                 (50 kept: v2 links have it)
+ *          ploča za kuhanje            60 80 90 100 120               (the hob follows the cabinet: 60 → 58, 80–90 → 78, ≥ 100 → 88 cm)
+ *          ploča + pećnica             60 90 · pećnica ispod ploče 60
+ *          stalak za boce              15 20 30
+ *          otvorene police             20 30 40 45 50 60
+ *          kutni elementi              fixed blind-corner units (DIM.cornerBase), only the type changes
+ *   upper  vrata                       30 40 45 50 60 (one door) · 80 90 100 120 (two doors)
+ *          klapna                      40 45 50 60 80 90 100 120
+ *          dvostruka klapna            60 80 90 100 120
+ *          vitrina                     30 40 45 50 60 80 90 100
+ *          niša                        15 20 30 40 45 50 60 80 90 100 120
+ *          polica                      30 40 45 50 60 80 90 100 120
+ *          nosač za suđe               45 50 60 80 90
+ *          napa                        60 80 90 100 120               (80 kept: the planner's hood follows its 80 cm hob)
+ *          mikrovalna                  60
+ *   tall   izvlačna smočnica           15 20 30 40 45 50 60
+ *          visoki ormar                30 40 45 50 60 80 90           (two doors above 60; 80 / 90 kept for v2 links)
+ *          ormar za metle              30 40 45 50 60
+ *          hladnjak, pećnica, pećnica + mikrovalna, perilica rublja   60
+ *          dvokrilni hladnjak (side-by-side)                          96 = 2 cm obloga + 0,5 cm zrak + 91 cm aparat
+ *                                                                          + 0,5 cm zrak + 2 cm obloga (see SBS below)
+ *
+ * The planner's own fill still uses the classic 30–90 set (plan.ts STD_WIDTHS), so default kitchens look as before;
+ * the wider and narrower widths are there for the customer's edits. A tall column takes any mix of these, up to
+ * plan.ts MAX_TALL units (e.g. smočnica 30 + hladnjak 60 + pećnica 60).
+ *
+ * Widths are only ever added, never removed: a code in an older share link must keep meaning the same element at the
+ * same width.
+ */
 const W_NARROW = [30, 40, 45, 50, 60];
-const W_WIDE = [60, 80, 90];
+const W_TO120 = [80, 90, 100, 120];
+/** 30–120: drawers and wall units */
+const W_FULL = [30, 40, 45, 50, 60, ...W_TO120];
+/** two doors / wide appliances: 60–120 */
+const W_WIDE_XL = [60, ...W_TO120];
 const W_SPACER = [30, 40, 45, 50, 60, 80, 90];
+
+/**
+ * Side-by-side (dvokrilni, američki) fridge niche, cm. The whole niche is ONE tall slot of SBS.niche cm:
+ * a full-height side panel (bočna obloga, front colour) on each side, an air gap, the freestanding-look appliance,
+ * and a bridge cabinet (ormarić iznad hladnjaka) between the panels from just above the appliance up to the
+ * tall column's top line. The engine draws exactly these numbers (lib/studio/engine/modules.ts buildSbs).
+ */
+export const SBS = {
+  /** slot width: panel + gap + appliance + gap + panel */
+  niche: 96,
+  appliance: 91,
+  applianceHeight: 178,
+  /** body + doors */
+  applianceDepth: 70,
+  /** side panel thickness and depth (covers the appliance body) */
+  panel: 2,
+  panelDepth: 70,
+  /** air gap between the appliance and each panel */
+  gap: 0.5,
+  /** air gap above the appliance, under the bridge cabinet */
+  topGap: 2,
+  /** bridge cabinet depth (flush with the tall column fronts) */
+  bridgeDepth: 60,
+} as const;
 
 // ================================================================ the catalogue
 
@@ -763,7 +829,7 @@ export const catalog: Catalog = {
       group: "ladice",
       description: "Tri ladice s punim izvlačenjem i tihim zatvaranjem.",
       priceAdd: 220,
-      widths: W_ALL,
+      widths: W_FULL,
       island: true,
     }),
     mod({
@@ -774,7 +840,7 @@ export const catalog: Catalog = {
       group: "ladice",
       description: "Dvije visoke ladice za lonce, posude i aparate.",
       priceAdd: 170,
-      widths: [40, 45, 50, 60, 80, 90],
+      widths: [40, 45, 50, 60, 80, 90, 100, 120],
       island: true,
     }),
     mod({
@@ -785,7 +851,7 @@ export const catalog: Catalog = {
       group: "ladice",
       description: "Četiri niže ladice — pribor, začini, krpe, sve pregledno.",
       priceAdd: 290,
-      widths: [40, 45, 50, 60, 80, 90],
+      widths: W_FULL,
       island: true,
     }),
     mod({
@@ -796,7 +862,7 @@ export const catalog: Catalog = {
       group: "ladice",
       description: "Dvije duboke ladice, a iza gornje fronte skrivena je još jedna plitka ladica za pribor.",
       priceAdd: 310,
-      widths: [45, 50, 60, 80, 90],
+      widths: [45, 50, 60, 80, 90, 100, 120],
       island: true,
     }),
     mod({
@@ -820,7 +886,7 @@ export const catalog: Catalog = {
       group: "vrata",
       description: "Dvoja vrata i podesiva polica, za šire elemente.",
       priceAdd: 20,
-      widths: W_WIDE,
+      widths: W_WIDE_XL,
       island: true,
       sibling: "vrata",
     }),
@@ -833,7 +899,7 @@ export const catalog: Catalog = {
       feature: "sink",
       description: "Podgradni sudoper, slavina i sifon.",
       priceAdd: 380,
-      widths: [45, 50, 60, 80, 90],
+      widths: [45, 50, 60, 80, 90, 100, 120],
       island: true,
     }),
     mod({
@@ -868,7 +934,7 @@ export const catalog: Catalog = {
       feature: "hob",
       description: "Mjesto za ugradbenu ploču za kuhanje, ispod nje dvije duboke ladice. Ploča nije uračunata u cijenu.",
       priceAdd: 150,
-      widths: W_WIDE,
+      widths: [60, 80, 90, 100, 120],
       island: true,
     }),
     mod({
@@ -913,7 +979,7 @@ export const catalog: Catalog = {
       group: "otvoreno",
       description: "Otvoreni element s dvije police u boji fronte, za kraj kuhinje ili otoka.",
       priceAdd: 40,
-      widths: W_NARROW,
+      widths: [20, 30, 40, 45, 50, 60],
       island: true,
       frontShare: 0.45,
       demo: false,
@@ -978,7 +1044,7 @@ export const catalog: Catalog = {
       group: "vrata",
       description: "Zidni element s vratima i policom (dvoja vrata kod širih elemenata).",
       priceAdd: 0,
-      widths: W_ALL,
+      widths: W_FULL,
       cornerOk: true,
     }),
     mod({
@@ -989,7 +1055,7 @@ export const catalog: Catalog = {
       group: "vrata",
       description: "Fronta se diže prema gore i ostaje otvorena — ništa ne smeta glavi.",
       priceAdd: 190,
-      widths: [40, 45, 50, 60, 80, 90],
+      widths: [40, 45, 50, 60, ...W_TO120],
     }),
     mod({
       id: "klapna2",
@@ -999,7 +1065,7 @@ export const catalog: Catalog = {
       group: "vrata",
       description: "Dvije fronte koje se pri otvaranju preklope i podignu iznad elementa.",
       priceAdd: 290,
-      widths: W_WIDE,
+      widths: W_WIDE_XL,
     }),
     mod({
       id: "vitrina",
@@ -1009,7 +1075,7 @@ export const catalog: Catalog = {
       group: "otvoreno",
       description: "Staklena vrata u okviru fronte, staklene police i unutarnja LED rasvjeta.",
       priceAdd: 160,
-      widths: W_ALL,
+      widths: [30, 40, 45, 50, 60, 80, 90, 100],
       cornerOk: true,
     }),
     mod({
@@ -1020,7 +1086,7 @@ export const catalog: Catalog = {
       group: "otvoreno",
       description: "Otvorena polica od hrasta s LED trakom, za ono što želite imati pri ruci.",
       priceAdd: 60,
-      widths: W_ALL,
+      widths: [15, 20, 30, 40, 45, 50, 60, ...W_TO120],
       demo: false,
     }),
     mod({
@@ -1031,7 +1097,7 @@ export const catalog: Catalog = {
       group: "otvoreno",
       description: "Masivna polica s LED trakom ispod, bez ormarića — prozračno i lagano.",
       priceAdd: 40,
-      widths: W_ALL,
+      widths: [30, 40, 45, 50, 60, ...W_TO120],
       frontShare: 0.2,
       demo: false,
     }),
@@ -1054,7 +1120,7 @@ export const catalog: Catalog = {
       hood: true,
       description: "Mjesto za napu skrivenu u zidnom elementu, s izvlačnim vizirom. Napa nije uračunata u cijenu.",
       priceAdd: 120,
-      widths: W_WIDE,
+      widths: W_WIDE_XL,
     }),
     mod({
       id: "mikrovalna",
@@ -1093,6 +1159,33 @@ export const catalog: Catalog = {
       priceAdd: 350,
       widths: [60],
     }),
+    // ---- side-by-side fridge niche (see SBS above): one slot = obloge + aparat + ormarić iznad
+    mod({
+      id: "hladnjak-sbs",
+      name: "Dvokrilni hladnjak (side-by-side)",
+      zone: "tall",
+      code: "rs",
+      group: "aparati",
+      description:
+        "Niša za samostojeći dvokrilni (američki) hladnjak širine 91 cm: bočne obloge do vrha u boji fronte, a iznad hladnjaka ormarić s klapnom. Hladnjak nije uračunat u cijenu.",
+      // TODO(vlasnik): obloge, ormarić iznad i ugradnja — bez aparata
+      priceAdd: 480,
+      widths: [SBS.niche],
+      frontShare: 0.5,
+    }),
+    mod({
+      id: "hladnjak-sbs-vrata",
+      name: "Dvokrilni hladnjak, ormarić s vratima",
+      zone: "tall",
+      code: "rv",
+      group: "aparati",
+      description:
+        "Ista niša za dvokrilni (side-by-side) hladnjak od 91 cm s bočnim oblogama, a ormarić iznad hladnjaka ima dvoja vrata umjesto klapne. Hladnjak nije uračunat u cijenu.",
+      // TODO(vlasnik): obloge, ormarić s dvoja vrata i ugradnja — bez aparata
+      priceAdd: 460,
+      widths: [SBS.niche],
+      frontShare: 0.5,
+    }),
     mod({
       id: "pecnica",
       name: "Pećnica u visini očiju",
@@ -1121,7 +1214,7 @@ export const catalog: Catalog = {
       group: "spremanje",
       description: "Cijela smočnica izlazi van na jednom potezu, police su vidljive s obje strane.",
       priceAdd: 650,
-      widths: [30, 40, 45, 50, 60],
+      widths: [15, 20, 30, 40, 45, 50, 60],
     }),
     mod({
       id: "ormar",
@@ -1131,7 +1224,7 @@ export const catalog: Catalog = {
       group: "spremanje",
       description: "Visoki ormar s podesivim policama (dvoja vrata kod širih ormara).",
       priceAdd: 80,
-      widths: [40, 45, 50, 60, 80, 90],
+      widths: [30, 40, 45, 50, 60, 80, 90],
     }),
     mod({
       id: "metle",
@@ -1141,7 +1234,7 @@ export const catalog: Catalog = {
       group: "spremanje",
       description: "Visoki ormar s držačima za metlu i mop, mjestom za usisivač i policom gore.",
       priceAdd: 140,
-      widths: [40, 45, 50, 60],
+      widths: W_NARROW,
     }),
     mod({
       id: "perilica-rublja",

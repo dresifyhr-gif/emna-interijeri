@@ -10,22 +10,31 @@
  * Element editing goes through lib/studio/edit.ts: every edit returns a new config and the id the element has
  * in the new plan; <Studio> applies it, keeps one undo step per edit and asks the engine to follow the element
  * (EngineApi.select) once the engine has the new config.
+ *
+ * Editing on the kitchen itself: a click on an element selects it and shows the element toolbar over it
+ * (ElementToolbar — add left / right, width, replace, remove, mechanism, "Više" for the full ElementEditor in the
+ * panel); a click on a dimension label opens the wall-length editor there (DimEditor). Those edits say what they did
+ * in a toast with "Poništi" (Ctrl / ⌘ + Z works too). Rows of the "Elementi" list light their element up in 3D.
+ * Overlays follow the view through the engine's ViewInfo (overlay.ts) and never make the engine render.
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
-import { isEdited, resetAll, resetRun, type EditResult } from "@/lib/studio/edit";
+import { isEdited, remove, resetAll, resetRun, setWallLength, slotEditInfo, type EditResult } from "@/lib/studio/edit";
 import { geometryKey, planKitchen, sanitizeConfig, wallsFor, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { estimate } from "@/lib/studio/price";
 import { configFromQuery, encodeConfig, studioPath } from "@/lib/studio/share";
 import { summarize } from "@/lib/studio/summary";
-import type { FrontZone, KitchenConfig, Layout, ModuleInfo, Mood, WallId } from "@/lib/studio/types";
+import type { DimTarget, FrontZone, KitchenConfig, Layout, ModuleInfo, Mood, ScreenRect, WallId } from "@/lib/studio/types";
+import { DimEditor, type DimTargetState } from "./DimEditor";
 import { ElementEditor, type ApplyOptions, type EditNote } from "./ElementEditor";
-import { useMediaQuery, useOrigin, useViewport } from "./hooks";
+import { ElementToolbar, SelectionLeader } from "./ElementToolbar";
+import { markEditHintSeen, useEditHintSeen, useMediaQuery, useOrigin, useViewport } from "./hooks";
 import { CursorIcon, OrbitIcon } from "./icons";
 import { fitToPlanner } from "./limits";
 import { EASE, LAST_STEP, STEPS, clamp, eur, runName, stepIndex } from "./meta";
+import { isTyping, type Insets } from "./overlay";
 import { DesktopPanel, MobileSheet, MobileSummary, PANEL_GAP, PANEL_W } from "./Panel";
 import { STEP_PANEL_ID, stepTabId } from "./StepNav";
 import { StudioLoader } from "./StudioLoader";
@@ -34,23 +43,39 @@ import { SuccessOverlay } from "./SuccessOverlay";
 import { TOPBAR_H, TopBar } from "./TopBar";
 import { useStudioEngine } from "./useStudioEngine";
 import { useStudioLead, type LeadField } from "./useStudioLead";
+import { Toast, type ToastData } from "./Toast";
 import { ElementsStep } from "./steps/ElementsStep";
 import { FrontsStep } from "./steps/FrontsStep";
 import { SendStep } from "./steps/SendStep";
 import { ShapeStep } from "./steps/ShapeStep";
 import { TopStep } from "./steps/TopStep";
-import type { StepProps } from "./steps/types";
+import type { StepEditOptions, StepProps } from "./steps/types";
 import { WallsStep } from "./steps/WallsStep";
-import s from "./studio.module.css";
 
 const INSET_DESKTOP = { top: TOPBAR_H.desktop, right: PANEL_W + PANEL_GAP * 2, bottom: 0, left: 0 };
-const CAMERA_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "+", "=", "-", "_"]);
 /** how long the engine may report "nothing selected" while it rebuilds / re-lays out under an edit */
 const FOLLOW_MS = 2200;
 const UNDO_MAX = 25;
+/** edits of one continuous control (ApplyOptions.coalesce) closer together than this share one undo step */
+const COALESCE_MS = 1500;
+/** toasts: an edit with "Poništi" (spec: 3 s), one with a planner note, a refusal, a confirmation */
+const TOAST_MS = { undo: 3000, note: 6500, refused: 5000, done: 2000 } as const;
 
-type Insets = { top: number; right: number; bottom: number; left: number };
-type Anchor = { x: number; y: number };
+const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+const slotName = (sl: PlanSlot) => {
+  const def = moduleDef(sl.zone, sl.type);
+  return sl.corner && def && !def.corner ? `Kutni element: ${lower(def.name)}` : (def?.name ?? "element");
+};
+
+/** one undo step: the config (and selection) before an edit */
+interface UndoEntry {
+  id: number;
+  cfg: KitchenConfig;
+  sel: string | null;
+  /** ApplyOptions.coalesce of the edit, and when the last edit of that series happened */
+  key?: string;
+  t: number;
+}
 
 /** after an edit: the element the engine should select once it has the new config */
 interface Follow {
@@ -97,12 +122,14 @@ export function Studio() {
 
   // ---- element editing
   const [selId, setSelId] = useState<string | null>(null);
-  const [anchor, setAnchor] = useState<Anchor | null>(null);
-  /** false while the camera moves (the anchor point is stale until the engine reports it again) */
-  const [anchorLive, setAnchorLive] = useState(true);
+  /** the full element editor is open in the panel (a click in 3D only selects: the toolbar shows over the element) */
+  const [editorOpen, setEditorOpen] = useState(false);
   const [note, setNote] = useState<EditNote | null>(null);
-  const [undoStack, setUndoStack] = useState<{ cfg: KitchenConfig; sel: string | null }[]>([]);
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [editorFocus, setEditorFocus] = useState(0);
+  const [toast, setToast] = useState<ToastData | null>(null);
+  /** the wall-length editor at a dimension label */
+  const [dimEdit, setDimEdit] = useState<DimTargetState | null>(null);
   const [runTab, setRunTab] = useState<RunId>("a");
   /** the config before a shape change put edited elements back to the planner's (ShapeStep offers it back) */
   const [layoutUndo, setLayoutUndo] = useState<KitchenConfig | null>(null);
@@ -117,25 +144,36 @@ export function Studio() {
   const viewport = useViewport();
   const uid = useId();
 
+  const rootRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const focusHeading = useRef(false);
   const insetsRef = useRef<Insets>({ top: -1, right: -1, bottom: -1, left: -1 });
   const follow = useRef<Follow | null>(null);
-  /** the slot id last announced / opened, so a refreshed anchor is not announced again */
+  /** the slot id last announced / opened, so the engine re-reporting it (after an edit) is not announced again */
   const shownId = useRef<string | null>(null);
   const openedFrom = useRef<"canvas" | "list">("canvas");
   const focusSeq = useRef(0);
   const restoreRow = useRef<string | null>(null);
   const selRef = useRef<string | null>(null);
   const slotsRef = useRef<PlanSlot[]>([]);
+  const undoSeq = useRef(0);
+  const toastSeq = useRef(0);
+  /** what had focus when the wall-length editor opened (its label), to go back to on Escape */
+  const dimOpener = useRef<HTMLElement | null>(null);
+  /** the latest handlers for listeners registered once */
+  const keys = useRef<{ remove: () => void; undo: (() => void) | null }>({ remove: () => {}, undo: null });
 
   const plan = useMemo(() => planKitchen(cfg), [cfg]);
   const price = useMemo(() => estimate(cfg), [cfg]);
   const summary = useMemo(() => summarize(cfg), [cfg]);
   const stepId = STEPS[step].id;
   const selSlot = selId ? (plan.slots.find((x) => x.id === selId) ?? null) : null;
+  const selKey = selSlot?.id ?? null;
+  // what the selected element can do (every option planned) — shared by the toolbar and the editor
+  const selInfo = useMemo(() => (selKey ? slotEditInfo(cfg, selKey) : null), [cfg, selKey]);
+  const editHintSeen = useEditHintSeen();
 
   useEffect(() => {
     selRef.current = selSlot ? selSlot.id : null;
@@ -148,31 +186,39 @@ export function Studio() {
     const f = follow.current;
     const following = Boolean(f && performance.now() < f.until);
     if (!m) {
-      // the engine clears its selection while it rebuilds under an edit — the editor stays
+      // the engine clears its selection while it rebuilds under an edit — the toolbar and the editor stay
       if (following) return;
       shownId.current = null;
       setSelId(null);
-      setAnchor(null);
+      setEditorOpen(false);
       setNote(null);
       return;
     }
     setSelId(m.id);
-    setAnchor(m.screen);
-    setAnchorLive(true);
     if (!following && m.id !== shownId.current) {
-      // a new element picked in 3D
+      // a new element picked in 3D: the toolbar shows over it (an open editor follows it)
       openedFrom.current = "canvas";
       setEditorFocus(0);
       setNote(null);
+      markEditHintSeen();
       const run = runOfSlot(m.id, slotsRef.current);
       if (run) setRunTab(run);
       const name = moduleDef(m.zone, m.type)?.name ?? "element";
-      setAnnounce(`Odabran element: ${name}, ${Math.round(m.width)} cm. Uređivanje je otvoreno u ploči s postavkama.`);
+      setAnnounce(`Odabran element: ${name}, ${Math.round(m.width)} cm. Brze radnje su iznad elementa (tipka Tab), Delete ga uklanja.`);
     }
     shownId.current = m.id;
   }, []);
 
-  const { apiRef, status } = useStudioEngine(containerRef, { config: cfg, mood, onSelect: handleSelect });
+  /** a dimension label in 3D was clicked: the wall-length editor opens there */
+  const handleWallLabel = useCallback((wall: DimTarget, rect: ScreenRect) => {
+    markEditHintSeen();
+    setHintsGone(true);
+    const a = document.activeElement;
+    dimOpener.current = a instanceof HTMLElement && a !== document.body ? a : null;
+    setDimEdit({ wall, rect, n: performance.now() });
+  }, []);
+
+  const { apiRef, status } = useStudioEngine(containerRef, { config: cfg, mood, onSelect: handleSelect, onWallLabel: handleWallLabel });
   const readyRef = useRef(false);
   useEffect(() => {
     readyRef.current = status === "ready";
@@ -188,26 +234,33 @@ export function Studio() {
     [apiRef],
   );
 
-  /** close the element editor and clear the engine's selection rim */
+  const focusCanvas = useCallback(() => {
+    containerRef.current?.querySelector<HTMLCanvasElement>("canvas")?.focus({ preventScroll: true });
+  }, []);
+
+  /** close the element editor and the toolbar, and clear the engine's selection rim */
   const closeEditor = useCallback(
     (refocus = false) => {
       const id = selRef.current;
       follow.current = null;
       shownId.current = null;
       setSelId(null);
-      setAnchor(null);
+      setEditorOpen(false);
       setNote(null);
       apiRef.current?.deselect();
       if (!refocus) return;
       if (openedFrom.current === "list" && id) restoreRow.current = id;
-      else containerRef.current?.querySelector<HTMLCanvasElement>("canvas")?.focus({ preventScroll: true });
+      else focusCanvas();
     },
-    [apiRef],
+    [apiRef, focusCanvas],
   );
 
-  /** open the editor for an element picked in the UI (list, drawing, prev / next) */
+  /**
+   * select an element picked in the UI (list, drawing, prev / next, the toolbar's arrow keys); `editor` opens the
+   * full editor, `focus` also moves focus into it (opened from the list)
+   */
   const openElement = useCallback(
-    (id: string, opts: { focus?: boolean } = {}) => {
+    (id: string, opts: { focus?: boolean; editor?: boolean; say?: boolean } = {}) => {
       follow.current = null;
       shownId.current = id;
       if (opts.focus) {
@@ -218,12 +271,38 @@ export function Studio() {
       const run = runOfSlot(id, slotsRef.current);
       if (run) setRunTab(run);
       setSelId(id);
-      setAnchor(null);
+      if (opts.editor) setEditorOpen(true);
       setNote(null);
-      // the engine highlights it and reports its anchor (onSelect)
+      apiRef.current?.highlight?.(null);
+      if (opts.say) {
+        const sl = slotsRef.current.find((x) => x.id === id);
+        if (sl) setAnnounce(`Odabran element: ${slotName(sl)}, ${Math.round(sl.width)} cm.`);
+      }
+      // the engine highlights it and the toolbar follows it (ViewInfo)
       engineSelect(id);
     },
-    [engineSelect],
+    [engineSelect, apiRef],
+  );
+
+  /** "Više" in the toolbar: the full editor in the panel (again: closed, the toolbar stays) */
+  const toggleDetails = useCallback(() => {
+    if (editorOpen) {
+      setEditorOpen(false);
+      setNote(null);
+      return;
+    }
+    openedFrom.current = "canvas";
+    focusSeq.current += 1;
+    setEditorFocus(focusSeq.current);
+    setEditorOpen(true);
+  }, [editorOpen]);
+
+  /** a row / the drawing of the "Elementi" step is pointed at: light the element up in 3D */
+  const hoverElement = useCallback(
+    (id: string | null) => {
+      if (readyRef.current) apiRef.current?.highlight?.(id);
+    },
+    [apiRef],
   );
 
   // focus goes back to the list row the editor was opened from (once the steps are interactive again)
@@ -251,7 +330,7 @@ export function Studio() {
     const t1 = window.setTimeout(() => {
       if (follow.current === f) engineSelect(f.id);
     }, 260);
-    // once the re-assembly has played: a fresh anchor
+    // once the re-assembly has played: once more (the rebuild may have cleared the selection again)
     const t2 = window.setTimeout(() => {
       if (follow.current === f) engineSelect(f.id);
     }, 1750);
@@ -275,62 +354,59 @@ export function Studio() {
     return () => window.clearTimeout(t);
   }, [uiShown, hintsGone]);
 
-  // the anchor point does not follow the camera: hide it while the view moves, ask the engine again once it rests
+  // the first touch of the 3D view hides the orbit hint; the customer takes over from an edit settling
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    let down: { x: number; y: number; t: number } | null = null;
-    let timer = 0;
-    const refresh = (ms: number) => {
-      window.clearTimeout(timer);
-      if (!selRef.current) return;
-      setAnchorLive(false);
-      timer = window.setTimeout(() => {
-        const id = selRef.current;
-        if (id) engineSelect(id);
-      }, ms);
-    };
-    const onDown = (e: PointerEvent) => {
-      down = { x: e.clientX, y: e.clientY, t: performance.now() };
+    const onDown = () => {
       setHintsGone(true);
-      // the customer takes over: what the engine reports from now on is their click, not an edit settling
+      // what the engine reports from now on is their click, not an edit settling
       follow.current = null;
-      if (selRef.current) setAnchorLive(false);
     };
-    const onUp = (e: PointerEvent) => {
-      const d = down;
-      down = null;
-      if (!d || !selRef.current) return;
-      const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6 || performance.now() - d.t > 650;
-      // a click is answered by the engine (onSelect); a drag orbited — the damping settles in ~0.6 s
-      if (moved) refresh(650);
-    };
-    const onWheel = () => {
-      setHintsGone(true);
-      refresh(450);
-    };
+    const onWheel = () => setHintsGone(true);
+    // with an element selected: Delete removes it, Tab goes straight to its toolbar (past the wall labels)
     const onKey = (e: KeyboardEvent) => {
-      if (CAMERA_KEYS.has(e.key)) refresh(520);
+      const onCanvas = (e.target as HTMLElement | null)?.tagName === "CANVAS";
+      if (!selRef.current || !onCanvas || e.altKey || e.metaKey || e.ctrlKey) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        e.stopPropagation();
+        keys.current.remove();
+      } else if (e.key === "Tab" && !e.shiftKey) {
+        const bar = document.querySelector<HTMLElement>("[data-studio-toolbar]");
+        const first = bar && !bar.inert ? bar.querySelector<HTMLElement>("button") : null;
+        if (first) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
-    const onResize = () => refresh(320);
     el.addEventListener("pointerdown", onDown, true);
-    el.addEventListener("pointerup", onUp, true);
     el.addEventListener("wheel", onWheel, { capture: true, passive: true });
     el.addEventListener("keydown", onKey, true);
-    window.addEventListener("resize", onResize);
     return () => {
-      window.clearTimeout(timer);
       el.removeEventListener("pointerdown", onDown, true);
-      el.removeEventListener("pointerup", onUp, true);
       el.removeEventListener("wheel", onWheel, true);
       el.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("resize", onResize);
     };
-  }, [engineSelect]);
+  }, []);
 
-  // framing: tell the engine which part of the screen the UI covers
+  // Ctrl / ⌘ + Z undoes the last edit (outside text fields) — the toast's "Poništi" without the timer
   useEffect(() => {
-    const el = containerRef.current;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "z" || isTyping(e.target)) return;
+      const fn = keys.current.undo;
+      if (!fn) return;
+      e.preventDefault();
+      fn();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  // framing: tell the engine which part of the screen the UI covers (set on the root: the overlays read them too)
+  useEffect(() => {
+    const el = rootRef.current;
     if (!el) return;
     const apply = (v: Insets) => {
       const p = insetsRef.current;
@@ -350,25 +426,12 @@ export function Studio() {
     const measure = () => apply({ top: TOPBAR_H.mobile, right: 0, bottom: sheet ? Math.round(sheet.offsetHeight) : 0, left: 0 });
     measure();
     if (!sheet) return;
-    // the sheet animates its height when folded (and when the editor opens) — the kitchen glides with it,
-    // and the selected element's point is asked for again once the sheet has settled
-    let settle = 0;
-    const ro = new ResizeObserver(() => {
-      measure();
-      if (!selRef.current) return;
-      setAnchorLive(false);
-      window.clearTimeout(settle);
-      settle = window.setTimeout(() => {
-        const id = selRef.current;
-        if (id) engineSelect(id);
-      }, 140);
-    });
+    // the sheet animates its height when folded (and when the editor opens) — the kitchen glides with it, and the
+    // toolbar docked above it follows through the same --studio-inset-bottom
+    const ro = new ResizeObserver(measure);
     ro.observe(sheet);
-    return () => {
-      window.clearTimeout(settle);
-      ro.disconnect();
-    };
-  }, [desktop, apiRef, engineSelect]);
+    return () => ro.disconnect();
+  }, [desktop, apiRef]);
 
   // the engine was created after the insets were set on first mount; re-read them once it's live
   useEffect(() => {
@@ -424,6 +487,7 @@ export function Studio() {
       setCfg(next);
       setUndoStack([]);
       setRunTab("a");
+      setDimEdit(null);
       closeEditor();
     },
     [cfg, layoutUndo, closeEditor],
@@ -436,29 +500,65 @@ export function Studio() {
     setAnnounce("Vraćen je prethodni oblik s vašim elementima.");
   }, [layoutUndo]);
 
+  const showToast = useCallback((t: Omit<ToastData, "n">) => {
+    toastSeq.current += 1;
+    setToast({ ...t, n: toastSeq.current });
+  }, []);
+  const dismissToast = useCallback((n: number) => setToast((t) => (t && t.n === n ? null : t)), []);
+
+  /** an edit that did not happen: the editor's note when it is open, else a toast over the 3D view */
+  const refuse = useCallback(
+    (text: string) => {
+      if (editorOpen) setNote({ text, tone: "refused", n: performance.now() });
+      else showToast({ text, tone: "refused", ms: TOAST_MS.refused });
+    },
+    [editorOpen, showToast],
+  );
+
   /** apply an edit.ts result: one undo step, follow the element, say what happened */
   const applyEdit = useCallback(
     (r: EditResult, opts: ApplyOptions = {}): boolean => {
       if (!r.ok) {
-        const text = r.warning || "Ta izmjena ovdje nije moguća.";
-        setNote({ text, tone: "refused", n: performance.now() });
+        refuse(r.warning || "Ta izmjena ovdje nije moguća.");
         return false;
       }
       const nextSel = opts.select !== undefined ? opts.select : r.slotId;
       const next = fitToPlanner(r.cfg);
-      setUndoStack((u) => [...u.slice(-(UNDO_MAX - 1)), { cfg, sel: selId }]);
+      undoSeq.current += 1;
+      const id = undoSeq.current;
+      const now = performance.now();
+      const key = opts.coalesce;
+      setUndoStack((u) => {
+        const top = u[u.length - 1];
+        // the same control again, right after its last edit: the step before the gesture stays the undo target
+        if (key && top && top.key === key && now - top.t < COALESCE_MS) return [...u.slice(0, -1), { ...top, t: now }];
+        return [...u.slice(-(UNDO_MAX - 1)), { id, cfg, sel: selId, key, t: now }];
+      });
       follow.current = { id: nextSel, until: performance.now() + FOLLOW_MS, geo: geometryKey(cfg) !== geometryKey(next), sent: false };
       shownId.current = nextSel;
       setLayoutUndo(null);
       setCfg(next);
       setSelId(nextSel);
-      if (!nextSel) setAnchor(null);
+      if (!nextSel) setEditorOpen(false);
+      if (opts.quiet) {
+        // the step shows the edit's notes next to its controls
+        setAnnounce(opts.say ?? "");
+        return true;
+      }
+      if (opts.toast) {
+        // an edit on the kitchen itself: the toast says it (its live region reads it out) and offers "Poništi"
+        showToast({ text: r.warning ? `${opts.toast} ${r.warning}` : opts.toast, tone: "info", undoId: id, ms: r.warning ? TOAST_MS.note : TOAST_MS.undo });
+        setNote(null);
+        setAnnounce("");
+        return true;
+      }
       setNote(r.warning ? { text: r.warning, tone: "info", n: performance.now() } : null);
-      // the editor's own note region reads out r.warning
+      // with the editor closed nobody would see the note: a toast (the editor's own note region reads it out)
+      if (r.warning && !editorOpen) showToast({ text: r.warning, tone: "info", undoId: id, ms: TOAST_MS.note });
       setAnnounce(opts.say ?? "");
       return true;
     },
-    [cfg, selId],
+    [cfg, selId, editorOpen, refuse, showToast],
   );
 
   const undo = useCallback(() => {
@@ -470,10 +570,17 @@ export function Studio() {
     shownId.current = sel;
     setCfg(last.cfg);
     setSelId(sel);
-    if (!sel) setAnchor(null);
-    setNote({ text: "Zadnja izmjena je poništena.", tone: "info", n: performance.now() });
-    setAnnounce("Zadnja izmjena je poništena.");
-  }, [undoStack, cfg]);
+    if (!sel) setEditorOpen(false);
+    setDimEdit(null);
+    if (editorOpen && sel) {
+      setNote({ text: "Zadnja izmjena je poništena.", tone: "info", n: performance.now() });
+      setToast(null);
+      setAnnounce("Zadnja izmjena je poništena.");
+    } else {
+      setNote(null);
+      showToast({ text: "Izmjena je poništena.", tone: "done", ms: TOAST_MS.done });
+    }
+  }, [undoStack, cfg, editorOpen, showToast]);
 
   /** a run back to the planner: a wall (base, wall units and, on wall A, the corners), the island or the tall column */
   const resetRunTo = useCallback(
@@ -487,15 +594,78 @@ export function Studio() {
       // keep the editor on whatever now stands at the same place
       const keep = selId && planKitchen(r.cfg).slots.some((x) => x.id === selId) ? selId : null;
       const label = run === "tall" ? "Visoki stup" : run === "isl" ? "Otok" : runName(run);
-      applyEdit(r, { select: keep, say: `${label}: vraćen zadani raspored.` });
+      applyEdit(r, { select: keep, toast: `${label}: vraćen zadani raspored.` });
     },
     [cfg, selId, applyEdit],
   );
 
   const resetEverything = useCallback(() => {
     const keep = selId && planKitchen(resetAll(cfg)).slots.some((x) => x.id === selId) ? selId : null;
-    applyEdit({ cfg: resetAll(cfg), ok: true, warning: null, slotId: keep }, { say: "Svi elementi vraćeni su na zadani raspored." });
+    applyEdit({ cfg: resetAll(cfg), ok: true, warning: null, slotId: keep }, { toast: "Svi elementi vraćeni su na zadani raspored." });
   }, [cfg, selId, applyEdit]);
+
+  /** "Ukloni" in the toolbar / Delete: the element goes, the selection with it, and a toast offers it back */
+  const removeSelected = useCallback(() => {
+    const sl = selSlot;
+    if (!sl) return;
+    const r = remove(cfg, sl.id);
+    if (!r.ok) {
+      refuse(r.warning ?? "Ovaj element se ne može ukloniti.");
+      return;
+    }
+    const spacer = Boolean(moduleDef(sl.zone, sl.type)?.spacer);
+    const bar = document.querySelector("[data-studio-toolbar]");
+    const hadFocus = Boolean(bar && bar.contains(document.activeElement));
+    applyEdit(r, {
+      select: null,
+      toast: spacer ? "Razmak je zatvoren." : `Uklonjeno: ${lower(slotName(sl))}, ${Math.round(sl.width)} cm${sl.zone === "upper" ? " (zid ostaje prazan)" : ""}.`,
+    });
+    // the toolbar goes with the element: keyboard users carry on from the 3D view
+    if (hadFocus) window.setTimeout(focusCanvas, 0);
+  }, [selSlot, cfg, refuse, applyEdit, focusCanvas]);
+
+  /**
+   * an edit.ts result from a step (the heights in "Zidovi"): one undo step (Ctrl / ⌘ + Z), a selected element stays
+   * selected where it still stands, and the step shows the notes itself
+   */
+  const stepEdit = useCallback(
+    (r: EditResult, opts: StepEditOptions = {}): boolean => {
+      const keep = selId && planKitchen(fitToPlanner(r.cfg)).slots.some((x) => x.id === selId) ? selId : null;
+      return applyEdit(r, { select: keep, quiet: true, say: opts.say, coalesce: opts.coalesce });
+    },
+    [selId, applyEdit],
+  );
+
+  /* ---------------------------------------------------------------- wall lengths (the dimension labels in 3D) */
+
+  const cancelDim = useCallback(() => {
+    setDimEdit(null);
+    const back = dimOpener.current;
+    dimOpener.current = null;
+    if (back?.isConnected) back.focus({ preventScroll: true });
+  }, []);
+
+  const applyWall = useCallback(
+    (wall: DimTarget, cm: number) => {
+      const cur = wall === "isl" ? cfg.island : cfg.walls[wall];
+      const r = setWallLength(cfg, wall, cm);
+      if (!r.ok) {
+        refuse(r.warning ?? "Ta duljina ovdje nije moguća.");
+        return;
+      }
+      setDimEdit(null);
+      dimOpener.current = null;
+      if (r.value === cur && !r.warning) {
+        focusCanvas();
+        return;
+      }
+      const keep = selId && planKitchen(r.cfg).slots.some((x) => x.id === selId) ? selId : null;
+      applyEdit(r, { select: keep, toast: `${wall === "isl" ? "Otok" : `Zid ${wall.toUpperCase()}`}: ${r.value} cm.` });
+      // the labels are built anew with the kitchen: focus waits in the 3D view
+      focusCanvas();
+    },
+    [cfg, selId, refuse, applyEdit, focusCanvas],
+  );
 
   /* ---------------------------------------------------------------- steps */
 
@@ -545,6 +715,12 @@ export function Studio() {
   );
   const getSnapshot = useCallback(() => leadSnapshot(apiRef.current, containerRef.current), [apiRef]);
   const lead = useStudioLead({ getSnapshot, fieldId, getPayloadExtras });
+  const thanks = lead.status === "success" && lead.sent ? lead.sent : null;
+
+  // the keyboard listeners registered once call the latest handlers
+  useEffect(() => {
+    keys.current = { remove: removeSelected, undo: undoStack.length && !thanks ? undo : null };
+  });
 
   /* ---------------------------------------------------------------- announcements */
 
@@ -561,6 +737,7 @@ export function Studio() {
     cfg,
     plan,
     update,
+    edit: stepEdit,
     setLayout,
     goTo: (i) => goTo(i, { focus: true }),
     mood,
@@ -600,7 +777,8 @@ export function Studio() {
                 {...stepProps}
                 elements={{
                   selectedId: selSlot?.id ?? null,
-                  onOpen: (id) => openElement(id, { focus: true }),
+                  onOpen: (id) => openElement(id, { focus: true, editor: true }),
+                  onHover: hoverElement,
                   runTab,
                   onRunTab: setRunTab,
                   onReset: resetRunTo,
@@ -630,18 +808,21 @@ export function Studio() {
     </div>
   );
 
-  const editor = selSlot ? (
+  const editor =
+    selSlot && editorOpen ? (
     <ElementEditor
       cfg={cfg}
       plan={plan}
       slotId={selSlot.id}
+      info={selInfo}
       desktop={desktop}
       engine={!failed && status === "ready"}
       note={note}
       focusKey={editorFocus}
       price={price}
       onEdit={applyEdit}
-      onNavigate={(id) => openElement(id)}
+      onNavigate={(id) => openElement(id, { editor: true })}
+      onHover={hoverElement}
       onDemo={() => apiRef.current?.demo(selSlot.id)}
       onResetRun={(sl) => resetRunTo(sl.zone === "tall" ? "tall" : sl.run)}
       onUndo={undoStack.length ? undo : null}
@@ -662,14 +843,16 @@ export function Studio() {
   };
 
   const loading = status === "loading" && !uiShown;
-  const thanks = lead.status === "success" && lead.sent ? lead.sent : null;
-
-  // where the anchor of the selected element is drawn (desktop: a leader line to the panel's edge)
-  const showAnchor = Boolean(selSlot && anchor && anchorLive && !failed && uiShown);
+  const live = status === "ready";
+  const overlays = live && uiShown && !failed;
+  // the element toolbar: over the element (desktop) / docked above the sheet (phone, not while the editor fills it)
+  const toolbarOn = Boolean(overlays && selInfo);
+  const toolbarHidden = !desktop && (editorOpen || summaryOpen || Boolean(dimEdit));
   const panelLeft = viewport.w - PANEL_GAP - PANEL_W;
+  const canDemo = Boolean(selSlot && moduleDef(selSlot.zone, selSlot.type)?.demo !== false);
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-ink text-fg">
+    <div ref={rootRef} className="fixed inset-0 overflow-hidden bg-ink text-fg">
       <h1 className="sr-only">3D studio — složite svoju kuhinju po mjeri</h1>
 
       {/* everything behind the thank-you dialog; `contents` keeps the absolute layout, `inert` takes it out of focus and AT */}
@@ -691,66 +874,101 @@ export function Studio() {
 
         {failed && <NoWebGL desktop={desktop} />}
 
-        {/* interaction hints */}
-        <AnimatePresence>
-          {uiShown && !hintsGone && !failed && !selSlot && (
-            <motion.div
-              key="hints"
-              aria-hidden="true"
-              initial={{ opacity: 0, y: reduce ? 0 : 8 }}
-              animate={{ opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.9, delay: reduce ? 0 : 0.8, ease: EASE } }}
-              exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.5 } }}
-              className={`pointer-events-none absolute z-10 flex gap-2 ${
-                desktop ? "bottom-6 left-8" : "inset-x-0 top-[64px] justify-center"
-              }`}
-            >
-              {desktop ? (
-                <>
-                  <Hint icon={<OrbitIcon className="h-4 w-4" />}>Povucite za okretanje · kotačić približava</Hint>
-                  <Hint icon={<CursorIcon className="h-4 w-4" />}>Kliknite element za izmjenu</Hint>
-                </>
-              ) : (
-                <Hint icon={<CursorIcon className="h-4 w-4" />}>Povucite za okretanje · dodirnite element</Hint>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* interaction hints: how to orbit (this visit), and how to edit on the kitchen (until first used) */}
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute z-10 flex gap-2 ${desktop ? "bottom-6 left-8 items-end" : "inset-x-0 top-[64px] flex-col items-center"}`}
+        >
+          <AnimatePresence>
+            {/* on a phone the two stacked pills would cover the wall-length labels: one at a time, editing first */}
+            {uiShown && !failed && !selSlot && !hintsGone && !toast && !dimEdit && (desktop || editHintSeen) && (
+              <motion.div
+                key="orbit"
+                initial={{ opacity: 0, y: reduce ? 0 : 8 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.9, delay: reduce ? 0 : 0.8, ease: EASE } }}
+                exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.5 } }}
+              >
+                <Hint icon={<OrbitIcon className="h-4 w-4" />}>{desktop ? "Povucite za okretanje · kotačić približava" : "Povucite za okretanje"}</Hint>
+              </motion.div>
+            )}
+            {uiShown && !failed && !selSlot && !dimEdit && !toast && !editHintSeen && (
+              <motion.div
+                key="edit"
+                initial={{ opacity: 0, y: reduce ? 0 : 8 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.9, delay: reduce ? 0 : 1.1, ease: EASE } }}
+                exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.5 } }}
+              >
+                <Hint icon={<CursorIcon className="h-4 w-4" />} accent>
+                  {desktop ? "Kliknite element ili kotu za izmjenu" : "Dodirnite element ili kotu za izmjenu"}
+                </Hint>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
-        {/* the selected element in 3D: a pulsing point, and on desktop a leader line to the editor */}
+        {/* desktop, with the editor open in the panel: a leader line from the element to it */}
+        {overlays && desktop && editorOpen && selSlot && (
+          <SelectionLeader apiRef={apiRef} live={live} slotId={selSlot.id} panelLeft={panelLeft} />
+        )}
+
+        {/* on the kitchen itself: the selected element's toolbar and the wall-length editor (both fade out when done) */}
         <AnimatePresence>
-          {showAnchor && anchor && (
+          {toolbarOn && selInfo && (
             <motion.div
-              key="anchor"
-              aria-hidden="true"
-              // phone: under the sheet, so a point behind it stays hidden
-              className={`pointer-events-none absolute inset-0 ${desktop ? "z-30" : "z-[15]"}`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1, transition: { duration: reduce ? 0 : 0.45, ease: EASE } }}
-              exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.15 } }}
+              key="toolbar"
+              className="pointer-events-none absolute inset-0 z-[25]"
+              initial={false}
+              exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.22, ease: EASE } }}
             >
-              {desktop && anchor.x < panelLeft - 24 && (
-                <svg className="absolute inset-0 h-full w-full overflow-visible">
-                  <line
-                    x1={anchor.x}
-                    y1={anchor.y}
-                    x2={panelLeft}
-                    y2={clamp(anchor.y, 120, viewport.h - 120)}
-                    stroke="#C9B99A"
-                    strokeWidth="1"
-                    strokeOpacity="0.75"
-                    strokeDasharray="2 4"
-                  />
-                  <circle cx={panelLeft} cy={clamp(anchor.y, 120, viewport.h - 120)} r="2.5" fill="#C9B99A" />
-                </svg>
-              )}
-              <span className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2" style={{ left: anchor.x, top: anchor.y }}>
-                <span className={s.pulse} />
-                <span className="absolute inset-0 rounded-full border border-accent bg-ink/60" />
-                <span className="absolute inset-[3.5px] rounded-full bg-accent" />
-              </span>
+              <ElementToolbar
+                apiRef={apiRef}
+                live={live}
+                cfg={cfg}
+                plan={plan}
+                info={selInfo}
+                docked={!desktop}
+                insetsRef={insetsRef}
+                hidden={toolbarHidden}
+                editorOpen={editorOpen}
+                canDemo={canDemo}
+                onEdit={applyEdit}
+                onRefuse={refuse}
+                onRemove={removeSelected}
+                onDemo={() => selSlot && apiRef.current?.demo(selSlot.id)}
+                onMore={toggleDetails}
+                onClose={() => closeEditor(true)}
+                onNavigate={(id) => openElement(id, { say: true })}
+              />
+            </motion.div>
+          )}
+          {overlays && dimEdit && (
+            <motion.div
+              key={`dim-${dimEdit.n}`}
+              className="pointer-events-none absolute inset-0 z-[26] [&>*]:pointer-events-auto"
+              initial={false}
+              exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.2, ease: EASE } }}
+            >
+              <DimEditor
+                apiRef={apiRef}
+                live={live}
+                cfg={cfg}
+                target={dimEdit}
+                docked={!desktop}
+                insetsRef={insetsRef}
+                onApply={applyWall}
+                onCancel={cancelDim}
+              />
             </motion.div>
           )}
         </AnimatePresence>
+        <Toast
+          toast={overlays || failed ? toast : null}
+          canUndo={Boolean(toast?.undoId !== undefined && undoStack[undoStack.length - 1]?.id === toast?.undoId)}
+          onUndo={undo}
+          onDismiss={dismissToast}
+          desktop={desktop}
+          raised={toolbarOn && !toolbarHidden}
+        />
 
         {desktop ? (
           <DesktopPanel {...shell} summaryOpen={summaryOpen} onSummary={setSummaryOpen} scrollRef={scrollRef}>
@@ -800,9 +1018,13 @@ export function Studio() {
 
 /* ------------------------------------------------------------------ pieces */
 
-function Hint({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+function Hint({ icon, accent = false, children }: { icon: ReactNode; accent?: boolean; children: ReactNode }) {
   return (
-    <span className="flex items-center gap-2 rounded-full border border-white/10 bg-ink-900/55 px-3.5 py-2 text-[11.5px] text-fg/75 backdrop-blur-md">
+    <span
+      className={`flex items-center gap-2 rounded-full border bg-ink-900/55 px-3.5 py-2 text-[11.5px] backdrop-blur-md ${
+        accent ? "border-accent/30 text-fg/85" : "border-white/10 text-fg/75"
+      }`}
+    >
       <span className="text-accent">{icon}</span>
       {children}
     </span>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { KitchenConfig, ModuleInfo, Mood, StudioEngineApi } from "@/lib/studio/types";
+import type { DimTarget, KitchenConfig, ModuleInfo, Mood, ScreenRect, StudioEngineApi } from "@/lib/studio/types";
 
 export type EngineStatus = "loading" | "ready" | "failed";
 
@@ -11,6 +11,8 @@ export type EngineStatus = "loading" | "ready" | "failed";
  *
  * - `config` / `mood` changes are pushed with setConfig / setMood (the engine diffs and animates).
  * - The engine constructor throws when WebGL isn't available → status "failed"; the UI keeps working without 3D.
+ * - `onWallLabel` makes the wall / island dimension labels in 3D clickable (the wall-length editor).
+ * - Overlays read where things are on screen through api.subscribe (components/studio/overlay.ts useEngineView).
  */
 export function useStudioEngine(
   containerRef: RefObject<HTMLDivElement | null>,
@@ -18,18 +20,20 @@ export function useStudioEngine(
     config,
     mood,
     onSelect,
+    onWallLabel,
   }: {
     config: KitchenConfig;
     mood: Mood;
     onSelect: (m: ModuleInfo | null) => void;
+    onWallLabel?: (wall: DimTarget, rect: ScreenRect) => void;
   },
 ) {
   const apiRef = useRef<StudioEngineApi | null>(null);
   const [status, setStatus] = useState<EngineStatus>("loading");
-  const latest = useRef({ config, mood, onSelect });
+  const latest = useRef({ config, mood, onSelect, onWallLabel });
 
   useEffect(() => {
-    latest.current = { config, mood, onSelect };
+    latest.current = { config, mood, onSelect, onWallLabel };
   });
 
   useEffect(() => {
@@ -46,6 +50,7 @@ export function useStudioEngine(
             config: latest.current.config,
             mood: latest.current.mood,
             onSelect: (m) => latest.current.onSelect(m),
+            onWallLabel: (wall, rect) => latest.current.onWallLabel?.(wall, rect),
             onReady: () => {
               if (!cancelled) setStatus("ready");
             },

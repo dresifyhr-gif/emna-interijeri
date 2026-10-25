@@ -1,23 +1,34 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useState } from "react";
-import { limitsFor, wallsFor } from "@/lib/studio/plan";
-import type { WallId, WindowSpec } from "@/lib/studio/types";
+import { useCallback, useMemo, useState } from "react";
+import { geometryKey, limitsFor, planHeights, wallsFor } from "@/lib/studio/plan";
+import type { KitchenConfig, WallId, WindowSpec } from "@/lib/studio/types";
 import { Notes, NumberField, Segmented, SectionLabel, ToggleRow } from "../controls";
-import { islandLimits, windowLimits } from "../limits";
+import { fitToPlanner, islandLimits, windowLimits } from "../limits";
 import { EASE, WALL_HINT } from "../meta";
 import { WallSchematic, type SchematicFocus } from "../WallSchematic";
+import { HeightsSection } from "./HeightsSection";
 import type { StepProps } from "./types";
 
-export function WallsStep({ cfg, plan, update }: StepProps) {
+export function WallsStep({ cfg, plan, update, edit, engine }: StepProps) {
   const reduce = useReducedMotion();
   const [focus, setFocus] = useState<SchematicFocus>(null);
+  /** the notes of the last ceiling / heights change, for the room it produced (gone once the room changes again) */
+  const [last, setLast] = useState<{ key: string; items: string[] } | null>(null);
   const used = wallsFor(cfg.layout);
   const lim = limitsFor(cfg.layout);
   const win = cfg.window && used.includes(cfg.window.wall) ? cfg.window : null;
 
   const active = (k: SchematicFocus) => (on: boolean) => setFocus((f) => (on ? k : f === k ? null : f));
+
+  // the heights' own notes and the last change's sit with the height controls; the list at the end has the rest
+  const kept = useMemo(() => planHeights(cfg).notes, [cfg]);
+  const roomKey = geometryKey(cfg);
+  const fresh = last && last.key === roomKey ? last.items.filter((n) => !kept.includes(n)) : [];
+  const nearHeights = new Set([...fresh, ...kept]);
+  const rest = plan.warnings.filter((w) => !nearHeights.has(w));
+  const onNotes = useCallback((items: string[], next: KitchenConfig) => setLast({ key: geometryKey(fitToPlanner(next)), items }), []);
 
   const setWall = (w: WallId, v: number) => update({ walls: { ...cfg.walls, [w]: v } });
   const setWindow = (patch: Partial<WindowSpec>) => {
@@ -46,6 +57,7 @@ export function WallsStep({ cfg, plan, update }: StepProps) {
       </div>
 
       <SectionLabel className="mt-7">Duljina zidova</SectionLabel>
+      {engine && <p className="mt-2.5 text-[12px] leading-snug text-mut">Duljinu možete promijeniti i klikom na kotu u 3D prikazu.</p>}
       <div className="mt-4 space-y-5">
         {used.map((w) => (
           <NumberField
@@ -59,15 +71,19 @@ export function WallsStep({ cfg, plan, update }: StepProps) {
             onActive={active(w)}
           />
         ))}
-        <NumberField
-          label="Visina stropa"
-          value={cfg.ceiling}
-          min={lim.ceiling[0]}
-          max={lim.ceiling[1]}
-          onChange={(v) => update({ ceiling: v })}
-          onActive={active("ceiling")}
-        />
       </div>
+
+      <SectionLabel className="mt-8">Visine</SectionLabel>
+      <HeightsSection
+        cfg={cfg}
+        plan={plan}
+        update={update}
+        edit={edit}
+        fresh={fresh}
+        kept={kept}
+        onNotes={onNotes}
+        onCeilingActive={active("ceiling")}
+      />
 
       {cfg.layout === "otok" && (
         <>
@@ -155,7 +171,7 @@ export function WallsStep({ cfg, plan, update }: StepProps) {
       <p className="mt-6 text-[12.5px] leading-relaxed text-mut">
         Elementi koje ste uredili ostaju na svom mjestu. Ako neki više ne stane uz nove mjere, ovdje ćete vidjeti napomenu.
       </p>
-      <Notes items={plan.warnings} />
+      <Notes items={rest} />
     </div>
   );
 }

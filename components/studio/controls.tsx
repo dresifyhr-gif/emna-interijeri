@@ -232,17 +232,24 @@ export function ToggleRow({
   description,
   checked,
   onChange,
+  prominent = false,
   children,
 }: {
   title: string;
   description?: ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
+  /** a headline choice: the card takes the accent while it is on */
+  prominent?: boolean;
   children?: ReactNode;
 }) {
   const uid = useId();
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 transition-colors duration-500 ease-premium hover:border-white/20">
+    <div
+      className={`rounded-2xl border p-4 transition-colors duration-500 ease-premium ${
+        prominent && checked ? "border-accent/45 bg-accent/[0.06] hover:border-accent/70" : "border-white/10 bg-white/[0.02] hover:border-white/20"
+      }`}
+    >
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
           <label id={`${uid}-l`} htmlFor={`${uid}-s`} className="block cursor-pointer font-display text-[16px] font-medium leading-tight">

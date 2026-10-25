@@ -21,16 +21,20 @@ import { frontFor, geometryKey, planKitchen, sanitizeConfig, type KitchenPlan, t
 import {
   DEFAULT_CONFIG,
   type CreateStudioEngine,
+  type DimTarget,
   type FrontZone,
   type HandleStyle,
   type KitchenConfig,
   type Layout,
   type ModuleInfo,
   type Mood,
+  type ScreenRect,
   type StudioEngineApi,
   type StudioEngineOptions,
+  type ViewInfo,
 } from "../types";
 import { applyViewOffset, fitBox, viewDir, type Region } from "./camera";
+import { BASE_FACE, UPPER_FACE, WORK_Y } from "./dims";
 import {
   buildKitchen,
   disposeKitchen,
@@ -46,7 +50,7 @@ import {
   type KitchenRT,
   type ModuleEnv,
 } from "./kitchen";
-import { injectStyle, releaseStyle } from "./labels";
+import { injectStyle, makeEditable, releaseStyle, retireLabel, widthTag, type WidthTag } from "./labels";
 import { Lights, MOODS } from "./lights";
 import { ACCENT, Materials, finishLook, type FinishLook, type Mat } from "./materials";
 import { canDemo, playDemo, stopDemo } from "./mechanisms";
@@ -223,6 +227,18 @@ class Engine {
   private readonly tmpB = new THREE.Vector3();
   private rayTargets: THREE.Object3D[] = [];
   private keyCycle = -1;
+  /** api.highlight: a rim from the UI (list row hover), independent of pointer hover and selection */
+  private listHoverId: string | null = null;
+
+  // overlays (ViewInfo for HTML over the canvas, the selected element's width tag)
+  private readonly viewListeners = new Set<(v: ViewInfo) => void>();
+  private viewKey = "";
+  /** compute ViewInfo on the next tick even if nothing renders (a new listener) */
+  private viewPending = false;
+  private readonly tag: WidthTag | null = null;
+  /** module-local bounding boxes (body + fronts' plane), cached per module: the body never moves */
+  private readonly boxCache = new WeakMap<ModuleRT, THREE.Box3>();
+  private readonly tmpC = new THREE.Vector3();
 
   // loop
   private raf = 0;
@@ -382,6 +398,8 @@ class Engine {
       lr.domElement.className = "emna-studio-labels";
       container.appendChild(lr.domElement);
       this.labels = lr;
+      this.tag = widthTag(this.doc);
+      this.scene.add(this.tag.obj);
       const c = new OrbitControls(this.camera, canvas);
       c.enableDamping = true;
       c.dampingFactor = 0.07;
@@ -460,9 +478,14 @@ class Engine {
       demo: (id) => this.demo(id),
       deselect: () => this.deselect(),
       select: (id) => this.selectById(id),
+      highlight: (id) => this.highlightById(id),
+      subscribe: (fn) => this.subscribe(fn),
+      viewInfo: () => (this.kitchen && !this.disposed ? this.computeView() : null),
       resize: () => this.resize(),
       dispose: () => this.dispose(),
     };
+
+    if (opts.onViewChange) this.viewListeners.add(opts.onViewChange);
 
     this.resize();
     void this.boot();
@@ -605,6 +628,7 @@ class Engine {
 
   /** lights, LEDs, raycast targets for a freshly built kitchen */
   private afterBuild(K: KitchenRT): void {
+    this.wireLabels(K);
     this.lights.aim(K.box);
     this.lights.setWindow(K.windowLight);
     this.lights.setLeds(ledLights(K, this.lights.pool.length));
@@ -1045,6 +1069,7 @@ class Engine {
         this.stats.shadowRenders++;
       }
       this.applyLights();
+      this.updateTag();
       const info = this.renderer.info;
       info.reset();
       const t0 = performance.now();
@@ -1058,12 +1083,14 @@ class Engine {
       this.dirty = false;
       this.camDirty = false;
       this.lastRenderT = this.time;
+      this.emitView();
       if (!this.readyFired) {
         this.readyFired = true;
         const cb = this.opts.onReady;
         if (cb) this.win.requestAnimationFrame(() => !this.disposed && cb());
       }
     }
+    if (!render && this.viewPending) this.emitView();
     this.prevTickRendered = render;
     this.prevTickMs = ms;
   };
@@ -1405,8 +1432,12 @@ class Engine {
     this.applyFinish(this.cfg, !this.reduced);
     this.applyRoom(this.cfg, !this.reduced);
 
+    this.listHoverId = null;
     if (old) {
-      for (const l of old.labels) l.el.style.opacity = "0";
+      for (const l of old.labels) {
+        l.el.style.opacity = "0";
+        retireLabel(l);
+      }
       if (this.mode === "studio" && !this.reduced) {
         const r = old.root;
         const y0 = r.position.y;
@@ -1491,6 +1522,7 @@ class Engine {
     const selected = this.selectedId ? K.modules.get(this.selectedId) : undefined;
     const selWas = selected ? { run: selected.slot.run, zone: selected.slot.zone, x: selected.slot.x } : null;
     const hovered = this.hoverId ? K.modules.get(this.hoverId) : undefined;
+    const listHovered = this.listHoverId ? K.modules.get(this.listHoverId) : undefined;
     for (const s of plan.slots) {
       const run = K.runs.get(s.run);
       const m = matches.get(s);
@@ -1543,6 +1575,7 @@ class Engine {
       }
     }
     this.hoverId = hovered && taken.has(hovered) ? hovered.slot.id : null;
+    this.listHoverId = listHovered && taken.has(listHovered) ? listHovered.slot.id : null;
 
     K.modules = next;
     K.plan = plan;
@@ -1967,7 +2000,7 @@ class Engine {
     const K = this.kitchen;
     const prev = this.hoverId ? K?.modules.get(this.hoverId) : undefined;
     this.hoverId = id;
-    if (prev && prev.slot.id !== this.selectedId) this.highlight(prev, false);
+    if (prev && prev.slot.id !== this.selectedId && prev.slot.id !== this.listHoverId) this.highlight(prev, false);
     if (m) this.highlight(m, true);
     this.renderer.domElement.dataset.hover = m ? "on" : "off";
     this.dirty = true;
@@ -2004,8 +2037,198 @@ class Engine {
     const K = this.kitchen;
     const prev = this.selectedId ? K?.modules.get(this.selectedId) : undefined;
     this.selectedId = m?.slot.id ?? null;
-    if (prev && prev !== m && prev.slot.id !== this.hoverId) this.highlight(prev, false);
+    if (prev && prev !== m && prev.slot.id !== this.hoverId && prev.slot.id !== this.listHoverId) this.highlight(prev, false);
     if (m) this.highlight(m, true);
+  }
+
+  /** API: a hover rim from the UI (null removes it); selection and pointer hover keep their own */
+  private highlightById(id: string | null): void {
+    const K = this.kitchen;
+    if (this.disposed || this.mode !== "studio" || !K) return;
+    if (id === this.listHoverId) return;
+    const prev = this.listHoverId ? K.modules.get(this.listHoverId) : undefined;
+    const m = id ? K.modules.get(id) : undefined;
+    this.listHoverId = m ? m.slot.id : null;
+    if (prev && prev !== m && prev.slot.id !== this.selectedId && prev.slot.id !== this.hoverId) this.highlight(prev, false);
+    if (m) this.highlight(m, true);
+    this.dirty = true;
+  }
+
+  // ================================================================ overlays
+
+  /** wall / island labels become buttons when the host wants to edit lengths (opts.onWallLabel) */
+  private wireLabels(K: KitchenRT): void {
+    const cb = this.opts.onWallLabel;
+    if (this.mode !== "studio" || !cb) return;
+    for (const l of K.labels) {
+      const wall: DimTarget = l.wall;
+      const aria = (cm: number) => (wall === "isl" ? `Promijeni duljinu otoka, ${Math.round(cm)} cm` : `Promijeni duljinu zida ${wall.toUpperCase()}, ${Math.round(cm)} cm`);
+      makeEditable(l, aria, (el) => {
+        if (this.disposed || this.kitchen !== K) return;
+        cb(wall, this.rectOf(el));
+      });
+    }
+  }
+
+  /** an element's box in px, relative to the container */
+  private rectOf(el: HTMLElement): ScreenRect {
+    const r = el.getBoundingClientRect();
+    const c = this.container.getBoundingClientRect();
+    return { x: Math.round(r.left - c.left), y: Math.round(r.top - c.top), w: Math.round(r.width), h: Math.round(r.height) };
+  }
+
+  private subscribe(fn: (v: ViewInfo) => void): () => void {
+    this.viewListeners.add(fn);
+    // the newcomer gets the current state on the next tick, without forcing a render
+    this.viewKey = "";
+    this.viewPending = true;
+    return () => {
+      this.viewListeners.delete(fn);
+    };
+  }
+
+  /** module-local box of a module: its body (carcass, appliance, panels), out to its fronts; base units up to the worktop */
+  private localBox(m: ModuleRT): THREE.Box3 {
+    let b = this.boxCache.get(m);
+    if (b) return b;
+    b = new THREE.Box3();
+    const mb = new THREE.Box3();
+    m.body.updateMatrix();
+    m.body.traverse((o) => {
+      const me = o as THREE.Mesh;
+      if (!me.isMesh) return;
+      const g = me.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      if (!g.boundingBox) return;
+      // body meshes sit directly in (or a level below) the body group, which sits at the module origin
+      me.updateMatrix();
+      mb.copy(g.boundingBox).applyMatrix4(me.matrix);
+      if (me.parent && me.parent !== m.body) mb.applyMatrix4(me.parent.matrix);
+      b!.union(mb);
+    });
+    const w = m.slot.width / 100;
+    if (b.isEmpty()) b.set(new THREE.Vector3(0, 0, 0), new THREE.Vector3(w, 0.9, 0.6));
+    b.min.x = Math.min(b.min.x, 0);
+    b.max.x = Math.max(b.max.x, w);
+    const upper = m.slot.zone === "upper";
+    b.max.z = Math.max(b.max.z, upper ? UPPER_FACE : BASE_FACE);
+    if (m.slot.zone === "base" || m.slot.zone === "island") b.max.y = Math.max(b.max.y, WORK_Y);
+    this.boxCache.set(m, b);
+    return b;
+  }
+
+  /** where the width tag sits in a module's frame: over the worktop edge (base), under the unit (wall), near the top of its front (tall) */
+  private tagPoint(m: ModuleRT, out: THREE.Vector3): THREE.Vector3 {
+    const b = this.localBox(m);
+    const w = m.slot.width / 100;
+    if (m.slot.zone === "upper") return out.set(w / 2, b.min.y - 0.05, b.max.z + 0.02);
+    if (m.slot.zone === "tall") return out.set(w / 2, b.max.y - 0.1, b.max.z + 0.02);
+    return out.set(w / 2, b.max.y + 0.05, b.max.z + 0.02);
+  }
+
+  /** the selected element's width pill follows it (called before each rendered frame) */
+  private updateTag(): void {
+    const tag = this.tag;
+    if (!tag) return;
+    const K = this.kitchen;
+    const m = this.selectedId && K && !this.play ? K.modules.get(this.selectedId) : undefined;
+    if (!m) {
+      tag.set(null);
+      return;
+    }
+    m.root.updateWorldMatrix(true, false);
+    tag.obj.position.copy(m.root.localToWorld(this.tagPoint(m, this.tmpC)));
+    tag.set(`${Math.round(m.slot.width)} cm`);
+  }
+
+  /** is the object and every parent visible? */
+  private shown(o: THREE.Object3D | null): boolean {
+    for (let p = o; p; p = p.parent) if (!p.visible) return false;
+    return true;
+  }
+
+  /** a world point in container px (null behind the camera / outside the depth range) */
+  private toScreen(v: THREE.Vector3): { x: number; y: number } | null {
+    const p = v.project(this.camera);
+    if (p.z < -1 || p.z > 1) return null;
+    const { w, h } = this.size;
+    return { x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h };
+  }
+
+  private computeView(): ViewInfo {
+    const { w: W, h: H } = this.size;
+    const K = this.kitchen;
+    const view: ViewInfo = { size: { w: W, h: H }, walls: [] };
+    if (!K) return view;
+    const onScreen = (x: number, y: number, rw = 0, rh = 0) => x + rw >= 0 && y + rh >= 0 && x <= W && y <= H;
+    const m = this.selectedId ? K.modules.get(this.selectedId) : undefined;
+    if (m) {
+      const b = this.localBox(m);
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      let behind = false;
+      for (const x of [b.min.x, b.max.x])
+        for (const y of [b.min.y, b.max.y])
+          for (const z of [b.min.z, b.max.z]) {
+            const p = this.toScreen(m.root.localToWorld(this.tmpC.set(x, y, z)));
+            if (!p) {
+              behind = true;
+              continue;
+            }
+            x0 = Math.min(x0, p.x);
+            y0 = Math.min(y0, p.y);
+            x1 = Math.max(x1, p.x);
+            y1 = Math.max(y1, p.y);
+          }
+      const ok = Number.isFinite(x0);
+      const rect: ScreenRect = ok ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : { x: 0, y: 0, w: 0, h: 0 };
+      const tp = this.tag ? this.toScreen(m.root.localToWorld(this.tagPoint(m, this.tmpC))) : null;
+      view.selected = {
+        id: m.slot.id,
+        rect,
+        anchor: { x: rect.x + rect.w / 2, y: rect.y },
+        tag: tp,
+        visible: ok && !behind && this.shown(m.root) && onScreen(rect.x, rect.y, rect.w, rect.h),
+      };
+    }
+    for (const l of K.labels) {
+      if (l.el.getAttribute("aria-hidden") === "true") continue;
+      const p = this.toScreen(l.obj.getWorldPosition(this.tmpC));
+      const faded = Number(l.el.style.opacity || "1") < 0.5;
+      view.walls.push({
+        wall: l.wall,
+        length_cm: Number(l.el.dataset.cm ?? 0),
+        label: p ?? { x: 0, y: 0 },
+        visible: Boolean(p) && !faded && this.shown(l.obj) && l.el.style.display !== "none" && onScreen(p?.x ?? -1, p?.y ?? -1),
+      });
+    }
+    return view;
+  }
+
+  /** ViewInfo to the listeners when anything in it changed (after a rendered frame, or for a new listener) */
+  private emitView(): void {
+    this.viewPending = false;
+    if (!this.viewListeners.size || !this.kitchen) return;
+    const v = this.computeView();
+    const r = (n: number) => Math.round(n * 2) / 2;
+    const s = v.selected;
+    const key = JSON.stringify([
+      v.size.w,
+      v.size.h,
+      s ? [s.id, r(s.rect.x), r(s.rect.y), r(s.rect.w), r(s.rect.h), s.tag ? [r(s.tag.x), r(s.tag.y)] : 0, s.visible] : 0,
+      v.walls.map((x) => [x.wall, x.length_cm, r(x.label.x), r(x.label.y), x.visible]),
+    ]);
+    if (key === this.viewKey) return;
+    this.viewKey = key;
+    for (const fn of [...this.viewListeners]) {
+      try {
+        fn(v);
+      } catch (err) {
+        console.warn("[studio] onViewChange:", err);
+      }
+    }
   }
 
   /** API: clear the selection silently (the caller already knows) */
@@ -2235,7 +2458,8 @@ class Engine {
       if (me.isMesh) me.geometry?.dispose();
     });
     if (K) for (const l of K.labels) l.el.remove();
-    this.container.querySelectorAll(".emna-studio-dim").forEach((el) => el.remove());
+    this.container.querySelectorAll(".emna-studio-dim, .emna-studio-tag").forEach((el) => el.remove());
+    this.viewListeners.clear();
     this.scene.traverse((o) => {
       const l = o as THREE.Light;
       if (l.isLight) l.dispose();

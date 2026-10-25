@@ -133,6 +133,8 @@ export class Materials {
   readonly plant: THREE.MeshStandardMaterial;
   readonly shadow: THREE.MeshBasicMaterial;
   readonly display: THREE.MeshBasicMaterial;
+  /** the cool light inside a fridge (side-by-side niche) — always on, independent of the LED setting */
+  readonly fridgeLight: THREE.MeshBasicMaterial;
   /** empty-space slots: never drawn, but the raycaster still hits them */
   readonly ghost: THREE.MeshBasicMaterial;
   /** an empty-space slot under the pointer / selected: a faint accent volume */
@@ -207,6 +209,7 @@ export class Materials {
       polygonOffsetUnits: -2,
     });
     this.display = new THREE.MeshBasicMaterial({ color: new THREE.Color("#ffb46b").multiplyScalar(1.6), toneMapped: false });
+    this.fridgeLight = new THREE.MeshBasicMaterial({ color: new THREE.Color("#eef4ff").multiplyScalar(1.25), toneMapped: false });
     this.ghost = new THREE.MeshBasicMaterial({ visible: false });
     this.ghostHl = new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.1, depthWrite: false, toneMapped: false });
   }

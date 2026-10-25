@@ -25,6 +25,7 @@ import {
   remove,
   slotEditInfo,
   type EditResult,
+  type SlotEditInfo,
   type TypeChoice,
 } from "@/lib/studio/edit";
 import { planKitchen, type KitchenPlan, type PlanSlot } from "@/lib/studio/plan";
@@ -44,7 +45,7 @@ import {
   TrashIcon,
   UndoIcon,
 } from "./icons";
-import { EASE, isFlipped, rowSlots, runName, sideHint, slotPlace } from "./meta";
+import { EASE, isFlipped, noRoomText, rowSlots, runName, sideHint, slotPlace } from "./meta";
 import { PriceBlock } from "./Price";
 import { RunElevation } from "./RunElevation";
 import s from "./studio.module.css";
@@ -62,12 +63,26 @@ export interface ApplyOptions {
   select?: string | null;
   /** what to announce (Croatian) when the edit worked */
   say?: string;
+  /**
+   * say it in a toast over the 3D view with "Poništi" instead (edits made on the kitchen itself: the element toolbar,
+   * the wall labels); the edit's own warning is appended
+   */
+  toast?: string;
+  /** the step that made the edit shows its notes itself (heights in "Zidovi"): no toast, no editor note */
+  quiet?: boolean;
+  /**
+   * edits of one continuous control (a slider, − / + held, arrows through chips) share one undo step while they
+   * follow each other quickly: "Poništi" goes back to before the gesture, not one centimetre
+   */
+  coalesce?: string;
 }
 
 export interface ElementEditorProps {
   cfg: KitchenConfig;
   plan: KitchenPlan;
   slotId: string;
+  /** slotEditInfo(cfg, slotId) when the caller has it already (shared with the element toolbar) */
+  info?: SlotEditInfo | null;
   desktop: boolean;
   /** the 3D view is there (mechanism demo) */
   engine: boolean;
@@ -77,6 +92,8 @@ export interface ElementEditorProps {
   price: { low: number; high: number };
   onEdit: (r: EditResult, opts?: ApplyOptions) => boolean;
   onNavigate: (slotId: string) => void;
+  /** the pointer is over a cabinet of the drawing: light it up in 3D (null: none) */
+  onHover?: (slotId: string | null) => void;
   onDemo: () => void;
   onResetRun: (slot: PlanSlot) => void;
   onUndo: (() => void) | null;
@@ -91,6 +108,7 @@ export function ElementEditor({
   cfg,
   plan,
   slotId,
+  info: shared,
   desktop,
   engine,
   note,
@@ -98,6 +116,7 @@ export function ElementEditor({
   price,
   onEdit,
   onNavigate,
+  onHover,
   onDemo,
   onResetRun,
   onUndo,
@@ -110,7 +129,8 @@ export function ElementEditor({
   const [adding, setAdding] = useState<{ id: string; side: Side } | null>(null);
   const addSide = adding && adding.id === slotId ? adding.side : null;
 
-  const info = useMemo(() => slotEditInfo(cfg, slotId), [cfg, slotId]);
+  const own = useMemo(() => (shared !== undefined ? null : slotEditInfo(cfg, slotId)), [shared, cfg, slotId]);
+  const info = shared !== undefined ? (shared && shared.slot.id === slotId ? shared : null) : own;
 
   useEffect(() => {
     if (focusKey > 0) titleRef.current?.focus({ preventScroll: true });
@@ -159,10 +179,7 @@ export function ElementEditor({
     },
   };
   const canAdd = (sd: Side) => side[sd].options.some((o) => o.width !== null);
-  const noRoomText =
-    info.free >= 1
-      ? `Za novi element nema mjesta — slobodno je još ${Math.floor(info.free)} cm. Suzite ili uklonite susjedni element.`
-      : "Za novi element nema mjesta. Suzite ili uklonite susjedni element.";
+  const noRoom = noRoomText(slot, info.free);
 
   const widthOf = (r: EditResult) => (r.slotId ? planKitchen(r.cfg).slots.find((x) => x.id === r.slotId)?.width : undefined);
 
@@ -262,6 +279,7 @@ export function ElementEditor({
           run={slot.run}
           selected={slot.id}
           onPick={(id) => id !== slot.id && onNavigate(id)}
+          onHover={onHover ? (id) => onHover(id === slot.id ? null : id) : undefined}
           boxWidth={desktop ? 320 : 330}
           boxHeight={desktop ? 92 : 58}
           className={`block w-full ${desktop ? "h-[92px]" : "h-[58px]"}`}
@@ -354,7 +372,7 @@ export function ElementEditor({
           icon={<InsertIcon side="left" className="h-4 w-4" />}
           disabled={!canAdd("left")}
           expanded={addSide === "left"}
-          onClick={() => (canAdd("left") ? setAdding({ id: slot.id, side: "left" }) : refuse(side.left.options.length ? noRoomText : "Lijevo od ovog elementa nastavlja se susjedni zid."))}
+          onClick={() => (canAdd("left") ? setAdding({ id: slot.id, side: "left" }) : refuse(side.left.options.length ? noRoom : "Lijevo od ovog elementa nastavlja se susjedni zid."))}
         >
           Dodaj lijevo
         </ActionButton>
@@ -363,7 +381,7 @@ export function ElementEditor({
           iconEnd
           disabled={!canAdd("right")}
           expanded={addSide === "right"}
-          onClick={() => (canAdd("right") ? setAdding({ id: slot.id, side: "right" }) : refuse(side.right.options.length ? noRoomText : "Desno od ovog elementa nastavlja se susjedni zid."))}
+          onClick={() => (canAdd("right") ? setAdding({ id: slot.id, side: "right" }) : refuse(side.right.options.length ? noRoom : "Desno od ovog elementa nastavlja se susjedni zid."))}
         >
           Dodaj desno
         </ActionButton>
@@ -437,7 +455,9 @@ export function ElementEditor({
         </button>
       </div>
       <p className="mt-2 text-[12px] leading-relaxed text-mut">
-        {info.free >= 1 ? `Na ovom nizu slobodno je još ${Math.floor(info.free)} cm.` : "Novi element zauzima slobodan prostor do njega."}
+        {info.free >= 1
+          ? `${slot.zone === "tall" ? "U visokom stupu" : "Na ovom nizu"} slobodno je još ${Math.floor(info.free)} cm.`
+          : "Novi element zauzima slobodan prostor do njega."}
       </p>
       <div className="mt-3">
         <Tiles

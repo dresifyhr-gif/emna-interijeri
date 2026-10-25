@@ -30,7 +30,7 @@ export const leadSchema = z.object({
   /** absolute link that re-opens exactly this kitchen in the studio */
   configUrl: z.url().max(6000).optional(),
   /** human-readable summary lines produced by the studio */
-  summary: z.array(z.string().max(300)).max(60).optional(),
+  summary: z.array(z.string().max(600)).max(60).optional(),
   price: z.object({ low: z.number(), high: z.number() }).optional(),
   /** JPEG data URL of the 3D view */
   snapshot: z.string().startsWith("data:image/").max(3_000_000).optional(),

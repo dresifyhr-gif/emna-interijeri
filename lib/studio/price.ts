@@ -20,7 +20,7 @@ import {
   topDef,
   FINISH_DEFAULTS,
 } from "./catalog";
-import { DIM, frontFor, planKitchen, type KitchenPlan, type SlotZone } from "./plan";
+import { DIM, frontFor, hasTopBox, planHeights, planKitchen, type KitchenPlan, type SlotZone } from "./plan";
 import type { FrontZone, KitchenConfig } from "./types";
 
 export { PRICES_CONFIRMED };
@@ -29,6 +29,31 @@ export { PRICES_CONFIRMED };
 const ZONE_FACTOR = { base: 0.6, upper: 0.4, tall: 1.6, island: 0.8, filler: 0.25 } as const;
 
 const round100 = (n: number) => Math.max(0, Math.round(n / 100) * 100);
+
+/**
+ * Taller cabinets cost more (KitchenConfig.heights): each zone's per-metre price scales with its carcass height
+ * against the standard heights of the same kitchen; 1 for standard heights. Base and island carcasses keep their
+ * 76 cm (the plinth takes the worktop height). `top` = the "do stropa" top row, relative to a standard wall unit.
+ * TODO(vlasnik): potvrditi — nadgradni ormarići i lajsna do stropa računaju se kao dio cijene elemenata (cabinets),
+ * uz okov klapne TOP_BOX_HARDWARE po ormariću.
+ * Exported for lib/admin/quote-from-config.ts, which splits the cabinet total over its lines the same way.
+ */
+export function heightScale(plan: KitchenPlan): Record<SlotZone, number> & { top: number } {
+  const h = plan.heights;
+  const std = planHeights({ ...plan.cfg, heights: { mode: "standard", worktop: h.worktop } }).heights;
+  const r = (a: number, b: number) => (b > 0 ? a / b : 1);
+  const stdUpper = std.upperTop - std.upperBottom;
+  return {
+    base: 1,
+    island: 1,
+    upper: r(h.upperTop - h.upperBottom, stdUpper),
+    tall: r(h.tallTop - h.plinth, std.tallTop - std.plinth),
+    top: h.topRow ? r(h.topRow.to - h.topRow.from, stdUpper) : 0,
+  };
+}
+
+/** lift-up stay of one top box (nadgradni ormarić), EUR — TODO(vlasnik) */
+export const TOP_BOX_HARDWARE = 60;
 
 export interface PriceBreakdown {
   cabinets: number;
@@ -48,7 +73,8 @@ export interface PriceBreakdown {
 /** m² of backsplash the engine draws for this plan (every piece starts on the worktop surface) */
 export function backsplashArea(plan: KitchenPlan): number {
   let cm2 = 0;
-  for (const r of plan.runs) for (const p of r.backsplash) cm2 += (p.to - p.from) * (p.top - DIM.worktopTop);
+  const surface = plan.heights?.worktop ?? DIM.worktopTop;
+  for (const r of plan.runs) for (const p of r.backsplash) cm2 += (p.to - p.from) * (p.top - surface);
   return cm2 / 10000;
 }
 
@@ -69,13 +95,17 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
   let fronted = 0;
   let mechanisms = 0;
   let sinks = 0;
+  const hs = heightScale(plan);
   for (const s of plan.slots) {
     const def = moduleDef(s.zone, s.type);
     if (def?.spacer) continue;
     const w = m(s.width);
     const share = def?.frontShare ?? 1;
     run[s.zone] += w;
-    cabinets += front(zoneOf(s.zone)).pricePerMeter * ZONE_FACTOR[s.zone] * w * share;
+    cabinets += front(zoneOf(s.zone)).pricePerMeter * ZONE_FACTOR[s.zone] * w * share * hs[s.zone];
+    // "do stropa": the top box above a wall unit / a split tall unit (kept in cabinets, so lib/admin's lines still add up)
+    if (s.zone === "upper" && hs.top > 0 && hasTopBox(s.type)) cabinets += front("upper").pricePerMeter * ZONE_FACTOR.upper * w * hs.top + TOP_BOX_HARDWARE;
+    if (s.zone === "tall" && plan.heights.tallSplit !== null) cabinets += TOP_BOX_HARDWARE;
     fronted += w * share;
     mechanisms += def?.priceAdd ?? 0;
     if (def?.feature === "sink") sinks++;
@@ -84,12 +114,14 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
     const z: FrontZone = p.run === "isl" ? "island" : p.zone;
     cabinets += front(z).pricePerMeter * ZONE_FACTOR.filler * m(p.width);
   }
+  // "do stropa": the cornice strip up to the ceiling, priced like a filler
+  for (const c of plan.heights.cornices) cabinets += front(c.zone).pricePerMeter * ZONE_FACTOR.filler * m(c.to - c.from);
 
   let worktopM = plan.runs.reduce((sum, r) => sum + (r.worktop ? m(r.worktop.to - r.worktop.from) : 0), 0);
   let islandCost = 0;
   if (plan.island) {
     // slab (deeper than a wall worktop, ~1.5x) + two waterfall sides (~0.9 m each)
-    worktopM += m(plan.island.length) * 1.5 + 2 * m(DIM.worktopTop) * 0.8;
+    worktopM += m(plan.island.length) * 1.5 + 2 * m(plan.heights.worktop) * 0.8;
     islandCost = catalog.extras.islandFixed;
   }
   const worktop = top.pricePerMeter * worktopM;

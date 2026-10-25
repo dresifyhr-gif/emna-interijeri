@@ -27,6 +27,20 @@ export interface LeadValues {
 
 export const LEAD_FIELDS: LeadField[] = ["name", "phone", "email", "city", "message", "consent"];
 export const MESSAGE_MAX = 3000;
+/** lib/lead-schema.ts: at most this many summary lines of at most this many characters */
+const SUMMARY_LINES_MAX = 60;
+const SUMMARY_LINE_MAX = 600;
+
+/** a summary line within the schema's limit — cut at the last word that fits, with "…", never mid-word */
+export function clipLine(line: string, max = SUMMARY_LINE_MAX): string {
+  if (line.length <= max) return line;
+  const room = line.slice(0, max - 1);
+  // the cut falls on a space: every word in `room` is whole; else drop the word it splits
+  const space = /\s/.test(line.charAt(max - 1)) ? room.length : room.search(/\s\S*$/);
+  // one endless "word" (a long id): cut it after all
+  const head = space > max / 2 ? room.slice(0, space) : room;
+  return `${head.replace(/[\s,;:–—-]+$/, "")}…`;
+}
 
 const EMPTY: LeadValues = {
   name: "",
@@ -186,7 +200,7 @@ export function useStudioLead({
       ...(message ? { message } : {}),
       config: extras.config,
       configUrl: extras.configUrl,
-      summary: extras.summary.slice(0, 60).map((l) => l.slice(0, 300)),
+      summary: extras.summary.slice(0, SUMMARY_LINES_MAX).map((l) => clipLine(l)),
       price: extras.price,
       ...(snapshot ? { snapshot } : {}),
       consent: true,

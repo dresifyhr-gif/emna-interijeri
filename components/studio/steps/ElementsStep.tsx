@@ -2,8 +2,10 @@
 
 /**
  * "Elementi": every cabinet of the kitchen, wall by wall, without having to click in 3D (important on a phone).
- * A front-view drawing of the wall (clickable) and the rows below it open the element editor.
+ * A front-view drawing of the wall (clickable) and the rows below it open the element editor; pointing at a row
+ * (or focusing it) lights the element up in 3D.
  */
+import { useEffect } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
 import { isEdited } from "@/lib/studio/edit";
 import type { PlanSlot, RunId } from "@/lib/studio/plan";
@@ -17,6 +19,8 @@ export interface ElementsUi {
   selectedId: string | null;
   /** open the element editor for a slot (from this list: focus moves into the editor) */
   onOpen: (slotId: string) => void;
+  /** the pointer / focus is on an element's row or drawing: light it up in 3D (null: none) — must be stable */
+  onHover: (slotId: string | null) => void;
   runTab: RunId;
   onRunTab: (run: RunId) => void;
   /** put a wall (base + wall units + its corners), the island or the tall column back to the planner */
@@ -27,7 +31,9 @@ export interface ElementsUi {
 const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 
 export function ElementsStep({ cfg, plan, update, compact, engine, elements }: StepProps & { elements: ElementsUi }) {
-  const { selectedId, onOpen, onRunTab, onReset, onResetAll } = elements;
+  const { selectedId, onOpen, onHover, onRunTab, onReset, onResetAll } = elements;
+  // nothing stays lit when the step goes away
+  useEffect(() => () => onHover(null), [onHover]);
   const runs: RunId[] = [...plan.walls, ...(plan.island ? (["isl"] as const) : [])];
   const run = runs.includes(elements.runTab) ? elements.runTab : runs[0];
   const tallSlot = plan.slots.find((s) => s.zone === "tall");
@@ -58,6 +64,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
           run={run}
           selected={selectedId}
           onPick={onOpen}
+          onHover={onHover}
           boxWidth={compact ? 320 : 312}
           boxHeight={compact ? 112 : 132}
           className={`block w-full ${compact ? "h-[112px]" : "h-[132px]"}`}
@@ -91,7 +98,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
             <ul aria-labelledby={labelId} className="mt-3 space-y-1.5">
               {list.map((sl, i) => (
                 <li key={sl.id}>
-                  <ElementRow slot={sl} index={i} on={sl.id === selectedId} onOpen={onOpen} />
+                  <ElementRow slot={sl} index={i} on={sl.id === selectedId} onOpen={onOpen} onHover={onHover} />
                 </li>
               ))}
             </ul>
@@ -145,7 +152,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
         <CursorIcon className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[12.5px] leading-relaxed text-fg/80">
           {engine
-            ? "Element možete odabrati i klikom u 3D prikazu. Uz svaku promjenu odmah vidite mehanizam, raspored i okvirnu cijenu."
+            ? "Kliknite element u 3D prikazu: iznad njega su brze radnje — dodaj lijevo ili desno, širina, zamijeni, ukloni. Klik na kotu (npr. 290 cm) mijenja duljinu zida."
             : "Odaberite element na popisu: promjene se odmah vide u rasporedu i okvirnoj cijeni."}
         </p>
       </div>
@@ -166,7 +173,19 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
   );
 }
 
-function ElementRow({ slot, index, on, onOpen }: { slot: PlanSlot; index: number; on: boolean; onOpen: (id: string) => void }) {
+function ElementRow({
+  slot,
+  index,
+  on,
+  onOpen,
+  onHover,
+}: {
+  slot: PlanSlot;
+  index: number;
+  on: boolean;
+  onOpen: (id: string) => void;
+  onHover: (id: string | null) => void;
+}) {
   const def = moduleDef(slot.zone, slot.type);
   const spacer = Boolean(def?.spacer);
   const name = slot.corner && def && !def.corner ? `Kutni element: ${lower(def.name)}` : (def?.name ?? slot.type);
@@ -175,6 +194,10 @@ function ElementRow({ slot, index, on, onOpen }: { slot: PlanSlot; index: number
       type="button"
       data-slot-row={slot.id}
       onClick={() => onOpen(slot.id)}
+      onPointerEnter={(e) => e.pointerType === "mouse" && onHover(slot.id)}
+      onPointerLeave={(e) => e.pointerType === "mouse" && onHover(null)}
+      onFocus={() => onHover(slot.id)}
+      onBlur={() => onHover(null)}
       aria-label={`${index + 1}. ${name}, ${Math.round(slot.width)} cm. Uredi.`}
       className={`group flex w-full items-center gap-3 rounded-xl border px-2.5 py-2 text-left transition-[border-color,background-color] duration-300 ease-premium ${
         on ? "border-accent/60 bg-accent/[0.08]" : "border-white/[0.07] hover:border-white/20 hover:bg-white/[0.03]"

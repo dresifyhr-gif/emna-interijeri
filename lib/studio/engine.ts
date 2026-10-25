@@ -12,9 +12,13 @@
 export { createStudioEngine, SHOWCASE_CONFIG } from "./engine/index";
 export type {
   CreateStudioEngine,
+  DimTarget,
+  HeightSpec,
   KitchenConfig,
   ModuleInfo,
   Mood,
+  ScreenRect,
   StudioEngineApi,
   StudioEngineOptions,
+  ViewInfo,
 } from "./types";

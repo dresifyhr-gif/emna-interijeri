@@ -6,8 +6,8 @@
  *
  * It walks the same plan the studio draws and prices (lib/studio/plan.ts planKitchen + price.ts
  * breakdown), one line per wall and zone ("Donji elementi – zid A (380 cm)" with every cabinet in the
- * details, each zone in its own front for two-tone kitchens, empty space left out as price.ts does),
- * then mechanisms, worktop, backsplash, handles, finishes (handle colour, sink and tap, plinth), LED,
+ * details, each zone in its own front for two-tone kitchens, empty space left out as price.ts does; kitchens
+ * "do stropa" add their top cabinets and the cornice strip), then mechanisms, worktop, backsplash, handles, finishes (handle colour, sink and tap, plinth), LED,
  * island and installation.
  *
  * Every category total comes from price.ts `breakdown()`, so the quote adds up to what the studio
@@ -32,8 +32,8 @@ import {
   topDef,
   type MaterialDef,
 } from "@/lib/studio/catalog";
-import { DIM, frontFor, planKitchen, sanitizeConfig, type PlanSlot } from "@/lib/studio/plan";
-import { backsplashArea, breakdown, estimate } from "@/lib/studio/price";
+import { DIM, frontFor, hasTopBox, planKitchen, sanitizeConfig, type PlanSlot } from "@/lib/studio/plan";
+import { TOP_BOX_HARDWARE, backsplashArea, breakdown, estimate, heightScale } from "@/lib/studio/price";
 import { summarize } from "@/lib/studio/summary";
 import type { FrontZone, KitchenConfig, Layout } from "@/lib/studio/types";
 
@@ -60,7 +60,10 @@ export interface QuotePrefillOptions {
   newId?: () => string;
 }
 
-/** share of the front's price per metre that each zone uses — mirror of ZONE_FACTOR in lib/studio/price.ts (the lines are scaled to b.cabinets anyway) */
+/**
+ * share of the front's price per metre that each zone uses — mirror of ZONE_FACTOR in lib/studio/price.ts, times
+ * price.ts heightScale for taller cabinets (the lines are scaled to b.cabinets anyway)
+ */
 const ZONE_WEIGHT = { base: 0.6, upper: 0.4, tall: 1.6, island: 0.8, filler: 0.25 } as const;
 
 const LAYOUT_TITLE: Record<Layout, string> = {
@@ -151,13 +154,20 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   /* ---------------- cabinets: one line per wall and zone; each group priced exactly as price.ts, then scaled to b.cabinets */
   type Group = { description: string; details: string; metres: number; gross: number; catalogueRate: number };
   const groups: Group[] = [];
+  // taller cabinets (KitchenConfig.heights) cost more per metre: the same factors as price.ts (all 1 for standard heights)
+  const hp = plan.heights;
+  const hs = heightScale(plan);
+  const heightNote: Partial<Record<FrontZone, string>> = {};
+  if (hs.upper !== 1) heightNote.upper = `visina ${cmFmt.format(hp.upperTop - hp.upperBottom)} cm`;
+  if (hs.tall !== 1) heightNote.tall = `do ${cmFmt.format(hp.tallTop)} cm od poda`;
   const addGroup = (description: string, slots: PlanSlot[], zone: FrontZone, weight: number) => {
     const priced = slots.filter((s) => !isSpacer(s));
     if (priced.length === 0) return;
     const f = frontOf(zone);
+    const h = heightNote[zone];
     groups.push({
       description,
-      details: `${slotList(slots)} · fronta: ${f.name}`,
+      details: `${slotList(slots)}${h ? ` · ${h}` : ""} · fronta: ${f.name}`,
       metres: cmToM(priced.reduce((sum, s) => sum + s.width, 0)),
       gross: priced.reduce((sum, s) => sum + f.pricePerMeter * weight * frontedM(s), 0),
       catalogueRate: f.pricePerMeter * weight,
@@ -169,11 +179,41 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     const label = `zid ${String(wall).toUpperCase()}${finite(length) ? ` (${cmFmt.format(length)} cm)` : ""}`;
     for (const zone of ["base", "upper"] as const) {
       const slots = plan.slots.filter((s) => s.run === wall && s.zone === zone);
-      addGroup(`${zone === "base" ? "Donji" : "Gornji"} elementi – ${label}`, slots, zone, ZONE_WEIGHT[zone]);
+      addGroup(`${zone === "base" ? "Donji" : "Gornji"} elementi – ${label}`, slots, zone, ZONE_WEIGHT[zone] * hs[zone]);
     }
   }
-  addGroup("Visoki elementi", plan.slots.filter((s) => s.zone === "tall"), "tall", ZONE_WEIGHT.tall);
+  addGroup("Visoki elementi", plan.slots.filter((s) => s.zone === "tall"), "tall", ZONE_WEIGHT.tall * hs.tall);
   addGroup("Otok – elementi", plan.slots.filter((s) => s.zone === "island"), "island", ZONE_WEIGHT.island);
+  // "do stropa": the top cabinets (nadgradni ormarići) on the wall units and above a split tall column, as price.ts counts them
+  const topUpper = hs.top > 0 ? cabinetsOnly.filter((s) => s.zone === "upper" && hasTopBox(s.type)) : [];
+  const topTall = hp.tallSplit !== null ? cabinetsOnly.filter((s) => s.zone === "tall") : [];
+  if (topUpper.length + topTall.length > 0) {
+    const fu = frontOf("upper");
+    const u = topUpper.length ? `${topUpper.length} kom iznad gornjih` : "";
+    const t = topTall.length ? `${topTall.length} kom iznad visokih` : "";
+    const where = `${[u, t].filter(Boolean).join(" i ")} elemenata`;
+    const rowH = hp.topRow ? hp.topRow.to - hp.topRow.from : hp.tallTop - (hp.tallSplit ?? hp.tallTop);
+    const names = [...new Set([...(topUpper.length ? [fu.name] : []), ...(topTall.length ? [frontOf("tall").name] : [])])];
+    groups.push({
+      description: "Nadgradni ormarići do stropa",
+      details: `${where}, visina ${cmFmt.format(rowH)} cm, s klapnom koja se diže · fronta: ${names.join(", ")}`,
+      metres: cmToM([...topUpper, ...topTall].reduce((sum, s) => sum + s.width, 0)),
+      gross:
+        topUpper.reduce((sum, s) => sum + fu.pricePerMeter * ZONE_WEIGHT.upper * cmToM(s.width) * hs.top + TOP_BOX_HARDWARE, 0) +
+        topTall.length * TOP_BOX_HARDWARE,
+      catalogueRate: 0,
+    });
+  }
+  if (hp.cornices.length) {
+    const names = [...new Set(hp.cornices.map((c) => frontOf(c.zone).name))];
+    groups.push({
+      description: "Lajsna do stropa",
+      details: `${hp.cornice ? `visina ${cmFmt.format(hp.cornice.to - hp.cornice.from)} cm, ` : ""}u boji fronte (${names.join(", ")})`,
+      metres: cmToM(hp.cornices.reduce((sum, c) => sum + (c.to - c.from), 0)),
+      gross: hp.cornices.reduce((sum, c) => sum + frontOf(c.zone).pricePerMeter * ZONE_WEIGHT.filler * cmToM(c.to - c.from), 0),
+      catalogueRate: names.length === 1 ? frontOf(hp.cornices[0].zone).pricePerMeter * ZONE_WEIGHT.filler : 0,
+    });
+  }
   const fillerM = cmToM(plan.pieces.reduce((sum, p) => sum + p.width, 0));
   if (fillerM > 0.005) {
     const pieceZone = (p: (typeof plan.pieces)[number]): FrontZone => (p.run === "isl" ? "island" : p.zone);

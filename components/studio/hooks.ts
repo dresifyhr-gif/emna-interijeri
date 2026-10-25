@@ -50,6 +50,44 @@ export function useOrigin(): string {
 }
 
 /**
+ * A one-time hint that stays gone once it has been used ("Kliknite element ili kotu za izmjenu"): remembered in
+ * localStorage, and only in memory when storage is blocked (private mode), so it then shows again next visit.
+ * On the server (and in the first client render) it counts as seen, so it never flashes in before hydration.
+ */
+const HINT_KEY = "emna-studio-hint-edit";
+let hintSeen: boolean | null = null;
+const hintSubs = new Set<() => void>();
+function readHintSeen(): boolean {
+  if (hintSeen === null) {
+    try {
+      hintSeen = window.localStorage.getItem(HINT_KEY) === "1";
+    } catch {
+      hintSeen = false;
+    }
+  }
+  return hintSeen;
+}
+function subscribeHint(cb: () => void) {
+  hintSubs.add(cb);
+  return () => {
+    hintSubs.delete(cb);
+  };
+}
+export function markEditHintSeen(): void {
+  if (readHintSeen()) return;
+  hintSeen = true;
+  try {
+    window.localStorage.setItem(HINT_KEY, "1");
+  } catch {
+    // storage blocked: remembered for this visit only
+  }
+  hintSubs.forEach((cb) => cb());
+}
+export function useEditHintSeen(): boolean {
+  return useSyncExternalStore(subscribeHint, readHintSeen, () => true);
+}
+
+/**
  * Press-and-hold repeat for − / + steppers. The step grows the longer you hold
  * (1 → 5 → 10 cm). Pointer presses repeat; keyboard activation fires once.
  */

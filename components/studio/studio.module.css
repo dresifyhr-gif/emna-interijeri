@@ -113,26 +113,6 @@
 
 /* ---------------------------------------------------------------- motion */
 
-/* slow halo around the selected element's anchor point */
-.pulse {
-  position: absolute;
-  inset: 0;
-  border-radius: 999px;
-  border: 1px solid rgba(201, 185, 154, 0.7);
-  animation: pulse 2.6s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
-}
-@keyframes pulse {
-  0% {
-    transform: scale(1);
-    opacity: 0.9;
-  }
-  70%,
-  100% {
-    transform: scale(3.2);
-    opacity: 0;
-  }
-}
-
 /* indeterminate loading line */
 .loadbar {
   animation: loadbar 1.9s cubic-bezier(0.65, 0, 0.35, 1) infinite;
@@ -146,10 +126,471 @@
   }
 }
 
+/* ---------------------------------------------------------------- element toolbar over the 3D view */
+
+/* the layer over the canvas; only the bar, its pickers and the tag's hit area take the pointer */
+.tbLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* positioned per frame from ViewInfo (transform written by ElementToolbar) */
+.tb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  will-change: transform;
+  --tb-bg: rgba(17, 17, 19, 0.86);
+  --tb-line: rgba(255, 255, 255, 0.1);
+}
+.tb[data-docked] {
+  left: 8px;
+  right: 8px;
+  top: auto;
+  bottom: calc(var(--studio-inset-bottom, 0px) + 10px);
+  will-change: auto;
+  transition: bottom 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.tbInner {
+  position: relative;
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
+  transform-origin: 50% 100%;
+  transition:
+    opacity 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tb[data-place="below"] .tbInner {
+  transform: translateY(-6px) scale(0.98);
+  transform-origin: 50% 0;
+}
+.tb[data-shown] .tbInner {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.tbBar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: max-content;
+  padding: 4px;
+  border: 1px solid var(--tb-line);
+  border-radius: 18px;
+  background: var(--tb-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+  box-shadow:
+    0 18px 50px -18px rgba(0, 0, 0, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+}
+.tb[data-docked] .tbBar {
+  width: auto;
+  justify-content: space-between;
+  gap: 0;
+  padding: 3px;
+  border-radius: 20px;
+}
+
+.tbBtn {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  min-width: 36px;
+  padding: 0 8px;
+  border-radius: 13px;
+  color: rgba(242, 239, 233, 0.78);
+  transition:
+    background-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: hover) {
+  .tbBtn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #f2efe9;
+  }
+  .tbBtn[data-off]:hover {
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(242, 239, 233, 0.42);
+  }
+  .tbDanger:not([data-off]):hover {
+    background: rgba(227, 154, 132, 0.1);
+    color: #e9ae9c;
+  }
+  .tbWidth:hover {
+    border-color: rgba(201, 185, 154, 0.45);
+  }
+  .popChip:hover,
+  .popWidth:hover {
+    border-color: rgba(242, 239, 233, 0.38);
+    color: #f2efe9;
+  }
+  .popTile:hover {
+    border-color: rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.04);
+    color: #f2efe9;
+  }
+  .popTile[aria-disabled="true"]:hover {
+    opacity: 0.65;
+  }
+}
+.tbBtn:active {
+  background: rgba(255, 255, 255, 0.09);
+}
+.tbBtn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px rgba(201, 185, 154, 0.85);
+  color: #f2efe9;
+}
+.tbBtn[data-on] {
+  background: rgba(201, 185, 154, 0.14);
+  color: #c9b99a;
+}
+.tbBtn[data-off] {
+  color: rgba(242, 239, 233, 0.3);
+}
+.tbWidth {
+  flex-direction: row;
+  gap: 4px;
+  padding: 0 8px 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.025);
+}
+.tbWidth[aria-expanded="true"] {
+  border-color: rgba(201, 185, 154, 0.7);
+  background: rgba(201, 185, 154, 0.1);
+}
+/* phone: equal 44 px+ targets with a caption under the icon */
+.tb[data-docked] .tbBtn {
+  flex: 1 1 0;
+  height: 50px;
+  min-width: 44px;
+  padding: 0 2px;
+  gap: 3px;
+  border-radius: 16px;
+}
+.tb[data-docked] .tbWidth {
+  flex-direction: column;
+  flex: 1.2 1 0;
+  gap: 1px;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.tbCap {
+  font-size: 9.5px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: rgba(143, 137, 126, 1);
+}
+.tbBtn[data-on] .tbCap {
+  color: #c9b99a;
+}
+
+/* the little point towards the element */
+.tbCaret {
+  position: absolute;
+  left: var(--caret-x, 50%);
+  bottom: -5px;
+  z-index: 2;
+  width: 10px;
+  height: 10px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--tb-bg);
+  border-right: 1px solid var(--tb-line);
+  border-bottom: 1px solid var(--tb-line);
+  border-bottom-right-radius: 2px;
+  pointer-events: none;
+}
+.tb[data-place="below"] .tbCaret {
+  top: -5px;
+  bottom: auto;
+  border: 0;
+  border-left: 1px solid var(--tb-line);
+  border-top: 1px solid var(--tb-line);
+  border-radius: 2px 0 0 0;
+}
+
+/* tooltips: on the side away from the element, after a short rest of the pointer */
+.tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  z-index: 3;
+  max-width: 260px;
+  width: max-content;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(11, 11, 12, 0.94);
+  color: rgba(242, 239, 233, 0.9);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  transform: translate(-50%, 3px);
+  pointer-events: none;
+  transition:
+    opacity 0.2s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.9);
+}
+.tb[data-place="below"] .tip {
+  top: calc(100% + 12px);
+  bottom: auto;
+  transform: translate(-50%, -3px);
+}
+.tbBtn:hover .tip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: 0.35s;
+}
+.tbBtn:focus-visible .tip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.tb[data-pop-open] .tip {
+  display: none;
+}
+@media (hover: none) {
+  .tip {
+    display: none;
+  }
+}
+
+/* the pickers (add / width / type), opened above or below the bar */
+.tbPop {
+  position: absolute;
+  z-index: 4;
+  width: min(352px, calc(100vw - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--tb-line);
+  border-radius: 20px;
+  background: rgba(17, 17, 19, 0.92);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.95);
+  animation: popIn 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.tb[data-pop="up"] .tbPop {
+  bottom: calc(100% + 12px);
+}
+.tb[data-pop="down"] .tbPop {
+  top: calc(100% + 12px);
+  animation-name: popInDown;
+}
+.tb[data-docked] .tbPop {
+  left: 0;
+  right: 0;
+  width: auto;
+}
+.tb[data-docked][data-pop="up"] .tbPop {
+  bottom: calc(100% + 8px);
+}
+.tb[data-docked][data-pop="down"] .tbPop {
+  top: calc(100% + 8px);
+}
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes popInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.popChip,
+.popWidth {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: rgba(242, 239, 233, 0.82);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  transition:
+    border-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  touch-action: manipulation;
+}
+.popChip:focus-visible,
+.popWidth:focus-visible,
+.popTile:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px rgba(201, 185, 154, 0.9);
+}
+.popChip[data-usual] {
+  border-color: rgba(201, 185, 154, 0.55);
+  color: #c9b99a;
+}
+.popWidth[aria-pressed="true"] {
+  border-color: #f2efe9;
+  background: #f2efe9;
+  color: #0b0b0c;
+}
+.popWidth[aria-disabled="true"] {
+  border-color: rgba(255, 255, 255, 0.05);
+  color: rgba(242, 239, 233, 0.3);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 255, 255, 0.2);
+}
+
+.popTile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 9px 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.015);
+  color: rgba(242, 239, 233, 0.8);
+  text-align: center;
+  transition:
+    border-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.popTile[aria-pressed="true"] {
+  border-color: rgba(201, 185, 154, 0.7);
+  background: rgba(201, 185, 154, 0.09);
+  color: #c9b99a;
+}
+.popTile[aria-disabled="true"] {
+  opacity: 0.42;
+}
+
+/* the hit area over the engine's "60 cm" tag of the selected element */
+.tagHit {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 66px;
+  height: 28px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(201, 185, 154, 0.8);
+  transition: opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  -webkit-tap-highlight-color: transparent;
+}
+/* a larger target than the ring shows (fingers) */
+.tagHit::before {
+  content: "";
+  position: absolute;
+  inset: -8px -6px;
+}
+.tagHit[data-on] {
+  pointer-events: auto;
+}
+.tagHit[data-on]:hover {
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------- wall-length editor at a dimension label */
+
+.dim {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 26;
+  width: min(300px, calc(100vw - 16px));
+  will-change: transform;
+}
+.dim[data-docked] {
+  left: 8px;
+  right: 8px;
+  top: calc(var(--studio-inset-top, 56px) + 6px);
+  width: auto;
+  will-change: auto;
+}
+.dimCard {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  background: rgba(17, 17, 19, 0.9);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.95);
+  animation: popInDown 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.dim[data-side="up"] .dimCard {
+  animation-name: popIn;
+}
+.dimCaret {
+  position: absolute;
+  left: var(--caret-x, 50%);
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  transform: translateX(-50%) rotate(45deg);
+  background: rgba(17, 17, 19, 0.9);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 2px 0 0 0;
+}
+.dim[data-side="up"] .dimCaret {
+  top: auto;
+  bottom: -5px;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0 0 2px 0;
+}
+.dim[data-docked] .dimCaret {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .pulse,
-  .loadbar {
+  .loadbar,
+  .tbPop,
+  .dimCard {
     animation: none;
+  }
+  .tb,
+  .tb[data-docked],
+  .tbInner,
+  .tip,
+  .tagHit {
+    transition: none;
+  }
+  .tbInner,
+  .tb[data-place="below"] .tbInner {
+    transform: none;
   }
   .range::-webkit-slider-thumb,
   .range::-moz-range-thumb {

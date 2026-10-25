@@ -27,7 +27,7 @@ export const STEPS: StepDef[] = [
     id: "zidovi",
     short: "Zidovi",
     title: "Zidovi",
-    lead: "Upišite duljinu svakog zida u centimetrima. Točne mjere uzimamo na izmjeri.",
+    lead: "Upišite duljinu svakog zida i visinu stropa u centimetrima, pa odaberite visinu kuhinje. Točne mjere uzimamo na izmjeri.",
   },
   {
     id: "elementi",
@@ -139,6 +139,19 @@ export function resetTarget(s: PlanSlot): { run: WallId | "isl" | "tall"; zone?:
 }
 
 export const listOfSlot = (s: PlanSlot): ListId | null => s.list?.id ?? null;
+
+/**
+ * Why nothing can be added next to an element (`free` = SlotEditInfo.free, cm). The tall column is limited by its
+ * wall (plan.ts tallCapacity), not by a neighbour in the base run, so it says which wall to lengthen.
+ */
+export function noRoomText(s: PlanSlot, free: number): string {
+  const left = free >= 1 ? ` — slobodno je još ${Math.floor(free)} cm` : "";
+  if (s.zone === "tall") {
+    const wall = String(s.run).toUpperCase();
+    return `Visoki stup uz zid ${wall} je pun${left}. Produžite zid ${wall} ili suzite, zamijenite ili uklonite neki visoki element.`;
+  }
+  return `Za novi element nema mjesta${left}. Suzite ili uklonite susjedni element.`;
+}
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
