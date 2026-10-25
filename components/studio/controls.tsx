@@ -5,10 +5,10 @@
  * radio-group keyboard behaviour, a switch, and a centimetre field (− / + with
  * press-and-hold, typed value, slider).
  */
-import { motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { useHoldRepeat } from "./hooks";
-import { MinusIcon, NoteIcon, PlusIcon } from "./icons";
+import { ChevronUp, MinusIcon, NoteIcon, PlusIcon } from "./icons";
 import { EASE, clamp } from "./meta";
 import s from "./studio.module.css";
 
@@ -23,6 +23,29 @@ export function rovingIndex(e: KeyboardEvent, i: number, n: number): number | nu
     case "ArrowLeft":
     case "ArrowUp":
       return (i - 1 + n) % n;
+    case "Home":
+      return 0;
+    case "End":
+      return n - 1;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Arrow-key target in a grid of `n` buttons with `cols` columns (toolbar-style: arrows move focus, Enter / Space
+ * acts). Left / Right step by one, Up / Down by a row, Home / End jump to the ends. null: not a navigation key.
+ */
+export function gridIndex(e: KeyboardEvent, i: number, n: number, cols: number): number | null {
+  switch (e.key) {
+    case "ArrowRight":
+      return Math.min(n - 1, i + 1);
+    case "ArrowLeft":
+      return Math.max(0, i - 1);
+    case "ArrowDown":
+      return cols > 1 ? Math.min(n - 1, i + cols) : Math.min(n - 1, i + 1);
+    case "ArrowUp":
+      return cols > 1 ? Math.max(0, i - cols) : Math.max(0, i - 1);
     case "Home":
       return 0;
     case "End":
@@ -386,16 +409,220 @@ export function SectionLabel({ id, children, className = "" }: { id?: string; ch
   );
 }
 
-export function Notes({ items }: { items: string[] }) {
+export function Notes({ items, className = "mt-6" }: { items: (string | { text: string; action?: ReactNode })[]; className?: string }) {
   if (!items.length) return null;
   return (
-    <ul className="mt-6 space-y-2" aria-label="Napomene">
-      {items.map((w) => (
-        <li key={w} className="flex gap-3 rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-3 text-[12.5px] leading-relaxed text-fg/85">
-          <NoteIcon className="mt-px h-4 w-4 shrink-0 text-accent" />
-          <span>{w}</span>
-        </li>
-      ))}
+    <ul className={`space-y-2 ${className}`} aria-label="Napomene">
+      {items.map((it) => {
+        const w = typeof it === "string" ? { text: it } : it;
+        return (
+          <li key={w.text} className="flex gap-3 rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-3 text-[12.5px] leading-relaxed text-fg/85">
+            <NoteIcon className="mt-px h-4 w-4 shrink-0 text-accent" />
+            <span className="min-w-0">
+              {w.text}
+              {w.action && <span className="mt-2 block">{w.action}</span>}
+            </span>
+          </li>
+        );
+      })}
     </ul>
+  );
+}
+
+/* ------------------------------------------------------------------ family tabs (material libraries) */
+
+/**
+ * Pills that switch a material library between families — a real tablist (arrows / Home / End move and show).
+ * `marked` gets a small dot: the family that holds the current choice.
+ */
+export function FamilyTabs({
+  label,
+  families,
+  value,
+  onChange,
+  marked,
+  panelId,
+  idPrefix,
+  className = "",
+}: {
+  label: string;
+  families: readonly { id: string; name: string }[];
+  value: string;
+  onChange: (id: string) => void;
+  marked?: string;
+  panelId: string;
+  idPrefix: string;
+  className?: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const current = families.findIndex((f) => f.id === value);
+  return (
+    <div role="tablist" aria-label={label} className={`flex flex-wrap gap-1.5 ${className}`}>
+      {families.map((f, i) => {
+        const on = i === current;
+        return (
+          <button
+            key={f.id}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            id={`${idPrefix}-${f.id}`}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            aria-controls={panelId}
+            tabIndex={on || (current < 0 && i === 0) ? 0 : -1}
+            onClick={() => onChange(f.id)}
+            onKeyDown={(e) => {
+              const n = rovingIndex(e, i, families.length);
+              if (n === null) return;
+              e.preventDefault();
+              onChange(families[n].id);
+              refs.current[n]?.focus();
+            }}
+            className={`relative inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[11.5px] font-medium tracking-wide transition-colors duration-300 ease-premium ${
+              on ? "border-fg bg-fg text-ink" : "border-white/[0.12] text-fg/65 hover:border-white/30 hover:text-fg"
+            }`}
+          >
+            {f.name}
+            {marked === f.id && (
+              <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${on ? "bg-ink/70" : "bg-accent"}`} />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ swatch chips (finishes) */
+
+export interface ChipOption {
+  id: string;
+  name: string;
+  /** CSS background of the little sample */
+  swatch?: string;
+  icon?: ReactNode;
+}
+
+/** a row of pill choices with a colour sample — a radio group (arrows move and pick) */
+export function ChoiceChips({
+  label,
+  labelledBy,
+  options,
+  value,
+  onChange,
+  className = "",
+}: {
+  label?: string;
+  labelledBy?: string;
+  options: readonly ChipOption[];
+  value: string;
+  onChange: (id: string) => void;
+  className?: string;
+}) {
+  return (
+    <RadioGrid
+      label={label}
+      labelledBy={labelledBy}
+      items={options}
+      value={value}
+      onChange={onChange}
+      className={`flex flex-wrap gap-2 ${className}`}
+      itemClassName={(on) =>
+        `group inline-flex min-h-10 items-center gap-2.5 rounded-full border py-1.5 pl-1.5 pr-3.5 text-left text-[12.5px] transition-colors duration-300 ease-premium ${
+          on ? "border-accent/70 bg-accent/[0.08] text-fg" : "border-white/[0.1] text-fg/75 hover:border-white/25 hover:text-fg"
+        }`
+      }
+    >
+      {(o, on) => (
+        <>
+          {o.icon ? (
+            <span aria-hidden="true" className={`flex h-7 w-7 shrink-0 items-center justify-center ${on ? "text-accent" : "text-fg/60"}`}>
+              {o.icon}
+            </span>
+          ) : (
+            <span
+              aria-hidden="true"
+              className={`relative h-7 w-7 shrink-0 rounded-full ring-1 ring-inset transition-shadow duration-300 ${on ? "ring-accent" : "ring-white/15"}`}
+              style={{ background: o.swatch }}
+            >
+              <span className="absolute inset-0 rounded-full bg-[linear-gradient(135deg,rgba(255,255,255,.2),transparent_50%,rgba(0,0,0,.2))]" />
+            </span>
+          )}
+          <span className="leading-tight">{o.name}</span>
+        </>
+      )}
+    </RadioGrid>
+  );
+}
+
+/* ------------------------------------------------------------------ disclosure section */
+
+/**
+ * One collapsible "Detalji" row: a button with the section name and its current value, the controls below.
+ * Collapsed by default — the customer opens only what they care about.
+ */
+export function Disclosure({
+  title,
+  value,
+  icon,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  /** current choice, shown in the closed header */
+  value: string;
+  icon?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const uid = useId();
+  const reduce = useReducedMotion();
+  return (
+    <div className={`rounded-2xl border transition-colors duration-500 ease-premium ${open ? "border-white/[0.16] bg-white/[0.03]" : "border-white/10 bg-white/[0.015] hover:border-white/20"}`}>
+      <h3>
+        <button
+          type="button"
+          id={`${uid}-h`}
+          aria-expanded={open}
+          aria-controls={`${uid}-p`}
+          onClick={onToggle}
+          className="flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-left"
+        >
+          {icon && (
+            <span aria-hidden="true" className={`flex h-8 w-8 shrink-0 items-center justify-center transition-colors duration-300 ${open ? "text-accent" : "text-fg/55"}`}>
+              {icon}
+            </span>
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block font-display text-[15px] font-medium leading-tight">{title}</span>
+            <span className="mt-1 block truncate text-[12px] leading-tight text-mut">{value}</span>
+          </span>
+          <ChevronUp
+            aria-hidden="true"
+            className={`h-4 w-4 shrink-0 text-fg/50 transition-transform duration-500 ease-premium ${open ? "" : "rotate-180"}`}
+          />
+        </button>
+      </h3>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="body"
+            id={`${uid}-p`}
+            role="region"
+            aria-labelledby={`${uid}-h`}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1, transition: { duration: reduce ? 0 : 0.5, ease: EASE } }}
+            exit={{ height: 0, opacity: 0, transition: { duration: reduce ? 0 : 0.3, ease: EASE } }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 pt-0.5">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

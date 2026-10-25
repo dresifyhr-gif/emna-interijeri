@@ -5,12 +5,12 @@ import { useState } from "react";
 import { limitsFor, wallsFor } from "@/lib/studio/plan";
 import type { WallId, WindowSpec } from "@/lib/studio/types";
 import { Notes, NumberField, Segmented, SectionLabel, ToggleRow } from "../controls";
-import { windowLimits } from "../limits";
-import { EASE, EDITS_RESET_NOTE, WALL_HINT } from "../meta";
+import { islandLimits, windowLimits } from "../limits";
+import { EASE, WALL_HINT } from "../meta";
 import { WallSchematic, type SchematicFocus } from "../WallSchematic";
 import type { StepProps } from "./types";
 
-export function WallsStep({ cfg, plan, update, editsReset }: StepProps) {
+export function WallsStep({ cfg, plan, update }: StepProps) {
   const reduce = useReducedMotion();
   const [focus, setFocus] = useState<SchematicFocus>(null);
   const used = wallsFor(cfg.layout);
@@ -35,6 +35,8 @@ export function WallsStep({ cfg, plan, update, editsReset }: StepProps) {
   const winLen = win ? cfg.walls[win.wall] : 0;
   // the planner's own ranges (wall − 10 cm, sill 40 cm under the window top), so the field never shows a number the plan ignores
   const winLim = win ? windowLimits(cfg, win.wall) : null;
+  // at most wall A + 40 cm: longer islands can no longer be centred on the wall run
+  const island = islandLimits(cfg);
 
   return (
     <div>
@@ -66,6 +68,22 @@ export function WallsStep({ cfg, plan, update, editsReset }: StepProps) {
           onActive={active("ceiling")}
         />
       </div>
+
+      {cfg.layout === "otok" && (
+        <>
+          <SectionLabel className="mt-8">Otok</SectionLabel>
+          <NumberField
+            className="mt-4"
+            label="Duljina otoka"
+            value={cfg.island}
+            min={island[0]}
+            max={island[1]}
+            onChange={(v) => update({ island: v })}
+            onActive={active("island")}
+            hint="S pločom koja se s obje strane spušta do poda i mjestom za sjedenje."
+          />
+        </>
+      )}
 
       <SectionLabel className="mt-8">Prozor</SectionLabel>
       <div className="mt-4">
@@ -134,7 +152,10 @@ export function WallsStep({ cfg, plan, update, editsReset }: StepProps) {
         </ToggleRow>
       </div>
 
-      <Notes items={editsReset ? [EDITS_RESET_NOTE, ...plan.warnings] : plan.warnings} />
+      <p className="mt-6 text-[12.5px] leading-relaxed text-mut">
+        Elementi koje ste uredili ostaju na svom mjestu. Ako neki više ne stane uz nove mjere, ovdje ćete vidjeti napomenu.
+      </p>
+      <Notes items={plan.warnings} />
     </div>
   );
 }

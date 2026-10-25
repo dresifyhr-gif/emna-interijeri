@@ -72,10 +72,33 @@ export function mesh(geo: THREE.BufferGeometry, mat: THREE.Material | THREE.Mate
   return m;
 }
 
-/** dispose every geometry below `root` (materials are owned by the library) */
+/** dispose every geometry below `root` (materials are owned by the library; shared geometries by the cache) */
 export function disposeGeometries(root: THREE.Object3D): void {
   root.traverse((o) => {
     const g = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
-    if (g && typeof g.dispose === "function") g.dispose();
+    if (g && typeof g.dispose === "function" && !g.userData.shared) g.dispose();
   });
+}
+
+/**
+ * Geometries that many modules use unchanged (knobs, taps, bottles, jars, plates, bins …): built once per
+ * engine, positioned by their mesh. Marked `userData.shared` so disposeGeometries leaves them alone.
+ */
+export class GeoCache {
+  private map = new Map<string, THREE.BufferGeometry>();
+
+  get(key: string, make: () => THREE.BufferGeometry): THREE.BufferGeometry {
+    let g = this.map.get(key);
+    if (!g) {
+      g = make();
+      g.userData.shared = true;
+      this.map.set(key, g);
+    }
+    return g;
+  }
+
+  dispose(): void {
+    for (const g of this.map.values()) g.dispose();
+    this.map.clear();
+  }
 }

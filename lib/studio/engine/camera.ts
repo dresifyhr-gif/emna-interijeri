@@ -20,8 +20,8 @@ const tmpCam = new THREE.PerspectiveCamera();
 const v = new THREE.Vector3();
 
 /** unit vector from target towards the camera for azimuth/elevation (radians) */
-export function viewDir(az: number, el: number): THREE.Vector3 {
-  return new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
+export function viewDir(az: number, el: number, out = new THREE.Vector3()): THREE.Vector3 {
+  return out.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
 }
 
 /** apply the projection shift so `region` is the visual centre */

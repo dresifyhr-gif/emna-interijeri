@@ -1,8 +1,10 @@
 /**
  * Mechanism demos: open every moving part of a module in a calm sequence
  * (doors swing on their hinge, drawers glide out, flaps lift around the top
- * edge, the dishwasher/oven door drops, the larder pulls out, corner trays
- * swing out), hold, then close in reverse order.
+ * edge — a bi-fold's lower front folds back over the upper one —, the
+ * dishwasher/oven door drops, the larder and the bottle rack pull out, corner
+ * trays swing out, Magic-corner baskets glide sideways and forward), hold,
+ * then close in reverse order.
  */
 
 import type { Holder, ModuleRT } from "./modules";
@@ -24,6 +26,14 @@ function pose(h: Holder, k: number): void {
       n.position.z = h.rest.p.z + (h.dz ?? 0) * kz;
       n.position.x = h.rest.p.x + (h.dx ?? 0) * k;
       n.rotation.y = h.rest.r.y + h.amount * kr;
+      break;
+    }
+    case "glide": {
+      // sideways first, then towards the room (Magic corner baskets)
+      const kx = Math.min(1, k / 0.6);
+      const kz = Math.max(0, (k - 0.4) / 0.6);
+      n.position.x = h.rest.p.x + (h.dx ?? 0) * kx;
+      n.position.z = h.rest.p.z + (h.dz ?? 0) * kz;
       break;
     }
     case "flap":

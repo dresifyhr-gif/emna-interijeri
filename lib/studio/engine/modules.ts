@@ -5,19 +5,23 @@
  * the real pivot (door hinge, flap top edge, dishwasher bottom edge …) so the
  * mechanism demo is just a rotation or translation of the holder.
  *
- *   root ── body    (carcass, plinth, interior, LED inside)    static
- *        ├─ fronts  (wrapper ─ holder ─ panel [+ handle])        rebuilt when the handle style changes
+ *   root ── body    (carcass, plinth, interior, appliances, LED inside)   static
+ *        ├─ fronts  (wrapper ─ holder ─ panel [+ grip])                    rebuilt when the handle style changes
  *        └─ extras  (hob, tap — things standing on the worktop)
+ *
+ * One builder per catalogue type (catalog.modules); an unknown type falls back to a door unit. Geometries that
+ * repeat unchanged (knobs, tap, bottles, plates, jars …) come from the engine's GeoCache.
  */
 
 import * as THREE from "three";
+import { moduleDef } from "../catalog";
 import type { PlanSlot } from "../plan";
-import type { HandleStyle } from "../types";
+import type { FrontZone, HandleStyle } from "../types";
 import { BASE_FACE, D, TOP_Y, UPPER_FACE, WORK_Y } from "./dims";
-import { boxes, disposeGeometries, mesh, roundedPanel, type BoxSpec } from "./geo";
+import { boxes, disposeGeometries, mesh, roundedPanel, type BoxSpec, type GeoCache } from "./geo";
 import type { Mat, Materials } from "./materials";
 
-export type HolderKind = "door" | "drawer" | "flap" | "drop" | "pull" | "visor" | "swing" | "fixed";
+export type HolderKind = "door" | "drawer" | "flap" | "drop" | "pull" | "visor" | "swing" | "glide" | "fixed";
 
 export interface Holder {
   node: THREE.Object3D;
@@ -26,7 +30,7 @@ export interface Holder {
   amount: number;
   /** seconds after the demo starts */
   delay: number;
-  /** "swing" only: extra travel towards the room / sideways (m) */
+  /** "swing" / "glide": travel towards the room / sideways (m) */
   dz?: number;
   dx?: number;
   rest: { p: THREE.Vector3; r: THREE.Euler };
@@ -51,6 +55,8 @@ export interface ModuleRT {
   panels: THREE.Mesh[];
   /** meshes in the carcass material (swap) */
   carcassMeshes: THREE.Mesh[];
+  /** plinth meshes (finish: black / inox plinth, or the zone's front) */
+  plinths: THREE.Mesh[];
   pickables: THREE.Mesh[];
   /** sink cut-out in the worktop, run-local metres */
   hole: { x0: number; x1: number; z0: number; z1: number } | null;
@@ -58,12 +64,19 @@ export interface ModuleRT {
   busy: boolean;
   /** local anchor for the popover (top-front centre) */
   anchor: THREE.Vector3;
+  /** the zone whose front material this module wears */
+  frontZone: FrontZone;
+  /** empty-space slot: nothing but an invisible pick volume */
+  ghost: boolean;
 }
 
 export interface BuildCtx {
   mats: Materials;
+  geos: GeoCache;
   front: Mat;
   carcass: Mat;
+  /** plinth material (finish) */
+  plinth: THREE.Material;
   handles: HandleStyle;
   /** wall-unit bottom / top (m) */
   ub: number;
@@ -80,6 +93,13 @@ const FT = D.frontT;
 const BASE_FZ = D.carcass + D.frontOff + FT / 2;
 const UPPER_FZ = D.upperCarcass + D.frontOff + FT / 2;
 const DOOR_OPEN = 1.62;
+
+/** where a grip goes on a front: along the top / bottom edge (centred, or on the free side of a door), or mid-height */
+interface GripAt {
+  edge: "top" | "bottom" | "mid";
+  /** doors: panel-local x of the free (non-hinge) side's handle line; undefined = centred (drawers, flaps) */
+  free?: number;
+}
 
 // ---------------------------------------------------------------- carcass
 
@@ -116,6 +136,32 @@ function hollow(x0: number, y0: number, z0: number, x1: number, y1: number, z1: 
   ];
 }
 
+/** an open-top tray / basket (four walls + floor) */
+function tray(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, t = 0.006): BoxSpec[] {
+  return [
+    [x0, y0, z0, x1, y0 + t, z1],
+    [x0, y0, z0, x0 + t, y1, z1],
+    [x1 - t, y0, z0, x1, y1, z1],
+    [x0 + t, y0, z0, x1 - t, y1, z0 + t],
+    [x0 + t, y0, z1 - t, x1 - t, y1, z1],
+  ];
+}
+
+/** a wire rack: a rectangle frame plus `bars` cross wires (y = height of the wires) */
+function wireRack(x0: number, x1: number, y: number, z0: number, z1: number, bars: number, r = 0.004): BoxSpec[] {
+  const list: BoxSpec[] = [
+    [x0, y, z0, x1, y + r, z0 + r],
+    [x0, y, z1 - r, x1, y + r, z1],
+    [x0, y, z0, x0 + r, y + r, z1],
+    [x1 - r, y, z0, x1, y + r, z1],
+  ];
+  for (let k = 1; k < bars; k++) {
+    const x = x0 + ((x1 - x0) * k) / bars;
+    list.push([x, y, z0, x + r * 0.7, y + r * 0.7, z1]);
+  }
+  return list;
+}
+
 // ---------------------------------------------------------------- builder
 
 class Mod {
@@ -129,6 +175,10 @@ class Mod {
     this.ox = m.slot.x / 100;
   }
 
+  get mats(): Materials {
+    return this.ctx.mats;
+  }
+
   body(geo: THREE.BufferGeometry, mat: THREE.Material, carcass = false): THREE.Mesh {
     const me = mesh(geo, mat);
     this.m.body.add(me);
@@ -136,19 +186,44 @@ class Mod {
     return me;
   }
 
+  /** a cached geometry placed at (x, y, z) in module space */
+  piece(key: string, make: () => THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D = this.m.body, cast = true): THREE.Mesh {
+    const me = mesh(this.ctx.geos.get(key, make), mat, cast, true);
+    me.position.set(x, y, z);
+    parent.add(me);
+    return me;
+  }
+
   carcass(list: BoxSpec[]): THREE.Mesh {
     return this.body(boxes(list, [this.ox, 0, 0]), this.ctx.carcass, true);
   }
 
-  plinth(): void {
-    this.body(boxes([[0.001, 0, 0.03, this.w - 0.001, D.plinth - 0.002, BASE_FACE - D.plinthRecess]]), this.ctx.mats.plinth);
+  /** an open carcass in the front material (open shelves): it takes part in front changes */
+  openCarcass(list: BoxSpec[]): THREE.Mesh {
+    const me = mesh(boxes(list, [this.ox, 0, 0]), this.ctx.front);
+    this.m.body.add(me);
+    this.m.panels.push(me);
+    return me;
   }
 
-  /** a moving part: wrapper (assembly) > holder (mechanism) */
-  holder(kind: HolderKind, x: number, y: number, z: number, amount: number, delay: number, wrap = true): THREE.Group {
+  plinth(): void {
+    const me = this.body(boxes([[0.001, 0, 0.03, this.w - 0.001, D.plinth - 0.002, BASE_FACE - D.plinthRecess]], [this.ox, 0, 0]), this.ctx.plinth);
+    this.m.plinths.push(me);
+  }
+
+  /** invisible pick volume of an empty-space slot */
+  ghost(y0: number, y1: number, depth: number): void {
+    const me = mesh(boxes([[0.004, y0, 0.004, this.w - 0.004, y1, depth]]), this.mats.ghost, false, false);
+    me.userData.ghost = true;
+    this.m.body.add(me);
+  }
+
+  /** a moving part: wrapper (assembly) > holder (mechanism); `parent` nests it in another holder */
+  holder(kind: HolderKind, x: number, y: number, z: number, amount: number, delay: number, wrap = true, parent?: THREE.Object3D): THREE.Group {
     const h = new THREE.Group();
     h.position.set(x, y, z);
-    if (wrap) {
+    if (parent) parent.add(h);
+    else if (wrap) {
       const wr = new THREE.Group();
       wr.add(h);
       this.m.fronts.add(wr);
@@ -156,6 +231,10 @@ class Mod {
     } else this.m.fronts.add(h);
     this.m.holders.push({ node: h, kind, amount, delay, rest: { p: h.position.clone(), r: h.rotation.clone() } });
     return h;
+  }
+
+  lastHolder(): Holder {
+    return this.m.holders[this.m.holders.length - 1];
   }
 
   /** front panel centred at (lx, ly) in holder space; (cx, cy, cz) = module-local centre (UV continuity) */
@@ -178,32 +257,32 @@ class Mod {
     return me;
   }
 
-  /** handle on a panel; `at` = panel-local position, `dir` = bar orientation */
-  handle(panel: THREE.Mesh, dir: "h" | "v", len: number, ax: number, ay: number, force?: HandleStyle): void {
-    const style = force ?? this.ctx.handles;
-    if (style === "bez") return;
-    const mats = this.ctx.mats;
-    if (style === "letvica") {
-      const L = Math.max(0.08, len);
-      const s = 0.011;
-      const off = 0.022;
-      const z0 = FT / 2;
-      const list: BoxSpec[] =
-        dir === "h"
-          ? [
-              [-L / 2, -s / 2, z0 + off - s / 2, L / 2, s / 2, z0 + off + s / 2],
-              [-L / 2 + 0.025, -0.004, z0, -L / 2 + 0.033, 0.004, z0 + off],
-              [L / 2 - 0.033, -0.004, z0, L / 2 - 0.025, 0.004, z0 + off],
-            ]
-          : [
-              [-s / 2, -L / 2, z0 + off - s / 2, s / 2, L / 2, z0 + off + s / 2],
-              [-0.004, -L / 2 + 0.025, z0, 0.004, -L / 2 + 0.033, z0 + off],
-              [-0.004, L / 2 - 0.033, z0, 0.004, L / 2 - 0.025, z0 + off],
-            ];
-      const me = mesh(boxes(list), mats.brushed);
-      me.position.set(ax, ay, 0);
-      panel.add(me);
-    } else {
+  // ---------------------------------------------------- grips
+
+  private bar(panel: THREE.Mesh, dir: "h" | "v", len: number, ax: number, ay: number, mat: THREE.Material): void {
+    const L = Math.max(0.08, len);
+    const s = 0.011;
+    const off = 0.022;
+    const z0 = FT / 2;
+    const list: BoxSpec[] =
+      dir === "h"
+        ? [
+            [-L / 2, -s / 2, z0 + off - s / 2, L / 2, s / 2, z0 + off + s / 2],
+            [-L / 2 + 0.025, -0.004, z0, -L / 2 + 0.033, 0.004, z0 + off],
+            [L / 2 - 0.033, -0.004, z0, L / 2 - 0.025, 0.004, z0 + off],
+          ]
+        : [
+            [-s / 2, -L / 2, z0 + off - s / 2, s / 2, L / 2, z0 + off + s / 2],
+            [-0.004, -L / 2 + 0.025, z0, 0.004, -L / 2 + 0.033, z0 + off],
+            [-0.004, L / 2 - 0.033, z0, 0.004, L / 2 - 0.025, z0 + off],
+          ];
+    const me = mesh(boxes(list), mat);
+    me.position.set(ax, ay, 0);
+    panel.add(me);
+  }
+
+  private knob(panel: THREE.Mesh, ax: number, ay: number): void {
+    const g = this.ctx.geos.get("knob", () => {
       const pts = [
         new THREE.Vector2(0.0001, 0),
         new THREE.Vector2(0.0075, 0),
@@ -213,37 +292,77 @@ class Mod {
         new THREE.Vector2(0.0135, 0.026),
         new THREE.Vector2(0.0001, 0.027),
       ];
-      const g = new THREE.LatheGeometry(pts, 24);
-      g.rotateX(Math.PI / 2);
-      const me = mesh(g, mats.brushed);
-      me.position.set(ax, ay, FT / 2);
-      panel.add(me);
+      const lg = new THREE.LatheGeometry(pts, 24);
+      lg.rotateX(Math.PI / 2);
+      return lg;
+    });
+    const me = mesh(g, this.mats.handle);
+    me.position.set(ax, ay, FT / 2);
+    panel.add(me);
+  }
+
+  /** aluminium edge-grip profile along one edge of a front (top / bottom), or along its free side (tall doors) */
+  private edgeProfile(panel: THREE.Mesh, fw: number, fh: number, at: GripAt): void {
+    const p = 0.016;
+    const z0 = FT / 2 - 0.01;
+    const z1 = FT / 2 + 0.0008;
+    let prof: BoxSpec;
+    let groove: BoxSpec;
+    if (at.edge === "mid" && at.free !== undefined) {
+      const sx = at.free > 0 ? fw / 2 : -fw / 2;
+      const a = Math.min(sx, sx - Math.sign(sx) * p);
+      const b = Math.max(sx, sx - Math.sign(sx) * p);
+      prof = [a, -fh / 2, z0, b, fh / 2, z1];
+      const g0 = sx > 0 ? sx - 0.012 : sx + 0.004;
+      groove = [g0, -fh / 2 + 0.0005, FT / 2 - 0.004, g0 + 0.008, fh / 2 - 0.0005, z1 + 0.0004];
+    } else {
+      const top = at.edge !== "bottom";
+      const y1 = top ? fh / 2 : -fh / 2 + p;
+      prof = [-fw / 2, y1 - p, z0, fw / 2, y1, z1];
+      const gy = top ? fh / 2 - 0.012 : -fh / 2 + 0.004;
+      groove = [-fw / 2 + 0.0005, gy, FT / 2 - 0.004, fw / 2 - 0.0005, gy + 0.008, z1 + 0.0004];
+    }
+    panel.add(mesh(boxes([prof]), this.mats.handle));
+    panel.add(mesh(boxes([groove]), this.mats.trim, false, true));
+  }
+
+  /** the grip of the current handle style on a front panel (nothing for Gola / push-to-open) */
+  grip(panel: THREE.Mesh, fw: number, fh: number, at: GripAt): void {
+    const st = this.ctx.handles;
+    if (st === "bez" || st === "push") return;
+    if (st === "utor") {
+      this.edgeProfile(panel, fw, fh, at);
+      return;
+    }
+    if (at.free === undefined) {
+      // drawers and flaps: centred near the edge
+      const ay = at.edge === "bottom" ? -fh / 2 + (st === "gumb" ? 0.04 : 0.035) : fh / 2 - (st === "gumb" ? 0.04 : 0.035);
+      if (st === "letvica") this.bar(panel, "h", Math.min(fw - 0.12, 0.42), 0, ay, this.mats.handle);
+      else this.knob(panel, 0, ay);
+      return;
+    }
+    const len = Math.min(0.2, fh * 0.4);
+    if (st === "letvica") {
+      const ay = at.edge === "top" ? fh / 2 - 0.05 - len / 2 : at.edge === "bottom" ? -fh / 2 + 0.05 + len / 2 : 0;
+      this.bar(panel, "v", at.edge === "mid" ? Math.min(0.5, fh * 0.45) : len, at.free, ay, this.mats.handle);
+    } else {
+      const ay = at.edge === "top" ? fh / 2 - 0.05 : at.edge === "bottom" ? -fh / 2 + 0.05 : 0;
+      this.knob(panel, at.free, ay);
     }
   }
 
   // ---------------------------------------------------- front kinds
 
-  door(x0: number, x1: number, y0: number, y1: number, fz: number, hinge: "left" | "right", hpos: "top" | "bottom" | "mid", delay = 0, glass = false): void {
+  door(x0: number, x1: number, y0: number, y1: number, fz: number, hinge: "left" | "right", hpos: "top" | "bottom" | "mid", delay = 0, glass = false): THREE.Group {
     const fw = x1 - x0 - 2 * G;
     const fh = y1 - y0 - 2 * G;
     const px = hinge === "left" ? x0 + G : x1 - G;
     const h = this.holder("door", px, (y0 + y1) / 2, fz, hinge === "left" ? -DOOR_OPEN : DOOR_OPEN, delay);
     const lx = hinge === "left" ? fw / 2 : -fw / 2;
-    let p: THREE.Mesh;
-    if (glass) {
-      p = this.glassDoor(h, fw, fh, lx, (x0 + x1) / 2, (y0 + y1) / 2, fz);
-    } else {
-      p = this.panel(h, fw, fh, lx, 0, (x0 + x1) / 2, (y0 + y1) / 2, fz);
-    }
+    const p = glass ? this.glassDoor(h, fw, fh, lx, (x0 + x1) / 2, (y0 + y1) / 2, fz) : this.panel(h, fw, fh, lx, 0, (x0 + x1) / 2, (y0 + y1) / 2, fz);
     const free = hinge === "left" ? fw / 2 - 0.035 : -fw / 2 + 0.035;
-    const len = Math.min(0.2, fh * 0.4);
-    if (this.ctx.handles === "letvica") {
-      const ay = hpos === "top" ? fh / 2 - 0.05 - len / 2 : hpos === "bottom" ? -fh / 2 + 0.05 + len / 2 : 0;
-      this.handle(p, "v", hpos === "mid" ? Math.min(0.5, fh * 0.45) : len, free, ay);
-    } else if (this.ctx.handles === "gumb") {
-      const ay = hpos === "top" ? fh / 2 - 0.05 : hpos === "bottom" ? -fh / 2 + 0.05 : 0;
-      this.handle(p, "v", 0, free, ay);
-    }
+    this.grip(p, fw, fh, { edge: hpos, free });
+    return h;
   }
 
   glassDoor(h: THREE.Object3D, fw: number, fh: number, lx: number, cx: number, cy: number, fz: number): THREE.Mesh {
@@ -258,34 +377,63 @@ class Mod {
     frame.position.set(lx, 0, 0);
     h.add(frame);
     this.m.panels.push(frame);
-    const glass = mesh(boxes([[-fw / 2 + r, -fh / 2 + r, -0.002, fw / 2 - r, fh / 2 - r, 0.002]]), this.ctx.mats.doorGlass, false, false);
+    const glass = mesh(boxes([[-fw / 2 + r, -fh / 2 + r, -0.002, fw / 2 - r, fh / 2 - r, 0.002]]), this.mats.doorGlass, false, false);
     frame.add(glass);
     return frame;
   }
 
-  drawer(x0: number, x1: number, y0: number, y1: number, fz: number, depth: number, delay: number, fixed = false): THREE.Mesh {
+  /** a drawer front with its box; `box`: the kind of drawer behind the front */
+  drawer(
+    x0: number,
+    x1: number,
+    y0: number,
+    y1: number,
+    fz: number,
+    depth: number,
+    delay: number,
+    fixed = false,
+    box: "drawer" | "bins" | "none" = "drawer",
+  ): { holder: THREE.Group; panel: THREE.Mesh } {
     const fw = x1 - x0 - 2 * G;
     const fh = y1 - y0 - 2 * G;
     const h = this.holder(fixed ? "fixed" : "drawer", (x0 + x1) / 2, (y0 + y1) / 2, fz, fixed ? 0 : depth * 0.78, delay);
     const p = this.panel(h, fw, fh, 0, 0, (x0 + x1) / 2, (y0 + y1) / 2, fz);
-    if (!fixed) {
+    if (!fixed && box !== "none") {
       const bw = x1 - x0 - 2 * T - 0.03;
-      const bh = Math.max(0.06, Math.min(fh - 0.05, 0.2));
       const zb = -FT / 2 - D.frontOff - 0.004;
       const zf = zb - depth;
       const yb = -fh / 2 + 0.012;
-      const t = 0.012;
-      const geo = boxes([
-        [-bw / 2, yb, zf, -bw / 2 + t, yb + bh, zb],
-        [bw / 2 - t, yb, zf, bw / 2, yb + bh, zb],
-        [-bw / 2 + t, yb, zf, bw / 2 - t, yb + bh * 0.85, zf + t],
-        [-bw / 2 + t, yb, zf + t, bw / 2 - t, yb + 0.008, zb],
-      ]);
-      h.add(mesh(geo, this.ctx.mats.drawer, true, true));
+      if (box === "drawer") {
+        const bh = Math.max(0.06, Math.min(fh - 0.05, 0.2));
+        const t = 0.012;
+        const geo = boxes([
+          [-bw / 2, yb, zf, -bw / 2 + t, yb + bh, zb],
+          [bw / 2 - t, yb, zf, bw / 2, yb + bh, zb],
+          [-bw / 2 + t, yb, zf, bw / 2 - t, yb + bh * 0.85, zf + t],
+          [-bw / 2 + t, yb, zf + t, bw / 2 - t, yb + 0.008, zb],
+        ]);
+        h.add(mesh(geo, this.mats.drawer, true, true));
+      } else {
+        // waste sorting: a low frame with two or three open bins and their lids
+        const frame = boxes([
+          [-bw / 2, yb, zf, bw / 2, yb + 0.01, zb],
+          [-bw / 2, yb, zf, -bw / 2 + 0.01, yb + 0.12, zb],
+          [bw / 2 - 0.01, yb, zf, bw / 2, yb + 0.12, zb],
+        ]);
+        h.add(mesh(frame, this.mats.drawer));
+        const n = bw > 0.36 ? (bw > 0.5 ? 3 : 2) : 1;
+        const gap = 0.012;
+        const bwi = (bw - 0.02 - gap * (n + 1)) / n;
+        const binH = Math.min(fh - 0.12, 0.42);
+        for (let i = 0; i < n; i++) {
+          const bx0 = -bw / 2 + 0.01 + gap + i * (bwi + gap);
+          h.add(mesh(boxes(tray(bx0, yb + 0.01, zf + 0.02, bx0 + bwi, yb + 0.01 + binH, zb - 0.02, 0.005)), this.mats.bin));
+          h.add(mesh(boxes([[bx0 - 0.002, yb + 0.012 + binH, zf + 0.018, bx0 + bwi + 0.002, yb + 0.02 + binH, zb - 0.06]]), this.mats.trim));
+        }
+      }
     }
-    if (this.ctx.handles === "letvica") this.handle(p, "h", Math.min(fw - 0.12, 0.42), 0, fh / 2 - 0.035);
-    else if (this.ctx.handles === "gumb") this.handle(p, "h", 0, 0, fh / 2 - 0.04);
-    return p;
+    this.grip(p, fw, fh, { edge: "top" });
+    return { holder: h, panel: p };
   }
 
   /** stack of drawers top -> bottom by ratio */
@@ -299,20 +447,32 @@ class Mod {
     });
   }
 
-  doors(y0: number, y1: number, fz: number, hpos: "top" | "bottom" | "mid", glass = false): void {
-    if (this.w > 0.62) {
+  doors(y0: number, y1: number, fz: number, hpos: "top" | "bottom" | "mid", glass = false, two?: boolean): void {
+    if (two ?? this.w > 0.62) {
       this.door(0, this.w / 2, y0, y1, fz, "left", hpos, 0, glass);
       this.door(this.w / 2, this.w, y0, y1, fz, "right", hpos, 0.08, glass);
     } else this.door(0, this.w, y0, y1, fz, this.ctx.hinge, hpos, 0, glass);
   }
 
-  flap(y0: number, y1: number, fz: number): void {
+  flap(y0: number, y1: number, fz: number, delay = 0): void {
     const fw = this.w - 2 * G;
     const fh = y1 - y0 - 2 * G;
-    const h = this.holder("flap", this.w / 2, y1 - G, fz, -1.68, 0);
+    const h = this.holder("flap", this.w / 2, y1 - G, fz, -1.68, delay);
     const p = this.panel(h, fw, fh, 0, -fh / 2, this.w / 2, (y0 + y1) / 2, fz);
-    if (this.ctx.handles === "letvica") this.handle(p, "h", Math.min(fw - 0.16, 0.42), 0, -fh / 2 + 0.035);
-    else if (this.ctx.handles === "gumb") this.handle(p, "h", 0, 0, -fh / 2 + 0.04);
+    this.grip(p, fw, fh, { edge: "bottom" });
+  }
+
+  /** bi-fold lift: the upper front swings up and out, the lower one (hinged to it) folds back over it */
+  biFold(y0: number, y1: number, fz: number): void {
+    const fw = this.w - 2 * G;
+    const H = y1 - y0;
+    const hA = H / 2 - 2 * G;
+    const hB = H / 2 - 2 * G;
+    const a = this.holder("flap", this.w / 2, y1 - G, fz, -1.3, 0);
+    this.panel(a, fw, hA, 0, -hA / 2, this.w / 2, y1 - H / 4, fz);
+    const b = this.holder("flap", 0, -hA - 2 * G, 0, 2.55, 0, false, a);
+    const pb = this.panel(b, fw, hB, 0, -hB / 2, this.w / 2, y0 + H / 4, fz);
+    this.grip(pb, fw, hB, { edge: "bottom" });
   }
 
   drop(x0: number, x1: number, y0: number, y1: number, fz: number, amount: number, mat?: THREE.Material): { holder: THREE.Group; panel: THREE.Mesh } {
@@ -326,9 +486,144 @@ class Mod {
   ledInner(x0: number, x1: number, y: number, z: number): void {
     const len = x1 - x0;
     if (len < 0.1) return;
-    const me = mesh(boxes([[x0, y - 0.004, z - 0.004, x1, y, z + 0.004]]), this.ctx.mats.led, false, false);
+    const me = mesh(boxes([[x0, y - 0.004, z - 0.004, x1, y, z + 0.004]]), this.mats.led, false, false);
     this.m.body.add(me);
     this.m.leds.push({ mesh: me, length: len, kind: "inner" });
+  }
+
+  // ---------------------------------------------------- appliances
+
+  /** oven cavity (body) between y0 and y1 */
+  ovenCavity(y0: number, y1: number): void {
+    const mats = this.mats;
+    const w = this.w;
+    const cx0 = 0.03;
+    const cx1 = w - 0.03;
+    this.body(boxes(hollow(cx0, y0 + 0.01, 0.06, cx1, y1 - 0.01, D.carcass - 0.002, 0.008)), mats.enamel);
+    const r = 0.004;
+    const ry = y0 + (y1 - y0) * 0.36;
+    this.body(boxes(wireRack(cx0 + 0.02, cx1 - 0.02, ry, 0.08, D.carcass - 0.04, 9, r)), mats.brushed);
+    this.body(boxes([[w / 2 - 0.08, y1 - 0.035, 0.07, w / 2 + 0.08, y1 - 0.025, 0.075]]), mats.ovenLight);
+  }
+
+  /** drop-down oven door: frame in the appliance finish, a dark glass window and a steel bar */
+  ovenDoor(y0: number, y1: number, fz: number, delay = 0): void {
+    const w = this.w;
+    const { holder, panel } = this.drop(0, w, y0, y1, fz, 1.35, this.mats.appliance);
+    holder.userData.delay = delay;
+    const fw = w - 2 * G;
+    const fh = y1 - y0 - 2 * G;
+    const win = mesh(boxes([[-fw / 2 + 0.05, -fh / 2 + 0.05, FT / 2 - 0.001, fw / 2 - 0.05, fh / 2 - 0.09, FT / 2 + 0.0015]]), this.mats.blackGlass, false, true);
+    panel.add(win);
+    this.bar(panel, "h", fw - 0.14, 0, fh / 2 - 0.03, this.mats.brushed);
+  }
+
+  /** fixed control strip with a small display */
+  controlStrip(y0: number, y1: number, fz: number): void {
+    const w = this.w;
+    const sh = this.holder("fixed", w / 2, (y0 + y1) / 2, fz, 0, 0);
+    const sp = this.panel(sh, w - 2 * G, y1 - y0 - 2 * G, 0, 0, w / 2, (y0 + y1) / 2, fz, this.mats.appliance);
+    sp.add(mesh(boxes([[-0.06, -0.008, FT / 2, 0.06, 0.008, FT / 2 + 0.001]]), this.mats.display, false, false));
+  }
+
+  /** built-in microwave between y0 and y1: cavity, side-hinged glass door, control column on the right */
+  microwave(y0: number, y1: number, fz: number, delay: number, depth: number, includeBody: boolean): void {
+    const w = this.w;
+    const mats = this.mats;
+    const ctrl = Math.min(0.13, w * 0.22);
+    if (includeBody) {
+      this.body(boxes(hollow(0.03, y0 + 0.02, Math.max(0.02, depth - 0.3), w - 0.03 - ctrl, y1 - 0.02, depth - 0.002, 0.008)), mats.enamel);
+      this.body(boxes([[0.08, y0 + 0.028, Math.max(0.05, depth - 0.26), w - 0.08 - ctrl, y0 + 0.032, depth - 0.04]]), mats.glassShelf);
+    }
+    // control column (fixed)
+    const ch = this.holder("fixed", w - ctrl / 2 - G, (y0 + y1) / 2, fz, 0, 0);
+    const cp = this.panel(ch, ctrl - G, y1 - y0 - 2 * G, 0, 0, w - ctrl / 2, (y0 + y1) / 2, fz, mats.appliance);
+    cp.add(mesh(boxes([[-0.03, (y1 - y0) / 2 - 0.06, FT / 2, 0.03, (y1 - y0) / 2 - 0.045, FT / 2 + 0.001]]), mats.display, false, false));
+    // door, hinged on the left
+    const dw = w - ctrl - 2 * G;
+    const fh = y1 - y0 - 2 * G;
+    const h = this.holder("door", G, (y0 + y1) / 2, fz, -1.5, delay);
+    const p = this.panel(h, dw, fh, dw / 2, 0, dw / 2, (y0 + y1) / 2, fz, mats.appliance);
+    p.add(mesh(boxes([[-dw / 2 + 0.04, -fh / 2 + 0.04, FT / 2 - 0.001, dw / 2 - 0.04, fh / 2 - 0.04, FT / 2 + 0.0015]]), mats.blackGlass, false, true));
+  }
+
+  // ---------------------------------------------------- props
+
+  plates(x: number, y: number, z: number, n: number, parent?: THREE.Object3D): void {
+    for (let i = 0; i < n; i++) {
+      this.piece("plate", () => new THREE.CylinderGeometry(0.11, 0.095, 0.014, 32), this.mats.ceramic, x, y + 0.007 + i * 0.016, z, parent);
+    }
+  }
+
+  bottle(x: number, y: number, z: number, parent: THREE.Object3D, tall = 0.3): void {
+    const key = `bottle:${tall}`;
+    this.piece(
+      key,
+      () =>
+        new THREE.LatheGeometry(
+          [
+            new THREE.Vector2(0.0001, 0),
+            new THREE.Vector2(0.034, 0),
+            new THREE.Vector2(0.036, 0.01),
+            new THREE.Vector2(0.036, tall * 0.62),
+            new THREE.Vector2(0.014, tall * 0.8),
+            new THREE.Vector2(0.012, tall),
+            new THREE.Vector2(0.0001, tall),
+          ],
+          18,
+        ),
+      this.mats.bottle,
+      x,
+      y,
+      z,
+      parent,
+      false,
+    );
+  }
+
+  jar(x: number, y: number, z: number, parent?: THREE.Object3D): void {
+    this.piece("jar", () => new THREE.CylinderGeometry(0.04, 0.04, 0.12, 20), this.mats.glassShelf, x, y + 0.06, z, parent, false);
+  }
+
+  vase(x: number, y: number, z: number): void {
+    this.piece(
+      "vase",
+      () =>
+        new THREE.LatheGeometry(
+          [
+            new THREE.Vector2(0.0001, 0),
+            new THREE.Vector2(0.045, 0),
+            new THREE.Vector2(0.06, 0.06),
+            new THREE.Vector2(0.05, 0.15),
+            new THREE.Vector2(0.028, 0.2),
+            new THREE.Vector2(0.032, 0.22),
+            new THREE.Vector2(0.0001, 0.215),
+          ],
+          28,
+        ),
+      this.mats.ceramic,
+      x,
+      y,
+      z,
+    );
+  }
+
+  plantPot(x: number, y: number, z: number): void {
+    this.piece("pot", () => new THREE.CylinderGeometry(0.055, 0.045, 0.1, 24), this.mats.ceramic, x, y + 0.05, z);
+    this.piece("leaves", () => new THREE.IcosahedronGeometry(0.075, 1), this.mats.plant, x, y + 0.15, z);
+  }
+
+  books(x: number, y: number, z0: number, z1: number): void {
+    const list: [number, number, THREE.Material][] = [
+      [0.028, 0.21, this.mats.bookA],
+      [0.022, 0.19, this.mats.bookB],
+      [0.03, 0.23, this.mats.bookA],
+    ];
+    let bx = x;
+    for (const [bt, bh, mat] of list) {
+      this.body(boxes([[bx, y, z0, bx + bt, y + bh, z1]]), mat);
+      bx += bt + 0.002;
+    }
   }
 }
 
@@ -337,46 +632,38 @@ class Mod {
 function buildBase(b: Mod, includeBody: boolean): void {
   const { ctx, m, w } = b;
   const type = m.slot.type;
+  const mats = ctx.mats;
   const gola = ctx.handles === "bez";
   const yb = D.plinth;
   const yt = TOP_Y - (gola ? D.golaH : 0);
   const fz = BASE_FZ;
   const corner = m.slot.corner;
 
+  if (type === "slobodno") {
+    if (includeBody) b.ghost(D.plinth, TOP_Y - 0.004, D.carcass);
+    return;
+  }
+
+  // ---- body
   if (includeBody) {
     b.plinth();
     if (type === "perilica") {
       // the machine itself: steel tub + two racks
-      const mats = ctx.mats;
       b.body(boxes(hollow(0.012, D.plinth + 0.02, 0.03, w - 0.012, TOP_Y - 0.012, D.carcass - 0.004, 0.008)), mats.basin);
-      const rack = (y: number): BoxSpec[] => {
-        const r = 0.004;
-        const x0 = 0.05;
-        const x1 = w - 0.05;
-        const z0 = 0.07;
-        const z1 = D.carcass - 0.05;
-        const list: BoxSpec[] = [
-          [x0, y, z0, x1, y + r, z0 + r],
-          [x0, y, z1 - r, x1, y + r, z1],
-          [x0, y, z0, x0 + r, y + r, z1],
-          [x1 - r, y, z0, x1, y + r, z1],
-          [x0, y + 0.08, z1 - r, x1, y + 0.08 + r, z1],
-        ];
-        for (let k = 1; k < 7; k++) {
-          const x = x0 + ((x1 - x0) * k) / 7;
-          list.push([x, y, z0, x + r, y + 0.06, z0 + r]);
-          list.push([x, y, z0, x + r, y + r, z1]);
-        }
-        return list;
-      };
+      const rack = (y: number) => wireRack(0.05, w - 0.05, y, 0.07, D.carcass - 0.05, 7);
       b.body(boxes([...rack(D.plinth + 0.1), ...rack(D.plinth + 0.42)]), mats.brushed);
+    } else if (type === "police") {
+      const H = TOP_Y - D.plinth;
+      b.openCarcass(carcassBoxes(w, D.plinth, H, D.carcass + D.frontOff + FT, { shelves: [D.plinth + H * 0.36, D.plinth + H * 0.68] }));
+      b.plates(w / 2, D.plinth + H * 0.36 + T, D.carcass * 0.6, 4);
+      if (w >= 0.4) b.vase(w * 0.5, D.plinth + H * 0.68 + T, D.carcass * 0.55);
+      b.jar(w * 0.3, D.plinth + T, D.carcass * 0.6);
     } else {
-      const shelves = type === "vrata" ? [D.plinth + D.baseH * 0.5] : [];
+      const shelves = type === "vrata" || type === "vrata2" || (corner && type !== "kutni" && type !== "kutni-lemans" && type !== "kutni-magic") ? [D.plinth + D.baseH * 0.5] : [];
       b.carcass(carcassBoxes(w, D.plinth, D.baseH, D.carcass, { top: type !== "sudoper", shelves }));
     }
 
     if (type === "sudoper") {
-      const mats = ctx.mats;
       const bw = Math.min(w - 0.14, 0.7);
       const xc = w / 2;
       const z0 = 0.12;
@@ -391,88 +678,48 @@ function buildBase(b: Mod, includeBody: boolean): void {
           [xc - bw / 2, TOP_Y - depth, z0, xc + bw / 2, TOP_Y, z0 + t],
           [xc - bw / 2, TOP_Y - depth, z1 - t, xc + bw / 2, TOP_Y, z1],
         ]),
-        mats.basin,
+        mats.sink,
       );
-      const drain = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.003, 28), mats.steel);
-      drain.position.set(xc, TOP_Y - depth + 0.003, (z0 + z1) / 2);
-      m.body.add(drain);
+      b.piece("drain", () => new THREE.CylinderGeometry(0.035, 0.035, 0.003, 28), mats.steel, xc, TOP_Y - depth + 0.003, (z0 + z1) / 2);
       m.hole = { x0: b.ox + xc - bw / 2, x1: b.ox + xc + bw / 2, z0, z1 };
       // tap
       const tap = new THREE.Group();
       tap.position.set(xc, WORK_Y, 0.075);
-      const pipe = mesh(new THREE.CylinderGeometry(0.014, 0.017, 0.34, 24), mats.steel);
-      pipe.position.y = 0.17;
-      const arc = mesh(new THREE.TorusGeometry(0.09, 0.012, 14, 36, Math.PI), mats.steel);
+      b.piece("tap:pipe", () => new THREE.CylinderGeometry(0.014, 0.017, 0.34, 24), mats.tap, 0, 0.17, 0, tap);
+      const arc = b.piece("tap:arc", () => new THREE.TorusGeometry(0.09, 0.012, 14, 36, Math.PI), mats.tap, 0, 0.34, 0.09, tap);
       arc.rotation.y = -Math.PI / 2;
-      arc.position.set(0, 0.34, 0.09);
-      const spout = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.05, 20), mats.steel);
-      spout.position.set(0, 0.315, 0.18);
-      const lever = mesh(boxes([[-0.006, -0.006, 0, 0.006, 0.006, 0.09]]), mats.steel);
-      lever.position.set(0.032, 0.28, 0.01);
+      b.piece("tap:spout", () => new THREE.CylinderGeometry(0.012, 0.012, 0.05, 20), mats.tap, 0, 0.315, 0.18, tap);
+      const lever = b.piece("tap:lever", () => boxes([[-0.006, -0.006, 0, 0.006, 0.006, 0.09]]), mats.tap, 0.032, 0.28, 0.01, tap);
       lever.rotation.x = 0.45;
-      tap.add(pipe, arc, spout, lever);
       m.extras.add(tap);
     }
 
-    if (type === "ploca") {
+    if (type === "ploca" || type === "ploca-pecnica") {
       const hw = Math.min(w >= 0.8 ? 0.78 : 0.58, w - 0.04);
-      const g = new THREE.BoxGeometry(hw, 0.006, 0.51);
-      const hob = mesh(g, ctx.mats.hob);
+      const hob = mesh(new THREE.BoxGeometry(hw, 0.006, 0.51), mats.hob);
       hob.position.set(w / 2, WORK_Y + 0.003, 0.33);
       m.extras.add(hob);
     }
 
+    if (type === "ploca-pecnica" || type === "pecnica-donja") {
+      const strip = 0.09;
+      b.ovenCavity(yt - strip - 0.5, yt - strip);
+    }
+
+    if (type === "boce" || type === "smece") {
+      // runners at the bottom of the carcass
+      b.body(boxes([[T + 0.004, D.plinth + T, 0.06, T + 0.012, D.plinth + T + 0.02, D.carcass - 0.02], [w - T - 0.012, D.plinth + T, 0.06, w - T - 0.004, D.plinth + T + 0.02, D.carcass - 0.02]]), mats.brushed);
+    }
   }
 
   // ---- fronts
-  if (gola) {
-    const me = mesh(boxes([[0, yt + 0.001, D.carcass - 0.03, w, TOP_Y - 0.001, D.carcass + 0.001]]), ctx.mats.gola, false, true);
+  if (gola && type !== "police") {
+    const me = mesh(boxes([[0, yt + 0.001, D.carcass - 0.03, w, TOP_Y - 0.001, D.carcass + 0.001]]), mats.gola, false, true);
     m.fronts.add(me);
   }
 
   if (corner) {
-    const blind = 0.6;
-    const fill = 0.05;
-    const doorW = w - blind - fill;
-    if (corner === "left") {
-      b.fixedPanel(blind + 0.0015, blind + fill - G, yb + G, yt - G, fz);
-      b.door(blind + fill, w, yb, yt, fz, "right", "top");
-    } else {
-      b.fixedPanel(doorW + G, doorW + fill - 0.0015, yb + G, yt - G, fz);
-      b.door(0, doorW, yb, yt, fz, "left", "top");
-    }
-    if (type === "kutni") {
-      // Le Mans style corner: two trays glide out of the corner on a curved path
-      const left = corner === "left";
-      const sgn = left ? 1 : -1;
-      const mats = ctx.mats;
-      const trayW = Math.min(0.34, doorW - 0.08);
-      const open0 = left ? blind + fill : doorW;
-      const cx = open0 + sgn * (0.025 + trayW / 2);
-      [D.plinth + 0.07, D.plinth + 0.41].forEach((ty, i) => {
-        const h = b.holder("swing", cx, ty, 0.3, -sgn * 0.3, 0.32 + i * 0.16, false);
-        const hd = b.m.holders[b.m.holders.length - 1];
-        hd.dz = 0.47;
-        hd.dx = -sgn * 0.02;
-        const tray = mesh(roundedPanel(trayW, 0.022, 0.4, [0, 0, 0], 0.01), mats.drawer);
-        h.add(tray);
-        const rim = mesh(
-          boxes([
-            [-trayW / 2, 0.011, -0.2, trayW / 2, 0.05, -0.194],
-            [-trayW / 2, 0.011, 0.194, trayW / 2, 0.05, 0.2],
-            [-trayW / 2, 0.011, -0.2, -trayW / 2 + 0.006, 0.05, 0.2],
-          ]),
-          mats.brushed,
-        );
-        h.add(rim);
-        const item =
-          i === 0
-            ? mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.132, 28), mats.ceramic)
-            : mesh(new THREE.CylinderGeometry(0.1, 0.095, 0.13, 28), mats.steel);
-        item.position.set(0, 0.011 + 0.066, 0);
-        h.add(item);
-      });
-    }
+    buildCorner(b, yb, yt, fz);
     return;
   }
 
@@ -480,21 +727,173 @@ function buildBase(b: Mod, includeBody: boolean): void {
     case "ladice":
       b.drawers(yb, yt, [0.22, 0.39, 0.39], fz, 0.47);
       break;
+    case "ladice2":
+      b.drawers(yb, yt, [0.5, 0.5], fz, 0.47);
+      break;
+    case "ladice4":
+      b.drawers(yb, yt, [0.19, 0.27, 0.27, 0.27], fz, 0.47);
+      break;
+    case "ladice-unutarnja": {
+      const H = yt - yb;
+      const mid = yb + H * 0.5;
+      // the tall upper front opens first, then the hidden drawer behind it slides out
+      b.drawer(0, w, mid, yt, fz, 0.47, 0);
+      b.drawer(0, w, yb, mid, fz, 0.47, 0.14);
+      const ih = b.holder("drawer", w / 2, yt - 0.075, D.carcass - 0.012, 0.3, 0.42, false);
+      const bw = w - 2 * T - 0.04;
+      ih.add(
+        mesh(
+          boxes([
+            ...tray(-bw / 2, -0.04, -0.45, bw / 2, 0.035, 0, 0.01),
+            [-bw / 2, -0.04, -0.012, bw / 2, 0.045, 0],
+          ]),
+          mats.drawer,
+        ),
+      );
+      ih.add(mesh(boxes([[-bw / 2 + 0.03, -0.025, -0.4, -bw / 2 + 0.09, -0.02, -0.05], [-bw / 2 + 0.11, -0.025, -0.4, -bw / 2 + 0.17, -0.02, -0.05]]), mats.steel));
+      break;
+    }
     case "ploca":
       b.drawers(yb, yt, [0.22, 0.39, 0.39], fz, 0.47, true);
       break;
+    case "ploca-pecnica":
+    case "pecnica-donja": {
+      const strip = 0.09;
+      const ovenTop = yt - strip;
+      const ovenBot = ovenTop - 0.5;
+      b.controlStrip(ovenTop, yt, fz);
+      b.ovenDoor(ovenBot, ovenTop, fz);
+      if (ovenBot - yb > 0.06) b.drawer(0, w, yb, ovenBot, fz, 0.47, 0.25);
+      break;
+    }
     case "perilica": {
       const { holder, panel } = b.drop(0, w, yb, yt, fz, 1.42);
       // stainless inner door
       const fh = yt - yb - 2 * G;
-      const inner = mesh(boxes([[-(w - 0.06) / 2, 0.02, -FT / 2 - 0.006, (w - 0.06) / 2, fh - 0.03, -FT / 2]]), ctx.mats.basin);
-      holder.add(inner);
-      if (ctx.handles === "letvica") b.handle(panel, "h", Math.min(w - 0.16, 0.42), 0, fh / 2 - 0.035);
-      else if (ctx.handles === "gumb") b.handle(panel, "h", 0, 0, fh / 2 - 0.04);
+      holder.add(mesh(boxes([[-(w - 0.06) / 2, 0.02, -FT / 2 - 0.006, (w - 0.06) / 2, fh - 0.03, -FT / 2]]), mats.basin));
+      b.grip(panel, w - 2 * G, fh, { edge: "top" });
       break;
     }
+    case "smece":
+      b.drawer(0, w, yb, yt, fz, 0.47, 0, false, "bins");
+      break;
+    case "boce": {
+      // a full-height pull-out with two wire baskets of bottles
+      const fh = yt - yb - 2 * G;
+      const fw = w - 2 * G;
+      const h = b.holder("pull", w / 2, (yb + yt) / 2, fz, 0.44, 0);
+      const p = b.panel(h, fw, fh, 0, 0, w / 2, (yb + yt) / 2, fz);
+      b.grip(p, fw, fh, { edge: "top" });
+      const bw = Math.max(0.06, w - 2 * T - 0.03);
+      const zb = -FT / 2 - 0.006;
+      const zf = zb - 0.48;
+      const list: BoxSpec[] = [[-0.004, -fh / 2 + 0.02, zf, 0.004, fh / 2 - 0.04, zf + 0.008]];
+      for (const yy of [-fh / 2 + 0.03, -fh / 2 + fh * 0.52]) {
+        list.push(...wireRack(-bw / 2, bw / 2, yy, zf, zb, 2));
+        list.push([-bw / 2, yy, zf, -bw / 2 + 0.004, yy + 0.06, zb], [bw / 2 - 0.004, yy, zf, bw / 2, yy + 0.06, zb]);
+      }
+      h.add(mesh(boxes(list), mats.brushed));
+      const n = Math.max(1, Math.floor(0.42 / 0.085));
+      for (let k = 0; k < n; k++) {
+        const zz = zf + 0.05 + k * 0.085;
+        b.bottle(0, -fh / 2 + 0.034, zz, h, 0.3);
+        if (k % 2 === 0) b.bottle(0, -fh / 2 + fh * 0.52 + 0.004, zz, h, 0.22);
+      }
+      break;
+    }
+    case "police":
+      break;
+    case "vrata2":
+      b.doors(yb, yt, fz, "top", false, true);
+      break;
     default:
       b.doors(yb, yt, fz, "top");
+  }
+}
+
+/** blind-corner base units: a fixed filler and the door, plus whatever comes out of the corner */
+function buildCorner(b: Mod, yb: number, yt: number, fz: number): void {
+  const { ctx, m, w } = b;
+  const type = m.slot.type;
+  const mats = ctx.mats;
+  const corner = m.slot.corner;
+  const blind = 0.6;
+  const fill = 0.05;
+  const doorW = w - blind - fill;
+  const left = corner === "left";
+  const sgn = left ? 1 : -1;
+  if (left) {
+    b.fixedPanel(blind + 0.0015, blind + fill - G, yb + G, yt - G, fz);
+    b.door(blind + fill, w, yb, yt, fz, "right", "top");
+  } else {
+    b.fixedPanel(doorW + G, doorW + fill - 0.0015, yb + G, yt - G, fz);
+    b.door(0, doorW, yb, yt, fz, "left", "top");
+  }
+  const open0 = left ? blind + fill : doorW;
+  if (type === "kutni-lemans") {
+    // LeMans: two rounded trays glide out of the corner on a curved path
+    const trayW = Math.min(0.34, doorW - 0.08);
+    const cx = open0 + sgn * (0.025 + trayW / 2);
+    [D.plinth + 0.07, D.plinth + 0.41].forEach((ty, i) => {
+      const h = b.holder("swing", cx, ty, 0.3, -sgn * 0.3, 0.32 + i * 0.16, false);
+      const hd = b.lastHolder();
+      hd.dz = 0.47;
+      hd.dx = -sgn * 0.02;
+      h.add(mesh(roundedPanel(trayW, 0.022, 0.4, [0, 0, 0], 0.01), mats.drawer));
+      h.add(
+        mesh(
+          boxes([
+            [-trayW / 2, 0.011, -0.2, trayW / 2, 0.05, -0.194],
+            [-trayW / 2, 0.011, 0.194, trayW / 2, 0.05, 0.2],
+            [-trayW / 2, 0.011, -0.2, -trayW / 2 + 0.006, 0.05, 0.2],
+          ]),
+          mats.brushed,
+        ),
+      );
+      if (i === 0) b.piece("pot:big", () => new THREE.CylinderGeometry(0.11, 0.11, 0.132, 28), mats.ceramic, 0, 0.011 + 0.066, 0, h);
+      else b.piece("pot:steel", () => new THREE.CylinderGeometry(0.1, 0.095, 0.13, 28), mats.steel, 0, 0.011 + 0.065, 0, h);
+    });
+  } else if (type === "kutni") {
+    // carousel: two half-moon trays fixed to the door swing out with it, a little behind
+    // half-moon trays: straight edge along the door, round side towards the wall, pivoting with the door hinge
+    const r = Math.min(0.29, (doorW + 0.15) / 2);
+    const hx = left ? w - G : G;
+    const disc = b.ctx.geos.get(`halfmoon:${r}`, () => new THREE.CylinderGeometry(r, r, 0.018, 36, 1, false, Math.PI / 2, Math.PI));
+    const ring = b.ctx.geos.get(`halfmoon:rim:${r}`, () => new THREE.TorusGeometry(r, 0.004, 6, 36, Math.PI));
+    [D.plinth + 0.08, D.plinth + 0.4].forEach((ty, i) => {
+      const h = b.holder("door", hx, ty, fz - FT / 2 - 0.02, left ? DOOR_OPEN * 0.82 : -DOOR_OPEN * 0.82, 0.12 + i * 0.1, false);
+      const cx = -sgn * (r + 0.01);
+      const t = mesh(disc, mats.drawer);
+      t.position.set(cx, 0, -0.01);
+      h.add(t);
+      const rim = mesh(ring, mats.brushed);
+      rim.rotation.x = -Math.PI / 2;
+      rim.position.set(cx, 0.03, -0.01);
+      h.add(rim);
+      if (i === 0) b.piece("pot:big", () => new THREE.CylinderGeometry(0.11, 0.11, 0.132, 28), mats.ceramic, cx, 0.075, -r * 0.5, h);
+      else b.piece("pot:steel", () => new THREE.CylinderGeometry(0.1, 0.095, 0.13, 28), mats.steel, cx, 0.074, -r * 0.5, h);
+    });
+  } else if (type === "kutni-magic") {
+    // Magic corner: front baskets come out with the door, the rear ones then move into the opening
+    const bw = Math.min(0.38, doorW - 0.06);
+    const front = b.holder("glide", open0 + sgn * (0.02 + bw / 2), 0, 0.32, 0, 0.18, false);
+    const fh = b.lastHolder();
+    fh.dz = 0.42;
+    fh.dx = sgn * 0.02;
+    const rear = b.holder("glide", open0 - sgn * (0.06 + bw / 2), 0, 0.3, 0, 0.62, false);
+    const rh = b.lastHolder();
+    rh.dx = sgn * (bw + 0.08);
+    rh.dz = 0.12;
+    for (const [h, n] of [
+      [front, 0],
+      [rear, 1],
+    ] as const) {
+      for (const yy of [D.plinth + 0.09, D.plinth + 0.43]) {
+        h.add(mesh(boxes(tray(-bw / 2, yy, -0.2, bw / 2, yy + 0.09, 0.2, 0.004)), mats.brushed));
+        if (n === 0) b.plates(0, yy + 0.004, 0, 3, h);
+        else b.jar(-bw / 4, yy + 0.004, 0, h);
+      }
+    }
   }
 }
 
@@ -510,67 +909,74 @@ function buildUpper(b: Mod, includeBody: boolean): void {
   const corner = m.slot.corner;
   const mats = ctx.mats;
 
+  if (type === "prazno") {
+    if (includeBody) b.ghost(ub, ut, depth);
+    return;
+  }
+
   if (includeBody) {
     if (type === "nisa") {
-      const oak = mats.oak;
       const list = carcassBoxes(w, ub, ut - ub, depth, { shelves: [ub + (ut - ub) * 0.5 - T / 2] });
-      b.body(boxes(list, [b.ox, 0, 0]), oak);
+      b.body(boxes(list, [b.ox, 0, 0]), mats.oak);
       b.ledInner(0.04, w - 0.04, ut - T, depth - 0.05);
-      // a few quiet objects
-      const vase = mesh(
-        new THREE.LatheGeometry(
-          [
-            new THREE.Vector2(0.0001, 0),
-            new THREE.Vector2(0.045, 0),
-            new THREE.Vector2(0.06, 0.06),
-            new THREE.Vector2(0.05, 0.15),
-            new THREE.Vector2(0.028, 0.2),
-            new THREE.Vector2(0.032, 0.22),
-            new THREE.Vector2(0.0001, 0.215),
-          ],
-          28,
-        ),
-        mats.ceramic,
-      );
-      vase.position.set(w * 0.3, ub + T, depth * 0.5);
-      m.body.add(vase);
-      if (w >= 0.4) {
-        const shelfY = ub + (ut - ub) * 0.5 + T / 2;
-        const books: [number, number, THREE.Material][] = [
-          [0.028, 0.21, mats.bookA],
-          [0.022, 0.19, mats.bookB],
-          [0.03, 0.23, mats.bookA],
-        ];
-        let x = w * 0.62;
-        for (const [bt, bh, mat] of books) {
-          const bk = mesh(boxes([[x, shelfY, depth * 0.2, x + bt, shelfY + bh, depth * 0.85]]), mat);
-          m.body.add(bk);
-          x += bt + 0.002;
-        }
-      }
+      b.vase(w * 0.3, ub + T, depth * 0.5);
+      if (w >= 0.4) b.books(w * 0.62, ub + (ut - ub) * 0.5 + T / 2, depth * 0.2, depth * 0.85);
+    } else if (type === "polica") {
+      // one thick oak shelf at the bottom of the wall-unit zone and a thinner one above, LED under each
+      const s1 = ub + 0.04;
+      const s2 = ub + (ut - ub) * 0.62;
+      b.body(boxes([[0.002, ub, 0.004, w - 0.002, s1, depth - 0.02], [0.002, s2, 0.004, w - 0.002, s2 + 0.03, depth - 0.05]], [b.ox, 0, 0]), mats.oak);
+      b.ledInner(0.04, w - 0.04, s2 - 0.001, depth - 0.09);
+      b.plates(w * 0.3, s1, depth * 0.5, 3);
+      if (w >= 0.45) b.plantPot(w * 0.72, s1, depth * 0.48);
+      b.jar(w * 0.55, s2 + 0.03, depth * 0.45);
+      if (w >= 0.6) b.jar(w * 0.65, s2 + 0.03, depth * 0.45);
     } else if (type === "napa") {
       const hz = 0.1;
       b.carcass(carcassBoxes(w, ub + hz, ut - ub - hz, depth, { shelves: [ub + hz + (ut - ub - hz) * 0.5] }));
-      b.body(boxes([[0.002, ub, 0.0, w - 0.002, ub + hz, depth - 0.006]]), mats.gola);
+      b.body(boxes([[0.002, ub, 0.0, w - 0.002, ub + hz, depth - 0.006]]), mats.trim);
       // LED spots under the hood
       for (const sx of [0.3, 0.7]) {
-        const spot = mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.002, 20), mats.led, false, false);
-        spot.position.set(w * sx, ub - 0.001, depth * 0.45);
-        m.body.add(spot);
+        const spot = b.piece("spot", () => new THREE.CylinderGeometry(0.018, 0.018, 0.002, 20), mats.led, w * sx, ub - 0.001, depth * 0.45, m.body, false);
+        spot.receiveShadow = false;
+      }
+    } else if (type === "mikrovalna") {
+      b.carcass(carcassBoxes(w, ub, ut - ub, depth));
+    } else if (type === "cjedilo") {
+      // no bottom: the drainer drips into the sink below
+      b.carcass(carcassBoxes(w, ub, ut - ub, depth, { bottom: false }));
+      const z0 = 0.04;
+      const z1 = depth - 0.03;
+      for (const [yy, kind] of [
+        [ub + 0.04, "plates"],
+        [ub + (ut - ub) * 0.55, "cups"],
+      ] as const) {
+        b.body(boxes(wireRack(T + 0.01, w - T - 0.01, yy, z0, z1, Math.round(w / 0.03), 0.003)), mats.brushed);
+        if (kind === "plates") {
+          for (let k = 0; k < Math.min(8, Math.floor((w - 0.1) / 0.035)); k++) {
+            const pl = b.piece("plate:upright", () => new THREE.CylinderGeometry(0.11, 0.11, 0.012, 28), mats.ceramic, T + 0.06 + k * 0.035, yy + 0.115, depth * 0.5);
+            pl.rotation.z = Math.PI / 2;
+          }
+        } else {
+          for (let k = 0; k < Math.min(5, Math.floor((w - 0.1) / 0.09)); k++) b.jar(T + 0.07 + k * 0.09, yy + 0.003, depth * 0.5);
+        }
       }
     } else {
-      const shelves = type === "vitrina" ? [] : [ub + (ut - ub) * 0.5];
+      const shelves = type === "vitrina" || type === "klapna2" ? [] : [ub + (ut - ub) * 0.5];
       b.carcass(carcassBoxes(w, ub, ut - ub, depth, { shelves }));
       if (type === "vitrina") {
         for (const f of [0.34, 0.67]) {
           b.body(boxes([[T + 0.004, ub + (ut - ub) * f, 0.02, w - T - 0.004, ub + (ut - ub) * f + 0.006, depth - 0.02]]), mats.glassShelf);
         }
         b.ledInner(T + 0.02, w - T - 0.02, ut - T, depth - 0.05);
+        // a few glasses on the shelves
+        for (let k = 0; k < Math.floor((w - 0.08) / 0.11); k++) b.jar(T + 0.07 + k * 0.11, ub + (ut - ub) * 0.34 + 0.006, depth * 0.5);
       }
+      if (type === "klapna2") b.body(boxes([[T + 0.004, ub + (ut - ub) * 0.5, 0.02, w - T - 0.004, ub + (ut - ub) * 0.5 + T, depth - 0.03]], [b.ox, 0, 0]), ctx.carcass, true);
     }
   }
 
-  if (type === "nisa") return;
+  if (type === "nisa" || type === "polica") return;
 
   if (corner) {
     const blind = 0.35;
@@ -591,6 +997,9 @@ function buildUpper(b: Mod, includeBody: boolean): void {
     case "klapna":
       b.flap(y0, ut, fz);
       break;
+    case "klapna2":
+      b.biFold(y0, ut, fz);
+      break;
     case "vitrina":
       b.doors(y0, ut, fz, "bottom", true);
       break;
@@ -603,6 +1012,12 @@ function buildUpper(b: Mod, includeBody: boolean): void {
       const vh = hz + lip - 2 * G;
       const h = b.holder("visor", w / 2, y0 + G + vh / 2, fz, 0.16, 0.25);
       b.panel(h, w - 2 * G, vh, 0, 0, w / 2, y0 + G + vh / 2, fz);
+      break;
+    }
+    case "mikrovalna": {
+      const mh = Math.min(0.39, (ut - ub) * 0.56);
+      b.microwave(ub, ub + mh, fz, 0.15, depth, includeBody);
+      b.flap(ub + mh, ut, fz);
       break;
     }
     default:
@@ -626,12 +1041,30 @@ function buildTall(b: Mod, includeBody: boolean): void {
 
   const drawerH = Math.min(0.29, H * 0.14);
   const ovenH = 0.595;
+  const strip = 0.09;
   const ovenY0 = y0 + 2 * drawerH;
   const ovenY1 = Math.min(y1 - 0.2, ovenY0 + ovenH);
+  // oven + microwave column
+  const microH = 0.38;
+  const microY0 = ovenY1;
+  const microY1 = Math.min(y1 - 0.12, microY0 + microH);
+  const washerH = 0.85;
 
   if (includeBody) {
     b.plinth();
-    b.carcass(carcassBoxes(w, y0, H, D.carcass, { shelves: type === "pecnica" ? [ovenY1 + (y1 - ovenY1) * 0.5] : [] }));
+    const shelves =
+      type === "pecnica"
+        ? [ovenY1 + (y1 - ovenY1) * 0.5]
+        : type === "ormar"
+          ? [0.2, 0.4, 0.6, 0.8].map((f) => y0 + H * f)
+          : type === "metle"
+            ? [y1 - 0.36]
+            : type === "perilica-rublja"
+              ? [y0 + washerH + 0.02, y0 + washerH + (H - washerH) * 0.5]
+              : type === "pecnica-mikro" && microY1 < y1 - 0.15
+                ? [microY1 + 0.002]
+                : [];
+    b.carcass(carcassBoxes(w, y0, H, D.carcass, { shelves }));
     if (type === "hladnjak") {
       const x0 = T + 0.006;
       const x1 = w - T - 0.006;
@@ -655,25 +1088,30 @@ function buildTall(b: Mod, includeBody: boolean): void {
           [x0, y0 + freezer - 0.014, zl, x1, y0 + freezer + 0.014, D.carcass - 0.003],
           [x0, top0 - 0.03, zl, x1, top0 - T / 2, D.carcass - 0.003],
         ]),
-        mats.gola,
+        mats.trim,
       );
     }
-    if (type === "pecnica") {
-      const cx0 = 0.03;
-      const cx1 = w - 0.03;
-      b.body(boxes(hollow(cx0, ovenY0 + 0.01, 0.06, cx1, ovenY1 - 0.1, D.carcass - 0.002, 0.008)), mats.enamel);
-      const r = 0.004;
-      const ry = ovenY0 + 0.2;
-      b.body(
-        boxes([
-          [cx0 + 0.02, ry, 0.08, cx1 - 0.02, ry + r, 0.08 + r],
-          [cx0 + 0.02, ry, D.carcass - 0.04, cx1 - 0.02, ry + r, D.carcass - 0.04 + r],
-          [cx0 + 0.02, ry, 0.08, cx0 + 0.02 + r, ry + r, D.carcass - 0.04],
-          [cx1 - 0.02 - r, ry, 0.08, cx1 - 0.02, ry + r, D.carcass - 0.04],
-        ]),
-        mats.brushed,
-      );
-      b.body(boxes([[w / 2 - 0.08, ovenY1 - 0.125, 0.07, w / 2 + 0.08, ovenY1 - 0.115, 0.075]]), mats.ovenLight);
+    if (type === "pecnica" || type === "pecnica-mikro") b.ovenCavity(ovenY0, ovenY1 - strip);
+    if (type === "perilica-rublja") {
+      // the washing machine behind the lower door: white body, steel porthole ring, dark glass
+      const mx0 = T + 0.012;
+      const mx1 = w - T - 0.012;
+      b.body(boxes([[mx0, y0 + T, 0.03, mx1, y0 + washerH - 0.02, D.carcass - 0.04]]), mats.appliancePlastic);
+      const cx = (mx0 + mx1) / 2;
+      const cy = y0 + washerH * 0.5;
+      const ring = b.piece("washer:ring", () => new THREE.TorusGeometry(0.16, 0.022, 12, 40), mats.steel, cx, cy, D.carcass - 0.04);
+      ring.castShadow = false;
+      b.piece("washer:glass", () => new THREE.CircleGeometry(0.15, 40), mats.blackGlass, cx, cy, D.carcass - 0.041, m.body, false);
+      b.body(boxes([[mx0 + 0.02, y0 + washerH - 0.13, D.carcass - 0.045, mx1 - 0.02, y0 + washerH - 0.05, D.carcass - 0.039]]), mats.trim);
+    }
+    if (type === "metle") {
+      // broom, mop and a vacuum standing inside
+      const z = D.carcass * 0.45;
+      b.piece("broom:stick", () => new THREE.CylinderGeometry(0.012, 0.012, 1.25, 12), mats.bookB, w * 0.25, y0 + T + 0.7, z);
+      b.body(boxes([[w * 0.25 - 0.13, y0 + T, z - 0.03, w * 0.25 + 0.13, y0 + T + 0.07, z + 0.03]]), mats.trim);
+      b.piece("broom:stick", () => new THREE.CylinderGeometry(0.012, 0.012, 1.25, 12), mats.steel, w * 0.42, y0 + T + 0.7, z + 0.08);
+      b.body(boxes([[w * 0.62 - 0.1, y0 + T, z - 0.12, w * 0.62 + 0.1, y0 + T + 0.32, z + 0.14]]), mats.bin);
+      b.piece("vac:hose", () => new THREE.TorusGeometry(0.09, 0.016, 10, 28), mats.trim, w * 0.62, y0 + T + 0.44, z);
     }
   }
 
@@ -687,16 +1125,18 @@ function buildTall(b: Mod, includeBody: boolean): void {
     case "pecnica": {
       b.drawer(0, w, y0 + drawerH, y0 + 2 * drawerH, fz, 0.47, 0.18);
       b.drawer(0, w, y0, y0 + drawerH, fz, 0.47, 0.28);
-      // control strip (fixed) + oven door (drops down)
-      const strip = 0.09;
-      const sh = b.holder("fixed", w / 2, ovenY1 - strip / 2, fz, 0, 0);
-      const sp = b.panel(sh, w - 2 * G, strip - 2 * G, 0, 0, w / 2, ovenY1 - strip / 2, fz, mats.blackGlass);
-      const disp = mesh(boxes([[-0.06, -0.008, FT / 2, 0.06, 0.008, FT / 2 + 0.001]]), mats.display, false, false);
-      sp.add(disp);
-      const { panel } = b.drop(0, w, ovenY0, ovenY1 - strip, fz, 1.35, mats.blackGlass);
-      const fh = ovenY1 - strip - ovenY0 - 2 * G;
-      b.handle(panel, "h", w - 0.14, 0, fh / 2 - 0.03, "letvica");
+      b.controlStrip(ovenY1 - strip, ovenY1, fz);
+      b.ovenDoor(ovenY0, ovenY1 - strip, fz);
       if (y1 - ovenY1 > 0.15) b.door(0, w, ovenY1, y1, fz, hinge, "bottom", 0.1);
+      break;
+    }
+    case "pecnica-mikro": {
+      b.drawer(0, w, y0 + drawerH, y0 + 2 * drawerH, fz, 0.47, 0.18);
+      b.drawer(0, w, y0, y0 + drawerH, fz, 0.47, 0.28);
+      b.controlStrip(ovenY1 - strip, ovenY1, fz);
+      b.ovenDoor(ovenY0, ovenY1 - strip, fz);
+      b.microwave(microY0, microY1, fz, 0.12, D.carcass, includeBody);
+      if (y1 - microY1 > 0.12) b.door(0, w, microY1, y1, fz, hinge, "bottom", 0.22);
       break;
     }
     case "smocnica": {
@@ -704,14 +1144,11 @@ function buildTall(b: Mod, includeBody: boolean): void {
       const fw = w - 2 * G;
       const fh = H - 2 * G;
       const p = b.panel(h, fw, fh, 0, 0, w / 2, (y0 + y1) / 2, fz);
-      if (ctx.handles === "letvica") b.handle(p, "v", 0.5, hinge === "left" ? fw / 2 - 0.035 : -fw / 2 + 0.035, 0.05);
-      else if (ctx.handles === "gumb") b.handle(p, "v", 0, hinge === "left" ? fw / 2 - 0.035 : -fw / 2 + 0.035, 0.05);
+      b.grip(p, fw, fh, { edge: "mid", free: hinge === "left" ? fw / 2 - 0.035 : -fw / 2 + 0.035 });
       const bw = w - 2 * T - 0.04;
       const zb = -FT / 2 - 0.006;
       const zf = zb - 0.5;
-      const list: BoxSpec[] = [
-        [-0.006, -fh / 2 + 0.05, zf, 0.006, fh / 2 - 0.05, zf + 0.012],
-      ];
+      const list: BoxSpec[] = [[-0.006, -fh / 2 + 0.05, zf, 0.006, fh / 2 - 0.05, zf + 0.012]];
       const n = 5;
       for (let k = 0; k < n; k++) {
         const yy = -fh / 2 + 0.12 + ((fh - 0.3) * k) / (n - 1);
@@ -720,15 +1157,20 @@ function buildTall(b: Mod, includeBody: boolean): void {
         list.push([bw / 2 - 0.006, yy, zf, bw / 2, yy + 0.07, zb]);
       }
       h.add(mesh(boxes(list), mats.drawer));
-      // a few jars
       for (let k = 0; k < 3; k++) {
         const yy = -fh / 2 + 0.12 + ((fh - 0.3) * (k + 1)) / 4 + 0.008;
-        const jar = mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.12, 20), mats.glassShelf);
-        jar.position.set(-bw / 4 + k * 0.03, yy + 0.06, zf + 0.15 + k * 0.1);
-        h.add(jar);
+        b.jar(Math.max(-bw / 4, -bw / 2 + 0.05) + k * 0.03 * Math.min(1, bw / 0.3), yy, zf + 0.15 + k * 0.1, h);
       }
       break;
     }
+    case "metle":
+      b.door(0, w, y0, y1, fz, hinge, "mid", 0);
+      break;
+    case "perilica-rublja":
+      b.door(0, w, y0, y0 + washerH, fz, hinge, "top", 0);
+      b.doors(y0 + washerH, y1, fz, "bottom");
+      break;
+    case "ormar":
     default:
       b.doors(y0, y1, fz, "mid");
   }
@@ -757,11 +1199,14 @@ function newModule(slot: PlanSlot): ModuleRT {
     holders: [],
     panels: [],
     carcassMeshes: [],
+    plinths: [],
     pickables: [],
     hole: null,
     leds: [],
     busy: false,
     anchor: new THREE.Vector3(w / 2, ay, az),
+    frontZone: slot.zone,
+    ghost: Boolean(moduleDef(slot.zone, slot.type)?.spacer),
   };
 }
 
@@ -771,10 +1216,13 @@ function build(ctx: BuildCtx, m: ModuleRT, includeBody: boolean): void {
   else if (m.slot.zone === "tall") buildTall(b, includeBody);
   else buildBase(b, includeBody);
   if (m.slot.zone === "upper") m.anchor.y = (ctx.ub + ctx.ut) / 2;
+  // holders carry their own demo delay overrides (oven doors set userData.delay)
+  for (const h of m.holders) if (typeof h.node.userData.delay === "number") h.delay = h.node.userData.delay as number;
   collectPickables(m);
 }
 
-function collectPickables(m: ModuleRT): void {
+/** every mesh of a module answers to its slot id (picking); call again after the id changed */
+export function collectPickables(m: ModuleRT): void {
   m.pickables = [];
   m.root.traverse((o) => {
     const me = o as THREE.Mesh;
@@ -800,12 +1248,19 @@ export function rebuildFronts(ctx: BuildCtx, m: ModuleRT): void {
   }
   m.holders = [];
   m.wrappers = [];
-  m.panels = [];
+  // the body keeps its front-material meshes (open shelves); only the fronts' panels go
+  m.panels = m.panels.filter((p) => p.parent && isInside(p, m.body));
   const b = new Mod(ctx, m);
   if (m.slot.zone === "upper") buildUpper(b, false);
   else if (m.slot.zone === "tall") buildTall(b, false);
   else buildBase(b, false);
+  for (const h of m.holders) if (typeof h.node.userData.delay === "number") h.delay = h.node.userData.delay as number;
   collectPickables(m);
+}
+
+function isInside(o: THREE.Object3D, root: THREE.Object3D): boolean {
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === root) return true;
+  return false;
 }
 
 /** put every moving part back to its rest pose */

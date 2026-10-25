@@ -4,11 +4,18 @@
  * fixed pool of RectAreaLights for the LED strips. Light counts — including
  * which lights cast shadows — never change after creation, so shaders are
  * compiled once (boot's compileAsync covers the window and no-window states).
+ *
+ * Shadow maps never re-render on their own (shadow.autoUpdate = false): the
+ * engine calls invalidateShadows() on frames where geometry moved. A camera
+ * move alone (the hero's orbit, studio orbiting) does not change a shadow map.
  */
 
 import * as THREE from "three";
 import type { Mood } from "../types";
 import { LED_GAIN, LED_OFF, LED_ON, type Materials } from "./materials";
+
+const GLASS_DAY = new THREE.Color("#dfe9f2");
+const GLASS_NIGHT = new THREE.Color("#1a2433");
 
 export interface MoodValues {
   hemi: number;
@@ -59,16 +66,27 @@ export class Lights {
   readonly pool: THREE.RectAreaLight[] = [];
   private poolPower: number[] = [];
   private hasWindow = false;
+  /** sun + window area light are in the scene (see `windowLights`) */
+  private windowAdded = false;
   cur: MoodValues = { ...MOODS.off };
   sweepIntensity = 0;
+  /** LED strip colour in HDR (colour temperature finish × LED_GAIN) */
+  private ledHot = new THREE.Color(LED_ON).multiplyScalar(LED_GAIN);
 
+  /**
+   * @param windowLights false leaves the sun spot and the window area light out of the scene until a window
+   *   appears (the homepage hero has none: that saves a shadowed spot light and an area light per pixel).
+   */
   constructor(
     readonly scene: THREE.Scene,
     poolSize: number,
     shadowSize: number,
+    windowLights = true,
   ) {
     const k = this.key;
     k.castShadow = true;
+    k.shadow.autoUpdate = false;
+    k.shadow.needsUpdate = true;
     k.shadow.mapSize.set(shadowSize, shadowSize);
     k.shadow.bias = -0.00025;
     k.shadow.normalBias = 0.02;
@@ -79,6 +97,8 @@ export class Lights {
     this.fill.position.set(-4, 2.2, 6);
     const s = this.sun;
     s.castShadow = true;
+    s.shadow.autoUpdate = false;
+    s.shadow.needsUpdate = true;
     s.shadow.mapSize.set(Math.max(512, shadowSize / 2), Math.max(512, shadowSize / 2));
     s.shadow.bias = -0.0003;
     s.shadow.normalBias = 0.03;
@@ -86,7 +106,8 @@ export class Lights {
     s.shadow.camera.near = 0.5;
     s.shadow.camera.far = 14;
     this.winRect = new THREE.RectAreaLight("#e8eef5", 0, 1, 1);
-    scene.add(this.hemi, k, k.target, this.rim, this.fill, this.sweep, this.sweep.target, s, s.target, this.winRect);
+    scene.add(this.hemi, k, k.target, this.rim, this.fill, this.sweep, this.sweep.target);
+    if (windowLights) this.addWindowLights();
     for (let i = 0; i < poolSize; i++) {
       const r = new THREE.RectAreaLight(LED_ON, 0, 0.1, 0.04);
       this.pool.push(r);
@@ -113,12 +134,36 @@ export class Lights {
     this.fill.position.set(c.x - 4, 2.2, c.z + 6);
   }
 
+  private addWindowLights(): void {
+    if (this.windowAdded) return;
+    this.windowAdded = true;
+    this.scene.add(this.sun, this.sun.target, this.winRect);
+  }
+
+  /** re-render the shadow maps on the next frame (geometry moved / appeared / disappeared) */
+  invalidateShadows(): void {
+    this.key.shadow.needsUpdate = true;
+    if (this.windowAdded && this.hasWindow) this.sun.shadow.needsUpdate = true;
+  }
+
+  /** key-light shadow resolution (quality tiers); the map is reallocated on the next shadow render */
+  setShadowSize(size: number): void {
+    const sh = this.key.shadow;
+    if (sh.mapSize.x === size) return;
+    sh.mapSize.set(size, size);
+    sh.map?.dispose();
+    sh.map = null;
+    sh.needsUpdate = true;
+  }
+
   setWindow(w: WindowLight | null): void {
     this.hasWindow = Boolean(w);
+    // a window in a scene built without window lights: add them now (one shader recompile, hero only)
+    if (w) this.addWindowLights();
     // The sun keeps castShadow on even without a window: toggling it changes the number of shadow-casting
     // lights, which recompiles every lit shader on the first window toggle. Without a window its shadow map
-    // is rendered once and then left alone (its intensity is 0, so it shows nowhere).
-    this.sun.shadow.autoUpdate = this.hasWindow;
+    // is rendered once and then left alone (its intensity is 0, so it shows nowhere); with one it is
+    // re-rendered only when geometry changes (invalidateShadows).
     this.sun.shadow.needsUpdate = true;
     if (!w) {
       this.winRect.intensity = 0;
@@ -138,6 +183,12 @@ export class Lights {
     wr.height = w.height * 0.94;
     wr.position.copy(w.center).addScaledVector(w.normal, 0.02);
     wr.lookAt(w.center.clone().addScaledVector(w.normal, 2));
+  }
+
+  /** LED colour temperature (catalog.finishes.leds[].color): strips and their area lights */
+  setLedColor(hex: string): void {
+    this.ledHot.set(hex).multiplyScalar(LED_GAIN);
+    for (const r of this.pool) r.color.set(hex);
   }
 
   /** assign pool lights to LED strips (most important first) */
@@ -166,12 +217,12 @@ export class Lights {
     this.fill.intensity = v.fill;
     scene.environmentIntensity = v.env;
     const led = v.led * ledScale;
-    mats.led.color.copy(LED_OFF).lerp(new THREE.Color(LED_ON).multiplyScalar(LED_GAIN), led);
+    mats.led.color.copy(LED_OFF).lerp(this.ledHot, led);
     this.pool.forEach((r, i) => (r.intensity = 26 * this.poolPower[i] * led * v.rect));
     this.sun.intensity = this.hasWindow ? 2.6 * v.sun : 0;
     this.winRect.intensity = this.hasWindow ? 5 * v.sun : 0;
     mats.windowGlass.emissiveIntensity = 0.12 + 0.85 * v.glow;
-    mats.windowGlass.emissive.set(v.glow > 0.4 ? "#dfe9f2" : "#1a2433");
+    mats.windowGlass.emissive.copy(v.glow > 0.4 ? GLASS_DAY : GLASS_NIGHT);
     mats.ovenLight.color.setRGB(0.16 + 0.5 * led, 0.1 + 0.3 * led, 0.04 + 0.1 * led);
     this.sweep.intensity = this.sweepIntensity;
     bloom.strength = v.bloom;

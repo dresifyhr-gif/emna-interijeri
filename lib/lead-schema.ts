@@ -54,5 +54,7 @@ export type LeadResult =
        * visitor could not be sent — the UI must not promise that confirmation then.
        */
       confirmation?: boolean;
+      /** studio only: whether the 3D picture reached us (stored and/or attached to the owner e-mail) */
+      image?: boolean;
     }
   | { ok: false; error: "validation" | "not_configured" | "rate_limited" | "server"; fields?: string[] };

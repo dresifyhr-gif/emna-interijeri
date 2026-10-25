@@ -5,6 +5,9 @@
  * - DesktopPanel: one glass column on the right that never covers the kitchen centre.
  * - MobileSheet: a bottom sheet (tap or drag the handle to fold it) with a swipeable step strip.
  * Both always show the rough price and Natrag / Dalje.
+ *
+ * `overlay` (the element editor) takes the shell's place while it is open: the steps stay mounted underneath
+ * (inert, faded out), so their scroll position and state are there again when the editor closes.
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
@@ -31,6 +34,8 @@ interface ShellProps {
   /** the animated step header + content */
   children: ReactNode;
   shown: boolean;
+  /** shown over the shell instead of the steps (the element editor) */
+  overlay?: ReactNode;
 }
 
 /* ------------------------------------------------------------------ nav buttons */
@@ -86,12 +91,14 @@ export function DesktopPanel({
   summaryOpen,
   onSummary,
   scrollRef,
+  overlay,
 }: ShellProps & {
   summaryOpen: boolean;
   onSummary: (open: boolean) => void;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const reduce = useReducedMotion();
+  const covered = Boolean(overlay);
   return (
     <motion.aside
       aria-label="Postavke kuhinje"
@@ -105,58 +112,78 @@ export function DesktopPanel({
       style={{ width: PANEL_W }}
     >
       <span aria-hidden="true" className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-      <div className="px-7 pt-5">
-        <StepNav step={step} onStep={onStep} variant="desktop" />
-      </div>
-      <div ref={scrollRef} className={`${s.thinScroll} relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-7 pb-8 pt-7`}>
-        {children}
-      </div>
+      <div
+        className={`flex min-h-0 flex-1 flex-col transition-[opacity,transform] duration-500 ease-premium motion-reduce:transition-none ${covered ? "pointer-events-none -translate-x-3 opacity-0" : ""}`}
+        inert={covered}
+        aria-hidden={covered || undefined}
+      >
+        <div className="px-7 pt-5">
+          <StepNav step={step} onStep={onStep} variant="desktop" />
+        </div>
+        <div ref={scrollRef} className={`${s.thinScroll} relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-7 pb-8 pt-7`}>
+          {children}
+        </div>
 
-      <div className="relative border-t border-white/10 px-7 pb-6 pt-5">
-        <AnimatePresence>
-          {summaryOpen && (
-            <motion.div
-              key="summary"
-              id="studio-summary"
-              initial={{ opacity: 0, y: reduce ? 0 : 12 }}
-              animate={{ opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.45, ease: EASE } }}
-              exit={{ opacity: 0, y: reduce ? 0 : 12, transition: { duration: reduce ? 0 : 0.25, ease: EASE } }}
-              className={`${s.thinScroll} absolute inset-x-0 bottom-full max-h-[min(62vh,560px)] overflow-y-auto border-t border-white/10 bg-ink-700/95 px-7 pb-5 pt-5 backdrop-blur-xl`}
+        <div className="relative border-t border-white/10 px-7 pb-6 pt-5">
+          <AnimatePresence>
+            {summaryOpen && (
+              <motion.div
+                key="summary"
+                id="studio-summary"
+                initial={{ opacity: 0, y: reduce ? 0 : 12 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.45, ease: EASE } }}
+                exit={{ opacity: 0, y: reduce ? 0 : 12, transition: { duration: reduce ? 0 : 0.25, ease: EASE } }}
+                className={`${s.thinScroll} absolute inset-x-0 bottom-full max-h-[min(62vh,560px)] overflow-y-auto border-t border-white/10 bg-ink-700/95 px-7 pb-5 pt-5 backdrop-blur-xl`}
+              >
+                <div className="flex items-center justify-between">
+                  <p className="eyebrow text-accent">Sažetak kuhinje</p>
+                  <button
+                    type="button"
+                    onClick={() => onSummary(false)}
+                    aria-label="Zatvori sažetak"
+                    className="-mr-2 flex h-8 w-8 items-center justify-center rounded-full text-fg/60 hover:text-fg"
+                  >
+                    <CloseIcon className="h-4 w-4" />
+                  </button>
+                </div>
+                <SummaryList lines={summary} className="mt-3" />
+                <CopyLinkButton getUrl={getUrl} variant="quiet" className="mt-4" />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="flex items-start justify-between gap-4">
+            <PriceBlock price={price} />
+            <button
+              type="button"
+              onClick={() => onSummary(!summaryOpen)}
+              aria-expanded={summaryOpen}
+              aria-controls="studio-summary"
+              className="-mr-1 mt-[-3px] inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[11.5px] font-medium uppercase tracking-[0.18em] text-mut transition-colors duration-300 hover:text-fg"
             >
-              <div className="flex items-center justify-between">
-                <p className="eyebrow text-accent">Sažetak kuhinje</p>
-                <button
-                  type="button"
-                  onClick={() => onSummary(false)}
-                  aria-label="Zatvori sažetak"
-                  className="-mr-2 flex h-8 w-8 items-center justify-center rounded-full text-fg/60 hover:text-fg"
-                >
-                  <CloseIcon className="h-4 w-4" />
-                </button>
-              </div>
-              <SummaryList lines={summary} className="mt-3" />
-              <CopyLinkButton getUrl={getUrl} variant="quiet" className="mt-4" />
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div className="flex items-start justify-between gap-4">
-          <PriceBlock price={price} />
-          <button
-            type="button"
-            onClick={() => onSummary(!summaryOpen)}
-            aria-expanded={summaryOpen}
-            aria-controls="studio-summary"
-            className="-mr-1 mt-[-3px] inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[11.5px] font-medium uppercase tracking-[0.18em] text-mut transition-colors duration-300 hover:text-fg"
-          >
-            Sažetak
-            <ChevronUp className={`h-3.5 w-3.5 transition-transform duration-500 ease-premium ${summaryOpen ? "rotate-180" : ""}`} />
-          </button>
-        </div>
-        <div className="mt-5">
-          <NavButtons step={step} onBack={onBack} onNext={onNext} compact={false} />
+              Sažetak
+              <ChevronUp className={`h-3.5 w-3.5 transition-transform duration-500 ease-premium ${summaryOpen ? "rotate-180" : ""}`} />
+            </button>
+          </div>
+          <div className="mt-5">
+            <NavButtons step={step} onBack={onBack} onNext={onNext} compact={false} />
+          </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {overlay && (
+          <motion.div
+            key="overlay"
+            className="absolute inset-0 z-10 flex flex-col"
+            initial={{ opacity: 0, x: reduce ? 0 : 28 }}
+            animate={{ opacity: 1, x: 0, transition: { duration: reduce ? 0 : 0.55, ease: EASE } }}
+            exit={{ opacity: 0, x: reduce ? 0 : 20, transition: { duration: reduce ? 0 : 0.25, ease: EASE } }}
+          >
+            {overlay}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.aside>
   );
 }
@@ -176,10 +203,11 @@ export function MobileSheet({
   covered,
   scrollRef,
   sheetRef,
+  overlay,
 }: ShellProps & {
   open: boolean;
   onOpen: (open: boolean) => void;
-  /** hidden while the element editor card is up */
+  /** hidden while the summary card is up */
   covered: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
   sheetRef: RefObject<HTMLElement | null>;
@@ -187,6 +215,9 @@ export function MobileSheet({
   const reduce = useReducedMotion();
   const drag = useRef<{ y: number; id: number } | null>(null);
   const tall = STEPS[step].id === "posalji";
+  const editing = Boolean(overlay);
+  // the editor needs a little more room than a step; the kitchen above glides with the sheet's height
+  const bodyH = editing ? "min(42svh, 390px)" : open ? (tall ? "min(60svh, 560px)" : "min(36svh, 330px)") : "0px";
 
   // tap / Enter / Space toggle (a plain click, so assistive tech works too); a vertical drag folds or unfolds
   const dragged = useRef(false);
@@ -218,49 +249,65 @@ export function MobileSheet({
         shown && !covered ? "" : "pointer-events-none"
       }`}
     >
-      <button
-        type="button"
-        onPointerDown={onHandleDown}
-        onPointerUp={onHandleUp}
-        onPointerCancel={() => {
-          drag.current = null;
-        }}
-        onClick={() => {
-          if (dragged.current) {
-            dragged.current = false;
-            return;
-          }
-          onOpen(!open);
-        }}
-        aria-expanded={open}
-        aria-controls="studio-sheet-body"
-        aria-label={open ? "Spusti ploču s postavkama" : "Podigni ploču s postavkama"}
-        className="flex h-6 w-full touch-none items-center justify-center"
-      >
-        <span aria-hidden="true" className="h-1 w-10 rounded-full bg-white/25" />
-      </button>
+      <div className={`transition-opacity duration-300 motion-reduce:transition-none ${editing ? "pointer-events-none opacity-0" : ""}`} inert={editing} aria-hidden={editing || undefined}>
+        <button
+          type="button"
+          onPointerDown={onHandleDown}
+          onPointerUp={onHandleUp}
+          onPointerCancel={() => {
+            drag.current = null;
+          }}
+          onClick={() => {
+            if (dragged.current) {
+              dragged.current = false;
+              return;
+            }
+            onOpen(!open);
+          }}
+          aria-expanded={open}
+          aria-controls="studio-sheet-body"
+          aria-label={open ? "Spusti ploču s postavkama" : "Podigni ploču s postavkama"}
+          className="flex h-6 w-full touch-none items-center justify-center"
+        >
+          <span aria-hidden="true" className="h-1 w-10 rounded-full bg-white/25" />
+        </button>
 
-      <div className="px-4 pb-3">
-        <StepNav step={step} onStep={onStep} variant="mobile" />
-      </div>
+        <div className="px-4 pb-3">
+          <StepNav step={step} onStep={onStep} variant="mobile" />
+        </div>
 
-      <div
-        id="studio-sheet-body"
-        ref={scrollRef}
-        className={`${s.thinScroll} overflow-y-auto overscroll-contain border-t border-white/[0.07] px-4 transition-[height] duration-500 ease-premium`}
-        style={{ height: open ? (tall ? "min(60svh, 560px)" : "min(36svh, 330px)") : 0 }}
-        aria-hidden={!open}
-        inert={!open}
-      >
-        <div className="pb-6 pt-5">{children}</div>
-      </div>
+        <div
+          id="studio-sheet-body"
+          ref={scrollRef}
+          className={`${s.thinScroll} overflow-y-auto overscroll-contain border-t border-white/[0.07] px-4 transition-[height] duration-500 ease-premium`}
+          style={{ height: bodyH }}
+          aria-hidden={!open || undefined}
+          inert={!open}
+        >
+          <div className="pb-6 pt-5">{children}</div>
+        </div>
 
-      <div className="flex items-center gap-3 border-t border-white/10 px-4 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3">
-        <PriceBlock price={price} compact className="min-w-0 flex-1" />
-        <div className={STEPS[step + 1] ? "w-[150px] shrink-0" : "shrink-0"}>
-          <NavButtons step={step} onBack={onBack} onNext={onNext} compact />
+        <div className="flex items-center gap-3 border-t border-white/10 px-4 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3">
+          <PriceBlock price={price} compact className="min-w-0 flex-1" />
+          <div className={STEPS[step + 1] ? "w-[150px] shrink-0" : "shrink-0"}>
+            <NavButtons step={step} onBack={onBack} onNext={onNext} compact />
+          </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {overlay && (
+          <motion.div
+            key="overlay"
+            className="absolute inset-0 z-10 flex flex-col overflow-hidden rounded-t-[26px]"
+            initial={{ opacity: 0, y: reduce ? 0 : 18 }}
+            animate={{ opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.5, ease: EASE } }}
+            exit={{ opacity: 0, y: reduce ? 0 : 12, transition: { duration: reduce ? 0 : 0.22, ease: EASE } }}
+          >
+            {overlay}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.section>
   );
 }

@@ -125,6 +125,12 @@ export class Tweens {
     return this.list.length > 0;
   }
 
+  /** any tween running or waiting that is not tagged `tag` (the engine: "is anything but the camera moving?") */
+  activeExcept(tag: unknown): boolean {
+    for (const w of this.list) if (w.tag !== tag) return true;
+    return false;
+  }
+
   update(now: number): void {
     this.now = now;
     const finished: Tween[] = [];

@@ -251,7 +251,7 @@ export default function KuhinjePage() {
             href: "/studio",
             kicker: "3D studio",
             title: "Složite je sami.",
-            text: "Unesite mjere svojih zidova, odaberite oblik, fronte i radnu ploču i odmah vidite okvirnu cijenu. Upit nam stiže s točnim mjerama.",
+            text: "Unesite mjere svojih zidova, odaberite oblik i elemente, fronte i radnu ploču i odmah vidite okvirnu cijenu. Upit nam stiže s točnim mjerama.",
           },
           {
             href: "/kontakt?interes=kuhinja",

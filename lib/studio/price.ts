@@ -2,14 +2,26 @@
  * Okvirna cijena (rough estimate) of a configured kitchen.
  *
  * Uses the same plan as the 3D view, so every visible cabinet, filler,
- * mechanism, worktop and backsplash piece is counted. All rates live in
- * catalog.ts and are NOT confirmed by the owner yet (see PRICES_CONFIRMED).
- * Appliances are not included — see the note at the top of catalog.ts.
+ * mechanism, worktop and backsplash piece is counted, each zone in its own
+ * front material. All rates live in catalog.ts and are NOT confirmed by the
+ * owner yet (see PRICES_CONFIRMED). Appliances are not included — see the
+ * note at the top of catalog.ts.
  */
 
-import { PRICES_CONFIRMED, catalog, frontDef, handleDef, moduleDef, topDef } from "./catalog";
-import { DIM, planKitchen, type KitchenPlan } from "./plan";
-import type { KitchenConfig } from "./types";
+import {
+  PRICES_CONFIRMED,
+  catalog,
+  defaultHandleColor,
+  finishDef,
+  frontDef,
+  handleColorDef,
+  handleDef,
+  moduleDef,
+  topDef,
+  FINISH_DEFAULTS,
+} from "./catalog";
+import { DIM, frontFor, planKitchen, type KitchenPlan, type SlotZone } from "./plan";
+import type { FrontZone, KitchenConfig } from "./types";
 
 export { PRICES_CONFIRMED };
 
@@ -25,6 +37,8 @@ export interface PriceBreakdown {
   backsplash: number;
   handles: number;
   mechanisms: number;
+  /** handle colour, sink and tap finish, plinth */
+  finishes: number;
   led: number;
   install: number;
   island: number;
@@ -38,37 +52,38 @@ export function backsplashArea(plan: KitchenPlan): number {
   return cm2 / 10000;
 }
 
+const zoneOf = (z: SlotZone): FrontZone => z;
+
 /** Itemised estimate (EUR, unrounded) — handy for debugging and for the owner. */
 export function breakdown(cfg: KitchenConfig): PriceBreakdown {
   const plan = planKitchen(cfg);
   const c = plan.cfg;
-  const front = frontDef(c.front) ?? catalog.fronts[0];
+  const front = (z: FrontZone) => frontDef(frontFor(c, z)) ?? catalog.fronts[0];
   const top = topDef(c.top) ?? catalog.tops[0];
   const handle = handleDef(c.handles) ?? catalog.handles[0];
   const m = (cm: number) => cm / 100;
 
-  let base = 0;
-  let upper = 0;
-  let tall = 0;
-  let island = 0;
+  /** metres of cabinets per zone (empty space excluded), and of fronts (open units count less) */
+  const run = { base: 0, upper: 0, tall: 0, island: 0 };
+  let cabinets = 0;
+  let fronted = 0;
   let mechanisms = 0;
+  let sinks = 0;
   for (const s of plan.slots) {
+    const def = moduleDef(s.zone, s.type);
+    if (def?.spacer) continue;
     const w = m(s.width);
-    if (s.zone === "base") base += w;
-    else if (s.zone === "upper") upper += w;
-    else if (s.zone === "tall") tall += w;
-    else island += w;
-    mechanisms += moduleDef(s.zone, s.type)?.priceAdd ?? 0;
+    const share = def?.frontShare ?? 1;
+    run[s.zone] += w;
+    cabinets += front(zoneOf(s.zone)).pricePerMeter * ZONE_FACTOR[s.zone] * w * share;
+    fronted += w * share;
+    mechanisms += def?.priceAdd ?? 0;
+    if (def?.feature === "sink") sinks++;
   }
-  const fillers = plan.pieces.reduce((sum, p) => sum + m(p.width), 0);
-
-  const cabinets =
-    front.pricePerMeter *
-    (ZONE_FACTOR.base * base +
-      ZONE_FACTOR.upper * upper +
-      ZONE_FACTOR.tall * tall +
-      ZONE_FACTOR.island * island +
-      ZONE_FACTOR.filler * fillers);
+  for (const p of plan.pieces) {
+    const z: FrontZone = p.run === "isl" ? "island" : p.zone;
+    cabinets += front(z).pricePerMeter * ZONE_FACTOR.filler * m(p.width);
+  }
 
   let worktopM = plan.runs.reduce((sum, r) => sum + (r.worktop ? m(r.worktop.to - r.worktop.from) : 0), 0);
   let islandCost = 0;
@@ -80,11 +95,18 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
   const worktop = top.pricePerMeter * worktopM;
   // the top's price per m² (a running metre of worktop is DIM.worktopDepth deep) times the backsplash share
   const backsplash = (top.pricePerMeter / m(DIM.worktopDepth)) * catalog.extras.backsplashShare * backsplashArea(plan);
-  const handles = handle.pricePerMeter * (base + upper + tall + island);
-  const led = c.led ? catalog.extras.ledPerMeter * Math.max(upper, 0.6) + catalog.extras.ledFixed : 0;
-  const install = catalog.extras.installPerMeter * (base + tall + island + upper * 0.5);
-  const total = cabinets + worktop + backsplash + handles + mechanisms + led + install + islandCost;
-  return { cabinets, worktop, backsplash, handles, mechanisms, led, install, island: islandCost, total };
+  const handles = handle.pricePerMeter * fronted;
+
+  // finishes
+  const hc = handleColorDef(c.finish?.handleColor ?? defaultHandleColor(c.handles));
+  let finishes = handle.coloured && hc ? hc.priceAdd * fronted : 0;
+  finishes += sinks * ((finishDef("sinks", c.finish?.sink ?? FINISH_DEFAULTS.sink)?.priceAdd ?? 0) + (finishDef("taps", c.finish?.tap ?? FINISH_DEFAULTS.tap)?.priceAdd ?? 0));
+  finishes += (finishDef("plinths", c.finish?.plinth ?? FINISH_DEFAULTS.plinth)?.priceAdd ?? 0) * (run.base + run.tall + run.island);
+
+  const led = c.led ? catalog.extras.ledPerMeter * Math.max(run.upper, 0.6) + catalog.extras.ledFixed : 0;
+  const install = catalog.extras.installPerMeter * (run.base + run.tall + run.island + run.upper * 0.5);
+  const total = cabinets + worktop + backsplash + handles + mechanisms + finishes + led + install + islandCost;
+  return { cabinets, worktop, backsplash, handles, mechanisms, finishes, led, install, island: islandCost, total };
 }
 
 /** Rough price range in EUR, rounded to 100 € (about ±8 %). */

@@ -7,7 +7,7 @@ import { StudioFallback } from "@/components/studio/StudioLoader";
 export const metadata: Metadata = pageMetadata({
   title: "3D studio",
   description:
-    "Složite kuhinju po svojim mjerama u 3D-u: oblik, zidovi, fronte, radna ploča i dodaci. Okvirnu cijenu vidite odmah, a upit s mjerama, slikom i linkom šaljete izravno nama.",
+    "Složite kuhinju po svojim mjerama u 3D-u: oblik, zidovi, svaki element, boje fronti, radna ploča i detalji. Okvirnu cijenu vidite odmah, a upit s mjerama, slikom i linkom šaljete izravno nama.",
   path: "/studio",
 });
 

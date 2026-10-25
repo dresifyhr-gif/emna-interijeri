@@ -51,6 +51,17 @@
 }
 
 /*
+ * ---------------------------------------------------------------- performance
+ * Sections far down the homepage: the browser skips their style, layout and paint until they come near
+ * the viewport (`auto` remembers the real height once rendered, so the scrollbar settles after one pass).
+ * Only for sections without scroll-linked framer effects or fixed-position children (containment).
+ */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1200px;
+}
+
+/*
  * ---------------------------------------------------------------- motion
  * Rule: server HTML = final state. Heroes animate with CSS keyframes from the first paint (no JS
  * needed); scroll reveals are armed only after mount, only for content still below the fold, and

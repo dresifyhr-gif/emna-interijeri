@@ -45,7 +45,9 @@ export function customerEmail(d: LeadEmailData): RenderedEmail {
   const isStudio = lead.source === "studio";
   const brand = site.name;
 
-  const subject = `Primili smo vaš upit · ${brand}`;
+  // server-generated ("U-2026-0001"), so it is safe to echo; anything else is dropped
+  const number = d.leadNumber && /^[A-Z]-\d{4}-\d{4,6}$/.test(d.leadNumber) ? d.leadNumber : null;
+  const subject = `Primili smo vaš upit${number ? ` ${number}` : ""} · ${brand}`;
 
   /* ---------------- header */
   const header = `
@@ -57,7 +59,11 @@ ${headline(thanks)}
 ${spacer(18)}
 <p style="margin:0;font-family:${FONT};font-size:16px;line-height:26px;color:#CFCAC1;">${
     isStudio ? "Vaš upit s kuhinjom iz 3D studija stigao je do nas." : "Vaš upit je stigao do nas."
-  } Pregledat ćemo ga i javiti vam se telefonom ili e-mailom.</p>`;
+  } Pregledat ćemo ga i javiti vam se telefonom ili e-mailom.</p>${
+    number
+      ? `${spacer(14)}<div style="font-family:${FONT};font-size:13px;line-height:20px;color:${C.mut};">Broj upita: <span style="color:${C.fg};letter-spacing:0.5px;">${esc(number)}</span></div>`
+      : ""
+  }`;
 
   /* ---------------- steps */
   const steps = `
@@ -127,7 +133,8 @@ ${spacer(28)}
 ${paragraph(reachHtml, C.ink, 15)}`;
 
   const company = site.legal.companyName ?? brand;
-  const footer = `<strong style="color:${C.ink};font-weight:600;">${esc(company)}</strong> · ${esc(site.tagline)} · ${esc(site.contact.city)}<br>
+  const footerLine = [esc(site.tagline), site.contact.city ? esc(site.contact.city) : null].filter(Boolean).join(" · ");
+  const footer = `<strong style="color:${C.ink};font-weight:600;">${esc(company)}</strong> · ${footerLine}<br>
 ${link(site.url, siteHost, C.mutPaper)} · ${link(`${site.url.replace(/\/$/, "")}/privatnost`, "Politika privatnosti", C.mutPaper)}<br>
 Ovu poruku ste primili jer ste poslali upit putem naše web stranice.`;
 
@@ -145,6 +152,7 @@ Ovu poruku ste primili jer ste poslali upit putem naše web stranice.`;
     thanks,
     "",
     `${isStudio ? "Vaš upit s kuhinjom iz 3D studija stigao je do nas." : "Vaš upit je stigao do nas."} Pregledat ćemo ga i javiti vam se telefonom ili e-mailom.`,
+    ...(number ? [`Broj upita: ${number}`] : []),
     "",
     "ŠTO SLIJEDI",
     textRule,

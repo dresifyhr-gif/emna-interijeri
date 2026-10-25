@@ -1,0 +1,199 @@
+"use client";
+
+/**
+ * Front view of one run, to scale, as a technical drawing: the wall with its window, wall units, base cabinets,
+ * the tall column, fillers and the worktop. Cabinets are clickable (they select the element); keyboard and
+ * assistive tech use the element list next to it, so the drawing itself is one image.
+ *
+ * The island is drawn mirrored (as seen from the room, towards wall A) — see meta.isFlipped.
+ */
+import { useState } from "react";
+import { DIM, type KitchenPlan, type PlanSlot, type RunId } from "@/lib/studio/plan";
+import { moduleDef } from "@/lib/studio/catalog";
+import { ModuleGlyph } from "./icons";
+import { isFlipped, runName } from "./meta";
+
+const ACCENT = "#C9B99A";
+const BASE_TOP = DIM.worktopTop - 4;
+
+export function RunElevation({
+  plan,
+  run,
+  selected = null,
+  onPick,
+  boxWidth = 336,
+  boxHeight = 132,
+  className = "",
+}: {
+  plan: KitchenPlan;
+  run: RunId;
+  selected?: string | null;
+  onPick?: (slotId: string) => void;
+  /** the rendered size in px (to decide whether a cabinet is big enough for its little drawing) */
+  boxWidth?: number;
+  boxHeight?: number;
+  className?: string;
+}) {
+  const [hover, setHover] = useState<string | null>(null);
+  const isl = run === "isl";
+  const len = isl ? (plan.island?.length ?? 0) : plan.cfg.walls[run];
+  if (!len) return null;
+  const flip = isFlipped(run);
+  const top = isl ? DIM.worktopTop + 8 : Math.min(plan.ceiling, Math.max(plan.upperTop, plan.window?.top ?? 0) + 14);
+  const mx = Math.max(6, len * 0.025);
+  const vbW = len + mx * 2;
+  const vbH = top + 8;
+  const scale = Math.min(boxWidth / vbW, boxHeight / vbH);
+  const Y = (y: number) => top - y;
+  const X = (x: number, w: number) => (flip ? len - x - w : x);
+
+  const slots = plan.slots.filter((s) => s.run === run);
+  const pieces = plan.pieces.filter((p) => p.run === run);
+  const win = !isl && plan.window && plan.window.wall === run ? plan.window : null;
+  const runPlan = isl ? null : plan.runs.find((r) => r.wall === run);
+
+  const zoneY = (z: PlanSlot["zone"] | "filler-base" | "filler-upper" | "filler-tall"): [number, number] => {
+    if (z === "upper" || z === "filler-upper") return [plan.upperBottom, plan.upperTop];
+    if (z === "tall" || z === "filler-tall") return [DIM.plinth, plan.upperTop];
+    return [DIM.plinth, BASE_TOP];
+  };
+
+  // the blind part of wall A's corner unit, seen on walls B / C
+  const cornerZones: { x: number; w: number; y0: number; y1: number }[] = [];
+  if (run === "b" || run === "c") {
+    const atEnd = run === "b";
+    const has = (id: string) => plan.slots.some((s) => s.cornerId === id);
+    const baseId = atEnd ? "base-l" : "base-r";
+    const upId = atEnd ? "upper-l" : "upper-r";
+    if (has(baseId)) cornerZones.push({ x: atEnd ? len - DIM.baseDepth : 0, w: DIM.baseDepth, y0: DIM.plinth, y1: BASE_TOP });
+    if (has(upId)) cornerZones.push({ x: atEnd ? len - DIM.upperDepth : 0, w: DIM.upperDepth, y0: plan.upperBottom, y1: plan.upperTop });
+  }
+
+  const counts = { base: 0, upper: 0, tall: 0, island: 0 };
+  for (const s of slots) if (!moduleDef(s.zone, s.type)?.spacer) counts[s.zone]++;
+  const aria = isl
+    ? `Otok, ${Math.round(len)} cm: ${counts.island} elemenata`
+    : `${runName(run)}, ${len} cm: ${counts.base} donjih, ${counts.upper} gornjih${counts.tall ? `, ${counts.tall} visokih` : ""} elemenata${win ? ", prozor" : ""}`;
+
+  return (
+    <svg
+      viewBox={`${-mx} 0 ${vbW} ${vbH}`}
+      preserveAspectRatio="xMidYMax meet"
+      role="img"
+      aria-label={aria}
+      className={className}
+      onPointerLeave={() => setHover(null)}
+    >
+      {/* the wall */}
+      {!isl && <rect x={0} y={Y(top)} width={len} height={top} fill="rgba(242,239,233,.025)" />}
+      <line x1={-mx} x2={len + mx} y1={Y(0)} y2={Y(0)} stroke="rgba(242,239,233,.35)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+
+      {win && (
+        <g>
+          <rect
+            x={win.offset}
+            y={Y(win.top)}
+            width={win.width}
+            height={win.top - win.sill}
+            fill="rgba(201,185,154,.07)"
+            stroke="rgba(201,185,154,.55)"
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+          <line
+            x1={win.offset + win.width / 2}
+            x2={win.offset + win.width / 2}
+            y1={Y(win.top)}
+            y2={Y(win.sill)}
+            stroke="rgba(201,185,154,.35)"
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+        </g>
+      )}
+
+      {cornerZones.map((c, i) => (
+        <rect
+          key={`k${i}`}
+          x={c.x}
+          y={Y(c.y1)}
+          width={c.w}
+          height={c.y1 - c.y0}
+          fill="rgba(242,239,233,.03)"
+          stroke="rgba(242,239,233,.18)"
+          strokeDasharray="3 3"
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+
+      {/* worktop */}
+      {isl ? (
+        <rect x={0} y={Y(DIM.worktopTop)} width={len} height={4} fill="rgba(242,239,233,.32)" />
+      ) : (
+        runPlan?.worktop && (
+          <rect
+            x={runPlan.worktop.from}
+            y={Y(DIM.worktopTop)}
+            width={runPlan.worktop.to - runPlan.worktop.from}
+            height={4}
+            fill="rgba(242,239,233,.32)"
+          />
+        )
+      )}
+
+      {/* fillers and end panels */}
+      {pieces.map((p, i) => {
+        const [y0, y1] = zoneY(`filler-${p.zone}`);
+        return (
+          <rect
+            key={`p${i}`}
+            x={X(p.x, p.width)}
+            y={Y(y1)}
+            width={p.width}
+            height={y1 - y0}
+            fill="rgba(242,239,233,.12)"
+          />
+        );
+      })}
+
+      {/* cabinets */}
+      {slots.map((s) => {
+        const def = moduleDef(s.zone, s.type);
+        const spacer = Boolean(def?.spacer);
+        const [y0, y1] = zoneY(s.zone);
+        const x = X(s.x, s.width);
+        const h = y1 - y0;
+        const on = s.id === selected;
+        const hot = s.id === hover;
+        const g = Math.min(s.width * 0.62, h * 0.62, 44);
+        const showGlyph = g * scale >= 13 && s.width >= 25;
+        return (
+          <g
+            key={s.id}
+            onClick={onPick ? () => onPick(s.id) : undefined}
+            onPointerEnter={() => setHover(s.id)}
+            style={{ cursor: onPick ? "pointer" : undefined, color: on ? ACCENT : hot ? "rgba(242,239,233,.85)" : "rgba(242,239,233,.5)" }}
+          >
+            <rect
+              x={x + 0.6}
+              y={Y(y1)}
+              width={Math.max(0.5, s.width - 1.2)}
+              height={h}
+              rx={1.2}
+              fill={on ? "rgba(201,185,154,.22)" : spacer ? (hot ? "rgba(242,239,233,.05)" : "transparent") : hot ? "rgba(242,239,233,.14)" : "rgba(242,239,233,.07)"}
+              stroke={on ? ACCENT : spacer ? "rgba(242,239,233,.28)" : hot ? "rgba(242,239,233,.7)" : "rgba(242,239,233,.34)"}
+              strokeWidth={on ? 1.6 : 1}
+              strokeDasharray={spacer && !on ? "3 3" : undefined}
+              vectorEffect="non-scaling-stroke"
+              style={{ transition: "fill .3s cubic-bezier(.2,.8,.2,1), stroke .3s cubic-bezier(.2,.8,.2,1)" }}
+            />
+            {showGlyph && !spacer && (
+              <ModuleGlyph type={s.type} zone={s.zone} x={x + (s.width - g) / 2} y={Y(y0 + (h + g) / 2)} width={g} height={g} />
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}

@@ -30,6 +30,12 @@ export interface TexOpts {
   anisotropy: number;
 }
 
+/** per-material pattern knobs (catalog MaterialRender.density / veins); the defaults paint what v1 painted */
+export interface Detail {
+  density?: number;
+  veins?: "fine" | "bold";
+}
+
 function canvasTex(w: number, h: number, opts: TexOpts, draw: (g: CanvasRenderingContext2D, w: number, h: number) => void): THREE.CanvasTexture {
   const c = document.createElement("canvas");
   c.width = w;
@@ -46,7 +52,7 @@ function canvasTex(w: number, h: number, opts: TexOpts, draw: (g: CanvasRenderin
 }
 
 /** vertical grain (lines run along the texture's v axis) */
-export function woodTexture(id: string, tones: [string, string, string], opts: TexOpts): THREE.CanvasTexture {
+export function woodTexture(id: string, tones: [string, string, string], opts: TexOpts, detail: Detail = {}): THREE.CanvasTexture {
   const rnd = mulberry32(hashSeed(id));
   const S = opts.size;
   return canvasTex(S, S, opts, (g, w, h) => {
@@ -63,7 +69,7 @@ export function woodTexture(id: string, tones: [string, string, string], opts: T
       g.fillRect(x - w, 0, bw, h);
     }
     // fine grain lines, wrapping horizontally so the texture tiles
-    const n = Math.round(620 * (S / 1024));
+    const n = Math.round(620 * (S / 1024) * (detail.density ?? 1));
     for (let i = 0; i < n; i++) {
       const x = rnd() * w;
       const amp = (2 + rnd() * 9) * (S / 1024);
@@ -88,7 +94,7 @@ export function woodTexture(id: string, tones: [string, string, string], opts: T
 }
 
 /** soft grey veins on warm white (2:1 canvas) */
-export function marbleTexture(id: string, tones: [string, string, string], opts: TexOpts): THREE.CanvasTexture {
+export function marbleTexture(id: string, tones: [string, string, string], opts: TexOpts, detail: Detail = {}): THREE.CanvasTexture {
   const rnd = mulberry32(hashSeed(id));
   const W = opts.size * 2;
   const H = opts.size;
@@ -121,23 +127,31 @@ export function marbleTexture(id: string, tones: [string, string, string], opts:
         g.stroke();
       }
     };
-    vein(9, 7, 0.08, mid, 14);
-    vein(22, 1.8, 0.36, dark, 2);
-    vein(46, 0.8, 0.24, mid, 1);
+    const d = detail.density ?? 1;
+    if (detail.veins === "bold") {
+      // Calacatta: a few wide, high-contrast veins with a soft halo, little fine veining
+      vein(6, 16, 0.1, mid, 22);
+      vein(5, 4.2, 0.55, dark, 3);
+      vein(Math.round(14 * d), 1, 0.2, mid, 1);
+    } else {
+      vein(Math.round(9 * d), 7, 0.08, mid, 14);
+      vein(Math.round(22 * d), 1.8, 0.36, dark, 2);
+      vein(Math.round(46 * d), 0.8, 0.24, mid, 1);
+    }
     g.shadowBlur = 0;
     g.globalAlpha = 1;
   });
 }
 
 /** black stone with fine grain and sparkle */
-export function stoneTexture(id: string, tones: [string, string, string], opts: TexOpts): THREE.CanvasTexture {
+export function stoneTexture(id: string, tones: [string, string, string], opts: TexOpts, detail: Detail = {}): THREE.CanvasTexture {
   const rnd = mulberry32(hashSeed(id));
   const S = opts.size;
   return canvasTex(S, S, opts, (g, w, h) => {
     const [base, mid, light] = tones;
     g.fillStyle = base;
     g.fillRect(0, 0, w, h);
-    const n = Math.round(16000 * (S / 1024) * (S / 1024));
+    const n = Math.round(16000 * (S / 1024) * (S / 1024) * (detail.density ?? 1));
     for (let i = 0; i < n; i++) {
       const r = rnd();
       g.fillStyle = r < 0.85 ? mid : light;
@@ -185,6 +199,100 @@ export function concreteTexture(id: string, tones: [string, string, string], opt
       g.fillRect(rnd() * w, rnd() * h, s, s);
     }
     g.globalAlpha = 1;
+  });
+}
+
+/** brushed metal: fine horizontal streaks (they run along the u axis) */
+export function brushedTexture(id: string, tones: [string, string, string], opts: TexOpts): THREE.CanvasTexture {
+  const rnd = mulberry32(hashSeed(id));
+  const S = Math.min(512, opts.size);
+  return canvasTex(S, S, opts, (g, w, h) => {
+    const [base, dark, light] = tones;
+    g.fillStyle = base;
+    g.fillRect(0, 0, w, h);
+    const n = Math.round(1400 * (S / 512));
+    for (let i = 0; i < n; i++) {
+      const y = rnd() * h;
+      const x = rnd() * w;
+      const len = (0.15 + rnd() * 0.85) * w;
+      g.globalAlpha = 0.04 + rnd() * 0.1;
+      g.fillStyle = rnd() < 0.5 ? dark : light;
+      const t = 0.5 + rnd() * 1.2;
+      g.fillRect(x, y, len, t);
+      g.fillRect(x - w, y, len, t);
+    }
+    g.globalAlpha = 1;
+  });
+}
+
+/** floor boards: planks of `tones` with seams and per-board shade, grain along v */
+export function plankTexture(id: string, tones: [string, string, string], opts: TexOpts): THREE.CanvasTexture {
+  const rnd = mulberry32(hashSeed(id));
+  const S = opts.size;
+  return canvasTex(S, S, opts, (g, w, h) => {
+    const [base, dark, light] = tones;
+    g.fillStyle = base;
+    g.fillRect(0, 0, w, h);
+    const cols = 6;
+    const bw = w / cols;
+    for (let c = 0; c < cols; c++) {
+      // two boards per column, staggered
+      const off = rnd() * h;
+      for (let k = 0; k < 2; k++) {
+        const y0 = off + (k * h) / 2;
+        g.globalAlpha = 0.08 + rnd() * 0.14;
+        g.fillStyle = rnd() < 0.5 ? dark : light;
+        for (const oy of [0, -h]) g.fillRect(c * bw, y0 + oy, bw, h / 2);
+        g.globalAlpha = 0.5;
+        g.fillStyle = dark;
+        for (const oy of [0, -h, h]) g.fillRect(c * bw, y0 + oy - 1, bw, 2);
+      }
+      // grain
+      for (let i = 0; i < 40; i++) {
+        g.globalAlpha = 0.05 + rnd() * 0.1;
+        g.fillStyle = rnd() < 0.6 ? dark : light;
+        g.fillRect(c * bw + rnd() * bw, 0, 0.6 + rnd() * 1.6, h);
+      }
+      g.globalAlpha = 0.55;
+      g.fillStyle = dark;
+      g.fillRect(c * bw, 0, 1.5, h);
+    }
+    g.globalAlpha = 1;
+  });
+}
+
+/** square floor tiles with grout lines (one tile per half texture) */
+export function tileTexture(id: string, tones: [string, string, string], grout: string, opts: TexOpts): THREE.CanvasTexture {
+  const rnd = mulberry32(hashSeed(id));
+  const S = opts.size;
+  return canvasTex(S, S, opts, (g, w, h) => {
+    const [base, dark, light] = tones;
+    const n = 2;
+    const t = w / n;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        g.fillStyle = base;
+        g.fillRect(i * t, j * t, t, t);
+        // soft clouding per tile
+        for (let k = 0; k < 18; k++) {
+          const x = i * t + rnd() * t;
+          const y = j * t + rnd() * t;
+          const r = t * (0.1 + rnd() * 0.35);
+          const grd = g.createRadialGradient(x, y, 0, x, y, r);
+          grd.addColorStop(0, rnd() < 0.5 ? dark : light);
+          grd.addColorStop(1, "rgba(0,0,0,0)");
+          g.globalAlpha = 0.18;
+          g.fillStyle = grd;
+          g.fillRect(i * t, j * t, t, t);
+        }
+        g.globalAlpha = 1;
+      }
+    g.fillStyle = grout;
+    const gw = Math.max(1.5, S / 340);
+    for (let i = 0; i <= n; i++) {
+      g.fillRect(i * t - gw / 2, 0, gw, h);
+      g.fillRect(0, i * t - gw / 2, w, gw);
+    }
   });
 }
 

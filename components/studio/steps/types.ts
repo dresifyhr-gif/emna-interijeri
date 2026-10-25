@@ -13,6 +13,6 @@ export interface StepProps {
   setMood: (m: Mood) => void;
   /** true on the narrow bottom-sheet layout */
   compact: boolean;
-  /** a shape or measurement change just put the customer's element edits back to their defaults */
-  editsReset: boolean;
+  /** the 3D view is running (false when WebGL is not available) */
+  engine: boolean;
 }

@@ -10,6 +10,7 @@ import { Process } from "@/components/home/Process";
 import { Materials } from "@/components/home/Materials";
 import { StudioCall } from "@/components/home/StudioCall";
 import { Contact } from "@/components/home/Contact";
+import { PerfProbe } from "@/components/home/PerfProbe";
 
 // title and description come from the root layout defaults; openGraph is repeated in full because a
 // page-level openGraph replaces the layout's, and only here does it get og:url
@@ -36,6 +37,7 @@ export default function HomePage() {
       <Materials />
       <StudioCall />
       <Contact />
+      <PerfProbe />
     </>
   );
 }

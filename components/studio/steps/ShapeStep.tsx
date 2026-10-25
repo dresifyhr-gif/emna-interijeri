@@ -1,11 +1,11 @@
 "use client";
 
 import { Notes, RadioGrid } from "../controls";
-import { LayoutIcon } from "../icons";
-import { EDITS_RESET_NOTE, LAYOUTS } from "../meta";
+import { LayoutIcon, UndoIcon } from "../icons";
+import { LAYOUTS, LAYOUT_RESET_NOTE } from "../meta";
 import type { StepProps } from "./types";
 
-export function ShapeStep({ cfg, setLayout, compact, editsReset }: StepProps) {
+export function ShapeStep({ cfg, setLayout, compact, onUndoLayout }: StepProps & { onUndoLayout: (() => void) | null }) {
   return (
     <div>
       <RadioGrid
@@ -41,10 +41,30 @@ export function ShapeStep({ cfg, setLayout, compact, editsReset }: StepProps) {
         )}
       </RadioGrid>
       <p className="mt-6 text-[12.5px] leading-relaxed text-mut">
-        Duljine zidova, prozor i pojedine elemente prilagođavate u sljedećim koracima. Svaki element u 3D prikazu možete i
-        kliknuti.
+        Duljine zidova i prozor upisujete u sljedećem koraku, a zatim po želji mijenjate svaki element: ladice, vrata,
+        sudoper, aparate, police.
       </p>
-      <Notes items={editsReset ? [EDITS_RESET_NOTE] : []} />
+      <Notes
+        items={
+          onUndoLayout
+            ? [
+                {
+                  text: LAYOUT_RESET_NOTE,
+                  action: (
+                    <button
+                      type="button"
+                      onClick={onUndoLayout}
+                      className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-accent transition-colors hover:text-fg"
+                    >
+                      <UndoIcon className="h-4 w-4" />
+                      Vrati prethodni oblik i elemente
+                    </button>
+                  ),
+                },
+              ]
+            : []
+        }
+      />
     </div>
   );
 }

@@ -9,14 +9,18 @@ const TOP_IDS = ["mramor", "crni", "beton", "hrast"];
 
 /** 05 · Materijali — dark. Fronts and a few worktops straight from lib/studio/catalog.ts. */
 export function Materials() {
-  const fronts: SwatchItem[] = catalog.fronts.map((m) => ({
-    id: m.id,
-    group: "front",
-    name: m.name,
-    swatch: m.swatch,
-    render: m.render,
-    href: `/studio?front=${encodeURIComponent(m.id)}`,
-  }));
+  // the studio has dozens of fronts; the homepage strip shows the featured ones, in their set order
+  const fronts: SwatchItem[] = catalog.fronts
+    .filter((m) => m.featured)
+    .sort((a, b) => (a.featured ?? 0) - (b.featured ?? 0))
+    .map((m) => ({
+      id: m.id,
+      group: "front",
+      name: m.name,
+      swatch: m.swatch,
+      render: m.render,
+      href: `/studio?front=${encodeURIComponent(m.id)}`,
+    }));
   const tops: SwatchItem[] = catalog.tops
     .filter((m) => TOP_IDS.includes(m.id))
     .map((m) => ({
@@ -29,7 +33,7 @@ export function Materials() {
     }));
 
   return (
-    <section aria-labelledby="materijali-naslov" className="relative overflow-hidden bg-ink-700 py-28 text-fg sm:py-36 lg:py-48">
+    <section aria-labelledby="materijali-naslov" className="cv-auto relative overflow-hidden bg-ink-700 py-28 text-fg sm:py-36 lg:py-48">
       <div className="shell relative">
         <div className="grid gap-10 lg:grid-cols-12 lg:items-end">
           <div className="lg:col-span-7">

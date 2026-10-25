@@ -140,8 +140,14 @@ export function HeroStage({
     };
   }, [wants3d, scrollYProgress]);
 
+  // scroll events only touch React state when the caption actually changes (3 times per pass), never per frame
+  const activeRef = useRef(0);
   useMotionValueEvent(scrollYProgress, "change", (p) => {
-    setActive(presetIndexAt(p));
+    const idx = presetIndexAt(p);
+    if (idx !== activeRef.current) {
+      activeRef.current = idx;
+      setActive(idx);
+    }
     const engine = engineRef.current;
     if (!engine) return;
     if (!drivingRef.current) {
@@ -152,24 +158,31 @@ export function HeroStage({
   });
 
   // overlay choreography (only applied while the 3D is live)
-  const introOpacity = useTransform(scrollYProgress, [0.02, 0.17], [1, 0]);
+  // The opacity ranges always span 0…1: framer-motion runs scroll-linked opacity as a native scroll-driven
+  // animation (ViewTimeline, on the compositor) with the input range as keyframe offsets. A range like
+  // [0.17, 0.27] left the browser to invent keyframes at 0 and 1 from the element's base style, so the
+  // captions faded out again while scrolling and the "Listajte" cue came back.
+  const introOpacity = useTransform(scrollYProgress, [0, 0.02, 0.17, 1], [1, 1, 0, 0]);
   const introY = useTransform(scrollYProgress, [0, 0.17], [0, -44]);
   const introVis = useTransform(introOpacity, (v) => (v < 0.02 ? "hidden" : "visible"));
-  const storyOpacity = useTransform(scrollYProgress, [0.17, 0.27], [0, 1]);
+  const storyOpacity = useTransform(scrollYProgress, [0, 0.17, 0.27, 1], [0, 0, 1, 1]);
   const storyY = useTransform(scrollYProgress, [0.17, 0.27], [32, 0]);
   const storyVis = useTransform(storyOpacity, (v) => (v < 0.02 ? "hidden" : "visible"));
-  const cueOpacity = useTransform(scrollYProgress, [0, 0.06], [1, 0]);
+  const cueOpacity = useTransform(scrollYProgress, [0, 0.06, 1], [1, 0, 0]);
 
   return (
     <section
       ref={sectionRef}
       aria-labelledby="naslovnica-naslov"
+      // the header drops its backdrop blur while it sits over this section (blurring a live canvas every frame is costly)
+      data-header="solid"
       className={`relative bg-ink ${still ? "h-[100svh]" : "h-[220vh]"} motion-reduce:h-[100svh]`}
     >
       <div className="sticky top-0 h-[100svh] w-full overflow-hidden">
-        {/* poster: line drawing until the first 3D frame (and as the fallback) */}
+        {/* poster: line drawing until the first 3D frame (and as the fallback); hidden once faded out so the
+            browser stops compositing a full-screen SVG under the canvas */}
         <div
-          className={`absolute inset-0 transition-opacity duration-[1600ms] ease-premium ${live ? "opacity-0" : "opacity-100"}`}
+          className={`absolute inset-0 transition-[opacity,visibility] duration-[1600ms] ease-premium ${live ? "invisible opacity-0" : "visible opacity-100"}`}
         >
           {poster}
         </div>
@@ -183,9 +196,11 @@ export function HeroStage({
         <div aria-hidden className={`pointer-events-none absolute inset-0 ${s.scrim}`} />
 
         <div className={`shell relative z-10 grid h-full ${s.heroLayout}`}>
+          {/* own compositor layer while scroll-driven: the big headline (with its soft text-shadow) is rasterised
+              once and only moved/faded, instead of being repainted on every scroll frame */}
           <motion.div
             style={live ? { opacity: introOpacity, y: introY, visibility: introVis } : STATIC_STYLE}
-            className="col-start-1 row-start-1 max-w-[46rem]"
+            className={`col-start-1 row-start-1 max-w-[46rem] ${live ? "[will-change:transform,opacity]" : ""}`}
           >
             <p className={`eyebrow flex items-center gap-4 text-accent ${s.fadeUp}`} style={{ animationDelay: "0.05s" }}>
               <span aria-hidden className="h-px w-8 bg-accent/70" />
@@ -222,7 +237,7 @@ export function HeroStage({
           {live && (
             <motion.div
               style={{ opacity: storyOpacity, y: storyY, visibility: storyVis }}
-              className="col-start-1 row-start-1 w-full max-w-[34rem]"
+              className="col-start-1 row-start-1 w-full max-w-[34rem] [will-change:transform,opacity]"
             >
               <PresetStory presets={presets} active={active} progress={scrollYProgress} />
             </motion.div>

@@ -10,10 +10,10 @@
  */
 
 import * as THREE from "three";
-import { DIM, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId } from "../plan";
-import type { HandleStyle, WallId } from "../types";
+import { DIM, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId, type RunPlan } from "../plan";
+import type { FrontZone, HandleStyle, WallId } from "../types";
 import { BASE_FACE, D, TOP_Y, UPPER_FACE, WORK_Y, cm } from "./dims";
-import { boxes, disposeGeometries, mesh, type BoxSpec } from "./geo";
+import { boxes, disposeGeometries, mesh, type BoxSpec, type GeoCache } from "./geo";
 import { dimLine, type DimLabel } from "./labels";
 import type { LedLight, WindowLight } from "./lights";
 import type { Mat, Materials } from "./materials";
@@ -47,12 +47,16 @@ export interface KitchenRT {
   order: string[];
   /** meshes in the worktop material */
   tops: THREE.Mesh[];
-  /** run-level meshes in the front material (fillers, end panels, island back) */
+  /** run-level meshes in the front material (fillers, end panels, island back); userData.fz = their FrontZone */
   frontPieces: THREE.Mesh[];
-  /** run-level meshes in the carcass material (filler spacers) */
+  /** run-level meshes in the carcass material (filler spacers); userData.fz = their FrontZone */
   carcassPieces: THREE.Mesh[];
-  /** fillers / end panels, rebuilt in place when the handle style changes */
+  /** plinth meshes of fillers (finish); userData.fz = their FrontZone */
+  plinthPieces: THREE.Mesh[];
+  /** fillers / end panels, rebuilt in place when the handle style changes (group origin: the piece's centre) */
   pieces: { p: PlanPiece; g: THREE.Group }[];
+  /** LED strips under the wall units, per wall (rebuilt when the wall units change) */
+  underLeds: Map<RunId, THREE.Group[]>;
   islandBack: THREE.Mesh | null;
   walls: WallRT[];
   labels: (DimLabel & { wall: WallId | "isl" })[];
@@ -69,12 +73,29 @@ export interface KitchenRT {
 
 export interface KitchenEnv {
   mats: Materials;
+  geos: GeoCache;
   doc: Document;
-  frontId: string;
+  /** front material per zone (catalog ids) */
+  fronts: Record<FrontZone, string>;
   topId: string;
   handles: HandleStyle;
+  /** plinth finish id ("crna" | "inox" | "fronta") */
+  plinth: string;
   labels: boolean;
   tempo: "cinematic" | "quick";
+}
+
+/** what building one module / piece needs from the environment */
+export type ModuleEnv = Pick<KitchenEnv, "mats" | "geos" | "fronts" | "handles" | "plinth">;
+
+/** front zone of a plan piece (island fillers wear the island front) */
+export const pieceZone = (p: PlanPiece): FrontZone => (p.run === "isl" ? "island" : p.zone);
+
+/** the plinth material of a zone for a plinth finish */
+export function plinthMat(env: Pick<KitchenEnv, "mats" | "fronts" | "plinth">, zone: FrontZone): THREE.Material {
+  if (env.plinth === "fronta") return env.mats.front(env.fronts[zone === "upper" ? "base" : zone]);
+  if (env.plinth === "inox") return env.mats.plinthSteel;
+  return env.mats.plinth;
 }
 
 const tallSideOf = (plan: KitchenPlan, run: RunId): "left" | "right" => {
@@ -83,14 +104,17 @@ const tallSideOf = (plan: KitchenPlan, run: RunId): "left" | "right" => {
 };
 
 /** context for building one module of the current kitchen */
-export function moduleCtx(env: Pick<KitchenEnv, "mats" | "frontId" | "handles">, plan: KitchenPlan, run: RunRT | undefined, slot: PlanSlot): BuildCtx {
+export function moduleCtx(env: ModuleEnv, plan: KitchenPlan, run: RunRT | undefined, slot: PlanSlot): BuildCtx {
   const mats = env.mats;
   const centre = run ? run.center : 0;
   const mid = cm(slot.x + slot.width / 2);
+  const fid = env.fronts[slot.zone];
   return {
     mats,
-    front: mats.front(env.frontId),
-    carcass: mats.carcass(env.frontId),
+    geos: env.geos,
+    front: mats.front(fid),
+    carcass: mats.carcass(fid),
+    plinth: plinthMat(env, slot.zone),
     handles: env.handles,
     ub: cm(plan.upperBottom),
     ut: cm(plan.upperTop),
@@ -155,16 +179,16 @@ function slabWithHoles(
   return list;
 }
 
-function stool(mats: Materials): THREE.Group {
+function stool(mats: Materials, geos: GeoCache): THREE.Group {
   const g = new THREE.Group();
-  const seat = mesh(new THREE.CylinderGeometry(0.19, 0.18, 0.045, 48), mats.oak);
+  const seat = mesh(geos.get("stool:seat", () => new THREE.CylinderGeometry(0.19, 0.18, 0.045, 48)), mats.oak);
   seat.position.y = 0.66;
-  const leg = mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.64, 16), mats.black);
+  const leg = mesh(geos.get("stool:leg", () => new THREE.CylinderGeometry(0.018, 0.018, 0.64, 16)), mats.black);
   leg.position.y = 0.32;
-  const ring = mesh(new THREE.TorusGeometry(0.14, 0.008, 10, 48), mats.black);
+  const ring = mesh(geos.get("stool:ring", () => new THREE.TorusGeometry(0.14, 0.008, 10, 48)), mats.black);
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 0.27;
-  const foot = mesh(new THREE.CylinderGeometry(0.2, 0.21, 0.012, 48), mats.black);
+  const foot = mesh(geos.get("stool:foot", () => new THREE.CylinderGeometry(0.2, 0.21, 0.012, 48)), mats.black);
   foot.position.y = 0.006;
   g.add(seat, leg, ring, foot);
   return g;
@@ -178,7 +202,6 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   const ceil = cm(plan.ceiling);
   const ub = cm(plan.upperBottom);
   const ut = cm(plan.upperTop);
-  const front: Mat = mats.front(env.frontId);
   const top: Mat = mats.top(env.topId);
 
   const root = new THREE.Group();
@@ -193,7 +216,9 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     tops: [],
     frontPieces: [],
     carcassPieces: [],
+    plinthPieces: [],
     pieces: [],
+    underLeds: new Map(),
     islandBack: null,
     walls: [],
     labels: [],
@@ -381,6 +406,7 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     const made = fillPiece(g, p, env, plan);
     K.frontPieces.push(...made.front);
     K.carcassPieces.push(...made.carcass);
+    K.plinthPieces.push(...made.plinth);
     K.pieces.push({ p, g });
     run.group.add(g);
     if (p.zone === "upper") upperPieces.push({ obj: g, near: p.x });
@@ -455,18 +481,7 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   const ledMat = mats.led;
   for (const r of plan.runs) {
     const run = K.runs.get(r.wall)!;
-    for (const u of r.uppers) {
-      const x0 = cm(u.from) + 0.02;
-      const x1 = cm(u.to) - 0.02;
-      if (x1 - x0 < 0.15) continue;
-      const g = new THREE.Group();
-      g.position.x = x0;
-      const strip = mesh(boxes([[0, ub - 0.006, 0.262, x1 - x0, ub - 0.0012, 0.276]]), ledMat, false, false);
-      g.add(strip);
-      run.group.add(g);
-      K.leds.push({ mesh: strip, length: x1 - x0, kind: "under" });
-      tl.add(g, "growX", tLed, 0.6 * k);
-    }
+    for (const g of underLeds(K, r, ub, mats)) tl.add(g, "growX", tLed, 0.6 * k);
     if (r.counter) {
       const x0 = cm(r.counter.from) + 0.02;
       const x1 = cm(r.counter.to) - 0.02;
@@ -501,7 +516,8 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     const tI2 = tI + islList.length * stagger;
     // back panel on the seating side
     const back = new THREE.Group();
-    const bp = mesh(boxes([[wf, 0, -D.frontT, L - wf, TOP_Y, 0]]), front);
+    const bp = mesh(boxes([[wf, 0, -D.frontT, L - wf, TOP_Y, 0]]), mats.front(env.fronts.island));
+    bp.userData.fz = "island";
     back.add(bp);
     K.frontPieces.push(bp);
     K.islandBack = bp;
@@ -534,7 +550,7 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     tl.add(lg, "growX", tI2 + 0.9 * k, 0.6 * k);
     // stools
     [0.28, 0.72].forEach((f, i) => {
-      const st = stool(mats);
+      const st = stool(mats, env.geos);
       st.position.set(L * f, 0, -ov - 0.1);
       g.add(st);
       tl.add(st, "slideZ", tI2 + 1.1 * k + i * 0.15 * s, 0.9 * k, -0.7, E.out);
@@ -636,22 +652,59 @@ export function ledLights(K: KitchenRT, max: number): LedLight[] {
   return out;
 }
 
-/** build the meshes of one filler / end panel into `g` (run frame) */
-function fillPiece(
-  g: THREE.Group,
-  p: PlanPiece,
-  env: Pick<KitchenEnv, "mats" | "frontId" | "handles">,
-  plan: KitchenPlan,
-): { front: THREE.Mesh[]; carcass: THREE.Mesh[] } {
+/** LED strips under the wall-unit stretches of a run (in K.leds and K.underLeds); returns their groups */
+export function underLeds(K: KitchenRT, r: RunPlan, ub: number, mats: Materials): THREE.Group[] {
+  const run = K.runs.get(r.wall);
+  if (!run) return [];
+  const out: THREE.Group[] = [];
+  for (const u of r.uppers) {
+    const x0 = cm(u.from) + 0.02;
+    const x1 = cm(u.to) - 0.02;
+    if (x1 - x0 < 0.15) continue;
+    const g = new THREE.Group();
+    g.position.x = x0;
+    const strip = mesh(boxes([[0, ub - 0.006, 0.262, x1 - x0, ub - 0.0012, 0.276]]), mats.led, false, false);
+    g.add(strip);
+    run.group.add(g);
+    K.leds.push({ mesh: strip, length: x1 - x0, kind: "under" });
+    out.push(g);
+  }
+  K.underLeds.set(r.wall, [...(K.underLeds.get(r.wall) ?? []), ...out]);
+  return out;
+}
+
+/** take a run's under-cabinet LED strips out of the scene (and out of K.leds) */
+export function removeUnderLeds(K: KitchenRT, run: RunId): void {
+  const gs = K.underLeds.get(run) ?? [];
+  const meshes = new Set<THREE.Object3D>();
+  for (const g of gs) {
+    g.traverse((o) => meshes.add(o));
+    disposeGeometries(g);
+    g.parent?.remove(g);
+  }
+  K.leds = K.leds.filter((z) => !meshes.has(z.mesh));
+  K.underLeds.delete(run);
+}
+
+/**
+ * Build the meshes of one filler / end panel into `g` (run frame). The group sits at the piece's centre
+ * (so it can grow / shrink in place); UVs stay in run coordinates, so grain still runs on across neighbours.
+ */
+function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPlan): { front: THREE.Mesh[]; carcass: THREE.Mesh[]; plinth: THREE.Mesh[] } {
   const mats = env.mats;
   const ub = cm(plan.upperBottom);
   const ut = cm(plan.upperTop);
   const gola = env.handles === "bez";
   const lip = gola ? D.upperLip : 0;
-  const x0 = cm(p.x);
-  const x1 = cm(p.x + p.width);
+  const cx = cm(p.x + p.width / 2);
+  g.position.x = cx;
+  const x0 = cm(p.x) - cx;
+  const x1 = cm(p.x + p.width) - cx;
+  const uv: [number, number, number] = [cx, 0, 0];
+  const zone = pieceZone(p);
   const fm: BoxSpec[] = [];
   const cs: BoxSpec[] = [];
+  const plinth: THREE.Mesh[] = [];
   if (p.zone === "upper") {
     if (p.kind === "panel") fm.push([x0, ub - lip, 0, x1, ut, UPPER_FACE]);
     else {
@@ -665,28 +718,34 @@ function fillPiece(
   } else {
     fm.push([x0 + 0.0015, D.plinth + 0.0015, D.carcass + D.frontOff, x1 - 0.0015, TOP_Y - (gola ? D.golaH : 0) - 0.0015, BASE_FACE]);
     cs.push([x0 + 0.001, D.plinth, 0.004, x1 - 0.001, TOP_Y, D.carcass]);
-    g.add(mesh(boxes([[x0 + 0.001, 0, 0.03, x1 - 0.001, D.plinth - 0.002, BASE_FACE - D.plinthRecess]]), mats.plinth));
-    if (gola) g.add(mesh(boxes([[x0, TOP_Y - D.golaH + 0.001, D.carcass - 0.03, x1, TOP_Y - 0.001, D.carcass + 0.001]]), mats.gola, false, true));
+    const pm = mesh(boxes([[x0 + 0.001, 0, 0.03, x1 - 0.001, D.plinth - 0.002, BASE_FACE - D.plinthRecess]], uv), plinthMat(env, zone));
+    pm.userData.fz = zone;
+    g.add(pm);
+    plinth.push(pm);
+    if (gola) g.add(mesh(boxes([[x0, TOP_Y - D.golaH + 0.001, D.carcass - 0.03, x1, TOP_Y - 0.001, D.carcass + 0.001]], uv), mats.gola, false, true));
   }
   const front: THREE.Mesh[] = [];
   const carcass: THREE.Mesh[] = [];
   if (fm.length) {
-    const me = mesh(boxes(fm), mats.front(env.frontId));
+    const me = mesh(boxes(fm, uv), mats.front(env.fronts[zone]));
+    me.userData.fz = zone;
     g.add(me);
     front.push(me);
   }
   if (cs.length) {
-    const me = mesh(boxes(cs), mats.carcass(env.frontId));
+    const me = mesh(boxes(cs, uv), mats.carcass(env.fronts[zone]));
+    me.userData.fz = zone;
     g.add(me);
     carcass.push(me);
   }
-  return { front, carcass };
+  return { front, carcass, plinth };
 }
 
 /** re-dress every filler / end panel for a new handle style (keeps groups, so assembly tracks stay valid) */
-export function rebuildPieces(K: KitchenRT, env: Pick<KitchenEnv, "mats" | "frontId" | "handles">): void {
+export function rebuildPieces(K: KitchenRT, env: ModuleEnv): void {
   K.frontPieces = K.islandBack ? [K.islandBack] : [];
   K.carcassPieces = [];
+  K.plinthPieces = [];
   for (const { p, g } of K.pieces) {
     for (const c of [...g.children]) {
       disposeGeometries(c);
@@ -695,7 +754,47 @@ export function rebuildPieces(K: KitchenRT, env: Pick<KitchenEnv, "mats" | "fron
     const made = fillPiece(g, p, env, K.plan);
     K.frontPieces.push(...made.front);
     K.carcassPieces.push(...made.carcass);
+    K.plinthPieces.push(...made.plinth);
   }
+}
+
+/**
+ * Replace the fillers / end panels of some runs with the ones `plan` lists (cabinet list edits). Returns the old
+ * groups (still in the scene — the caller animates them out and calls disposePiece) and the new ones.
+ */
+export function replacePieces(K: KitchenRT, env: ModuleEnv, plan: KitchenPlan, runs: Set<RunId>): { removed: THREE.Group[]; added: THREE.Group[] } {
+  const removed: THREE.Group[] = [];
+  const keep: { p: PlanPiece; g: THREE.Group }[] = [];
+  for (const it of K.pieces) {
+    if (runs.has(it.p.run)) removed.push(it.g);
+    else keep.push(it);
+  }
+  const gone = new Set<THREE.Object3D>();
+  for (const g of removed) g.traverse((o) => gone.add(o));
+  K.frontPieces = K.frontPieces.filter((m) => !gone.has(m));
+  K.carcassPieces = K.carcassPieces.filter((m) => !gone.has(m));
+  K.plinthPieces = K.plinthPieces.filter((m) => !gone.has(m));
+  K.pieces = keep;
+  const added: THREE.Group[] = [];
+  for (const p of plan.pieces) {
+    if (!runs.has(p.run)) continue;
+    const run = K.runs.get(p.run);
+    if (!run) continue;
+    const g = new THREE.Group();
+    const made = fillPiece(g, p, env, plan);
+    K.frontPieces.push(...made.front);
+    K.carcassPieces.push(...made.carcass);
+    K.plinthPieces.push(...made.plinth);
+    K.pieces.push({ p, g });
+    run.group.add(g);
+    added.push(g);
+  }
+  return { removed, added };
+}
+
+export function disposePiece(g: THREE.Group): void {
+  disposeGeometries(g);
+  g.parent?.remove(g);
 }
 
 /** rebuild the worktop of a run after a sink was added/removed */

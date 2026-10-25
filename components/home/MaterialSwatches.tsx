@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import type { MaterialDef } from "@/lib/studio/catalog";
-import { isSolid, paintSwatch, type SwatchTexture } from "./swatchTexture";
+import { isSolid, paintSwatches, type SwatchJob, type SwatchTexture } from "./swatchTexture";
 import s from "./home.module.css";
 
 export interface SwatchItem {
@@ -48,40 +48,31 @@ export function MaterialSwatches({ fronts, tops }: { fronts: SwatchItem[]; tops:
   const urlsRef = useRef<string[]>([]);
   const [tex, setTex] = useState<Record<string, SwatchTexture>>({});
 
-  // paint the procedural textures shortly before the section scrolls in, one per idle slot
+  // paint the procedural textures shortly before the section scrolls in — in a worker, so scrolling towards
+  // the section never waits on canvas painting (main-thread fallback: one swatch per idle slot)
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
     let cancelled = false;
-    const queue = [...fronts, ...tops].filter((m) => !isSolid(m.render));
+    let stopPainting: (() => void) | null = null;
     const big = window.matchMedia("(min-width: 1024px) and (pointer: fine)").matches;
     const size = big ? 1024 : 640;
-    type IdleWindow = Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
-    const w = window as IdleWindow;
-    const later = (fn: () => void) => (w.requestIdleCallback ? w.requestIdleCallback(fn, { timeout: 600 }) : window.setTimeout(fn, 30));
-
-    const next = () => {
-      if (cancelled) return;
-      const m = queue.shift();
-      if (!m) return;
-      void paintSwatch(`${m.group}-${m.id}`, m.render, { size, horizontal: m.group === "top" }).then((t) => {
-        if (!t) return later(next);
-        if (cancelled) {
-          URL.revokeObjectURL(t.url);
-          return;
-        }
-        urlsRef.current.push(t.url);
-        setTex((prev) => ({ ...prev, [`${m.group}-${m.id}`]: t }));
-        later(next);
-      });
-    };
+    const jobs: SwatchJob[] = [...fronts, ...tops]
+      .filter((m) => !isSolid(m.render))
+      .map((m) => ({ id: `${m.group}-${m.id}`, render: m.render, size, horizontal: m.group === "top" }));
 
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          io.disconnect();
-          later(next);
-        }
+        if (!entries.some((e) => e.isIntersecting)) return;
+        io.disconnect();
+        stopPainting = paintSwatches(jobs, (id, t) => {
+          if (cancelled) {
+            URL.revokeObjectURL(t.url);
+            return;
+          }
+          urlsRef.current.push(t.url);
+          setTex((prev) => ({ ...prev, [id]: t }));
+        });
       },
       { rootMargin: "900px 0px" },
     );
@@ -91,6 +82,7 @@ export function MaterialSwatches({ fronts, tops }: { fronts: SwatchItem[]; tops:
     return () => {
       cancelled = true;
       io.disconnect();
+      stopPainting?.();
       urls.forEach((u) => URL.revokeObjectURL(u));
       urls.length = 0;
     };

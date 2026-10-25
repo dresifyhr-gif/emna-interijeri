@@ -26,11 +26,43 @@ export function Header() {
   const toggleRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 24);
+    // setState only when the flag flips, not on every scroll event
+    let last: boolean | null = null;
+    const onScroll = () => {
+      const v = window.scrollY > 24;
+      if (v === last) return;
+      last = v;
+      setScrolled(v);
+    };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  // Over sections marked data-header="solid" (the homepage's live 3D hero) the bar is a near-opaque fill
+  // without backdrop-filter: blurring a canvas that changes every frame costs a full blur pass per frame.
+  const [solid, setSolid] = useState(false);
+  useEffect(() => {
+    const targets = document.querySelectorAll<HTMLElement>('[data-header="solid"]');
+    if (!targets.length || typeof IntersectionObserver === "undefined") return;
+    const under = new Set<Element>();
+    // a thin band at the top of the viewport, where the bar sits
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) under.add(e.target);
+          else under.delete(e.target);
+        }
+        setSolid(under.size > 0);
+      },
+      { rootMargin: "0px 0px -92% 0px" },
+    );
+    targets.forEach((t) => io.observe(t));
+    return () => {
+      io.disconnect();
+      setSolid(false);
+    };
+  }, [pathname]);
 
   // close the mobile menu on navigation (adjusting state during render, not in an effect)
   const [menuPath, setMenuPath] = useState(pathname);
@@ -105,8 +137,12 @@ export function Header() {
       <header
         ref={headerRef}
         onClick={onHeaderClick}
-        className={`fixed inset-x-0 top-0 z-50 transition-all duration-500 ease-premium ${
-          scrolled || open ? "glass border-x-0 border-t-0" : "border-b border-transparent"
+        className={`fixed inset-x-0 top-0 z-50 transition-[background-color,border-color,backdrop-filter,-webkit-backdrop-filter] duration-500 ease-premium ${
+          open || (scrolled && !solid)
+            ? "glass border-x-0 border-t-0"
+            : scrolled
+              ? "border-b border-white/10 bg-ink/[0.88]"
+              : "border-b border-transparent"
         }`}
       >
         <div className="shell flex h-[72px] items-center justify-between gap-6">

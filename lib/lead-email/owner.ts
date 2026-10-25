@@ -37,14 +37,15 @@ export function ownerEmail(d: LeadEmailData): RenderedEmail {
   const summary = (lead.summary ?? []).map(oneLine).filter(Boolean);
   const isStudio = lead.source === "studio";
 
-  const subject = `Novi upit · ${source} · ${name}`;
+  const number = d.leadNumber ? oneLine(d.leadNumber) : null;
+  const subject = `Novi upit${number ? ` ${number}` : ""} · ${source} · ${name}`;
 
   /* ---------------- header */
   const replyHref = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(`Vaš upit · ${site.name}`)}`;
   const header = `
 ${rule()}
 ${spacer(18)}
-${eyebrow(`Novi upit · ${source}`, C.accent)}
+${eyebrow(`Novi upit${number ? ` · ${number}` : ""} · ${source}`, C.accent)}
 ${spacer(14)}
 ${headline(name)}
 ${spacer(12)}
@@ -53,7 +54,11 @@ ${spacer(28)}
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
   <td class="stack" valign="top">${button(telHref(phone), `Nazovi ${phone}`, "accent")}</td>
   <td class="stack stack-gap" valign="top" style="padding-left:10px;">${button(replyHref, "Odgovori e-mailom", "ghost")}</td>
-</tr></table>`;
+</tr></table>${
+    d.adminUrl
+      ? `${spacer(14)}<div style="font-family:${FONT};font-size:13px;line-height:20px;color:${C.mut};">${link(d.adminUrl, "Otvori upit u administraciji", C.accent)}</div>`
+      : ""
+  }`;
 
   /* ---------------- studio block */
   let studio = "";
@@ -104,6 +109,7 @@ ${
     if (v) contact.push({ label, plain: v, html: esc(v) });
   }
   contact.push({ label: "Izvor", plain: source, html: esc(source) });
+  if (number) contact.push({ label: "Broj upita", plain: number, html: esc(number) });
 
   const message = lead.message?.trim()
     ? `${spacer(36)}${eyebrow("Poruka")}${spacer(14)}
@@ -139,8 +145,9 @@ ${paragraph(
 
   /* ---------------- plain text */
   const text = [
-    `NOVI UPIT · ${source.toUpperCase()}`,
+    `NOVI UPIT${number ? ` ${number}` : ""} · ${source.toUpperCase()}`,
     `Primljeno ${received}`,
+    ...(d.adminUrl ? [`U administraciji: ${d.adminUrl}`] : []),
     "",
     textRows(contact.map((c) => [c.label, c.plain])),
     "",

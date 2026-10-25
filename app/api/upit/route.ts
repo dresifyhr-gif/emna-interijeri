@@ -2,6 +2,9 @@
  * POST /api/upit — inquiries from the contact form and the 3D studio.
  * Runs on the Node.js runtime (the default; no `runtime` export so it stays compatible with Cache Components).
  * Every response body is a LeadResult (lib/lead-schema.ts).
+ *
+ * A valid inquiry is always stored in the database first (the owner sees it under /admin/upiti),
+ * then e-mailed when Resend is configured. ok:true means "we have it" — stored, e-mailed, or both.
  */
 import { leadSchema, type LeadResult } from "@/lib/lead-schema";
 import {
@@ -11,10 +14,16 @@ import {
   getLeadEmailEnv,
   isHoneypotHit,
   issueFields,
+  parseSnapshot,
   rateLimit,
   readBodyLimited,
   sendLeadEmails,
+  storeLead,
+  type StoredLead,
 } from "@/lib/lead-server";
+import { hitThrottle } from "@/lib/auth/throttle";
+import { dbErrorLabel, isDbConfigured } from "@/lib/db";
+import { markLeadNotified } from "@/lib/db/leads";
 import { site } from "@/lib/site";
 
 export const maxDuration = 30;
@@ -98,20 +107,65 @@ export async function POST(req: Request) {
     return reply({ ok: false, error: "validation", ...(fields.length ? { fields } : {}) }, 400);
   }
 
-  // 7. e-mail configured?
+  // 7. anywhere to put it? (database and/or e-mail)
+  const lead = parsed.data;
   const env = getLeadEmailEnv();
-  if (!env) return reply({ ok: false, error: "not_configured" }, 503);
+  const dbReady = isDbConfigured();
+  if (!env && !dbReady) return reply({ ok: false, error: "not_configured" }, 503);
 
-  // 8. send
+  // 7b. durable limit on valid inquiries, shared by every serverless instance (the one in step 2 is
+  //     per instance): 10 per hour per IP. Fails open — a throttle hiccup must never cost a real inquiry.
+  if (dbReady) {
+    try {
+      const hit = await hitThrottle("upit-ip", clientIp(req.headers), { limit: 10, windowSeconds: 60 * 60 });
+      if (!hit.allowed) return reply({ ok: false, error: "rate_limited" }, 429, { "retry-after": String(hit.retryAfter) });
+    } catch (err) {
+      console.warn(`[upit] ograničenje nije provjereno (${dbErrorLabel(err)})`);
+    }
+  }
+
   const requestOrigin = originOf(req.url); // null → links fall back to site.url
+  const now = new Date();
+  const hasSnapshot = lead.source === "studio" && parseSnapshot(lead.snapshot) !== null;
 
+  // 8. store — the inquiry is never lost once this succeeds
+  let stored: StoredLead | null = null;
+  if (dbReady) {
+    try {
+      stored = await storeLead(lead, { requestOrigin, now });
+    } catch (err) {
+      console.error(`[upit] spremanje u bazu nije uspjelo (${dbErrorLabel(err)})`);
+    }
+  }
+  const image = (storedImage: boolean) => (lead.source === "studio" ? { image: storedImage } : {});
+
+  // 9. e-mail (optional)
+  if (!env) {
+    if (!stored) return reply({ ok: false, error: "server" }, 500);
+    return reply({ ok: true, confirmation: false, ...image(Boolean(stored.snapshotPath)) }, 200);
+  }
+
+  const base = originOf(site.url);
+  const adminUrl = stored && base ? `${base}/admin/upiti/${stored.id}` : null;
   try {
-    const { confirmationSent } = await sendLeadEmails(parsed.data, { env, requestOrigin });
-    return reply({ ok: true, confirmation: confirmationSent }, 200);
+    const { confirmationSent } = await sendLeadEmails(lead, {
+      env,
+      requestOrigin,
+      now,
+      leadNumber: stored?.number ?? null,
+      adminUrl,
+    });
+    if (stored) {
+      await markLeadNotified(stored.id, { owner: true, confirmation: confirmationSent }).catch((err) =>
+        console.warn(`[upit] ${stored?.number}: oznaka slanja nije spremljena (${dbErrorLabel(err)})`),
+      );
+    }
+    return reply({ ok: true, confirmation: confirmationSent, ...image(hasSnapshot) }, 200);
   } catch (err) {
-    const code = err instanceof LeadSendError ? err.code : "unknown";
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[upit] slanje nije uspjelo (${code}): ${message}`);
+    const code = err instanceof LeadSendError ? err.code : err instanceof Error ? err.name : "unknown";
+    console.error(`[upit] slanje e-maila nije uspjelo (${code})${stored ? ` — upit ${stored.number} je spremljen` : ""}`);
+    // stored → the owner has it in the admin; the visitor just doesn't get a confirmation
+    if (stored) return reply({ ok: true, confirmation: false, ...image(Boolean(stored.snapshotPath)) }, 200);
     return reply({ ok: false, error: "server" }, 500);
   }
 }

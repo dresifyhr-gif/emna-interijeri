@@ -46,16 +46,36 @@ to neka potvrdi računovođa ili pravnik.
 Sve brojke su **okvirne procjene, nitko ih nije potvrdio**. Kupac ih vidi odmah na `/studio` („Okvirna cijena od … do …“),
 a isti raspon ide u e-mail vlasniku i u potvrdu kupcu.
 
-Stanje 24. 10. 2026. (provjerite u datoteci, brojke se mogu mijenjati):
+Stanje 25. 10. 2026. (provjerite u datoteci, brojke se mogu mijenjati):
 
-- [ ] **Fronte** (`fronts[].pricePerMeter`, €/m): Antracit mat 950, Bijela mat 900, Bijeli sjajni lak 1150,
-  Kašmir mat 950, Maslina mat 980, Hrast prirodni 1350, Orah 1450.
-- [ ] **Radne ploče** (`tops[].pricePerMeter`, €/m): Bijeli mramor 520, Crni kamen 450, Sivi beton 380,
-  Hrastova ploča 260, Bijeli kompakt 300.
-- [ ] **Ručke** (`handles[].pricePerMeter`, €/m): bez ručki (profil Gola) 90, metalna letvica 45, okrugli gumb 25.
-- [ ] **Elementi i mehanizmi** (`modules[].priceAdd`, € po komadu): tri ladice 220, sudoper 380, ploča za kuhanje 150,
-  perilica posuđa 90, kutni karusel 420, klapna 190, vitrina 160, otvorena niša 60, napa 120, element za ugradbeni
-  hladnjak 350, element za pećnicu 300, izvlačna smočnica 650.
+- [ ] **Fronte** (`fronts[].pricePerMeter`, €/m), 34 boje u 5 skupina:
+  - Mat lak: Antracit 950, Bijela 900, Krem 920, Kašmir 950, Pijesak 950, Svijetlosiva 930, Tamnosiva 950, Crna 980,
+    Maslina 980, Kadulja 980, Tamnozelena 990, Petrolej 990, Noćno plava 990, Terakota 990, Bordo 990.
+  - Sjajni lak: Bijeli 1150, Krem 1180, Sivi 1180, Antracit 1180, Crni 1220.
+  - Drvo i furnir: Hrast prirodni 1350, Hrast bijeljeni 1380, Hrast dimljeni 1420, Hrast crno bajcan 1450, Orah 1450,
+    Jasen 1330, Tik 1520.
+  - Kamen i beton (dekor): svijetli beton 1120, tamni beton 1120, bijeli mramor 1240, tamni kamen 1200.
+  - Metalik: Bronca 1320, Šampanjac 1320, Titan 1320.
+  - Dvobojna kuhinja: svaki dio (donji, gornji, visoki stup, otok) računa se po cijeni svoje fronte.
+- [ ] **Radne ploče** (`tops[].pricePerMeter`, €/m): Bijeli mramor 520, Calacatta mramor 690, Carrara mramor 560,
+  Nero Marquina 650, Crni kamen 450, Sivi granit 420, Bijeli kvarc 480, Sivi kvarc 500, Sivi beton 380,
+  Bijeli kompakt 300, Crni kompakt 330, Hrastova ploča 260, Orahova ploča 340, Inox 600.
+- [ ] **Ručke** (`handles[].pricePerMeter`, €/m fronti): bez ručki (profil Gola) 90, metalna letvica 45, okrugli gumb 25,
+  utorna ručka 70, otvaranje na dodir 60.
+- [ ] **Završne obrade** (`finishes`, doplate): boja ručki / profila — crna i inox 0, mesing 18 €/m fronti; sudoper —
+  inox 0, crni ili bijeli granit 140 € po sudoperu; slavina — inox 0, crna mat 60, mesing 120 € po sudoperu;
+  postolje — crno 0, u boji donjih fronti 15 €/m, inox 38 €/m; fronte aparata i boja LED svjetla bez doplate.
+- [ ] **Elementi i mehanizmi** (`modules[].priceAdd`, € po komadu):
+  - donji: tri ladice 220, dvije duboke ladice 170, četiri ladice 290, ladice s unutarnjom ladicom 310, vrata s
+    policom 0, dvoja vrata s policom 20, sudoper 380, perilica posuđa 90, izvlačni koš za smeće 240, ploča za kuhanje
+    150, ploča i pećnica ispod 260, pećnica ispod radne ploče 220, izvlačni stalak za boce 190, otvorene police 40,
+    kutni karusel 420, kutni LeMans 520, kutni Magic corner 640;
+  - gornji: gornja vrata 0, klapna 190, dvostruka klapna 290, vitrina 160, otvorena niša 60, zidna polica 40, nosač za
+    suđe 110, element za napu 120, ugradbena mikrovalna 160;
+  - visoki: hladnjak 350, pećnica u visini očiju 300, pećnica i mikrovalna 420, izvlačna smočnica 650, visoki ormar s
+    policama 80, ormar za metle i usisivač 140, perilica rublja 200.
+  - Otvoreni elementi plaćaju samo dio cijene fronte po metru (`frontShare`: otvorene police 0,45, zidna polica 0,2),
+    a „Slobodno mjesto“ i „Bez gornjeg elementa“ ne plaćaju ništa.
 - [ ] **Dodaci** (`extras`): LED 45 €/m + 150 €, dostava i montaža 70 € po metru elemenata, otok 650 € paušalno,
   zidna obloga od materijala radne ploče između ploče i gornjih elemenata (`backsplashShare: 1` = ista cijena po m²
   kao ploča), raspon ±8 % (`spread: 0.08`).
@@ -108,16 +128,32 @@ Tekst je **nacrt**. Neka ga prije objave pregleda pravnik ili savjetnik za zašt
 - [ ] `/ormari` i `/interijeri` nemaju fotografija (okvir „Fotografije realizacija uskoro“). Kad ih date, idu u
   `public/` i u podatke stranice; stock ni AI fotografije se ne koriste.
 
-## 6. Slanje upita (Resend) i varijable okruženja — `.env.example`, Vercel
+## 6. Slanje upita (Resend), baza, administracija i varijable okruženja — `.env.example`, Vercel
 
 Varijable se upisuju u Vercel (Project → Settings → Environment Variables, Production i Preview), zatim ponovna objava.
 Lokalno: kopija `.env.example` u `.env.local`.
 
+Baza i administracija (`/admin`: upiti i ponude):
+
+- [ ] `DATABASE_URL` (i `DATABASE_URL_UNPOOLED` za migracije): Neon Postgres. Postavlja ih Neon integracija u Vercelu.
+  Bez baze se upiti ne spremaju (stižu samo e-mailom) i administracija ne radi.
+- [ ] Tablice: jednom pokrenuti `npm run db:migrate` nad produkcijskom bazom (migracije su u `drizzle/`).
+- [ ] `BLOB_READ_WRITE_TOKEN`: privatni Vercel Blob za slike kuhinja iz studija i datoteke ponuda (neobavezno; bez
+  njega se upit sprema bez slike).
+- [ ] `ADMIN_SESSION_SECRET`: nasumičan niz od barem 32 znaka (potpisuje prijavu u administraciju).
+- [ ] `ADMIN_SETUP_TOKEN`: nasumičan niz od barem 16 znakova. Prvi korisnik se stvara na
+  `/admin/postavljanje?kod=<ADMIN_SETUP_TOKEN>`; čim korisnik postoji, ta stranica više ništa ne radi.
+- [ ] Ako je baza prije objave služila za probu, provjeriti da u njoj nema probnih upita i ponuda. Brojevi upita i
+  ponuda (U-2026-0001, P-2026-0001) idu redom iz tablice `counters`, pa i obrisani probni zapisi „potroše“ prve brojeve.
+
+Slanje e-mailova:
+
 - [ ] `RESEND_API_KEY`: ključ s resend.com (počinje s `re_`).
 - [ ] `LEAD_EMAIL_TO`: pretinac(i) za upite, više adresa odvojeno zarezom.
 - [ ] `LEAD_EMAIL_FROM`: pošiljatelj na domeni potvrđenoj u Resendu, npr. `EMNA Interijeri <upiti@vasa-domena.hr>`.
-- [ ] Dok sve tri nisu postavljene, forme pošteno kažu da online slanje još nije uključeno (API odgovara
-  `503 not_configured`). Nakon postavljanja poslati probni upit iz forme na `/kontakt` i iz 3D studija i provjeriti
+- [ ] Dok sve tri nisu postavljene, e-mailovi se ne šalju: upit se samo spremi u bazu i vidi se u `/admin/upiti`
+  (kupac ne dobiva potvrdu e-mailom). Tek kad nema ni baze, forme pošteno kažu da online slanje još nije uključeno
+  (API odgovara `503 not_configured`). Nakon postavljanja poslati probni upit iz forme na `/kontakt` i iz 3D studija i provjeriti
   da su stigli e-mail vlasniku (sa slikom kuhinje) i potvrda kupcu.
 - [ ] `NEXT_PUBLIC_SHOW_TODO`: samo za preview na kojem vlasnik pregledava markere. U produkciji mora biti prazno.
 

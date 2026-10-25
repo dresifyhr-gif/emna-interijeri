@@ -1,11 +1,18 @@
 /**
  * Server half of the lead (upit) pipeline, used by app/api/upit/route.ts.
- * Node.js only (pulls in "resend" and Buffer) — never import this from a client component.
+ * Node.js only (pulls in "resend", the database and Buffer) — never import this from a client component.
  *
- * Env (all three required, otherwise the API answers 503 not_configured):
- *   RESEND_API_KEY   re_…                                   (resend.com → API Keys)
- *   LEAD_EMAIL_TO    owner inbox, comma-separated for more  e.g. "upiti@emna.hr"
- *   LEAD_EMAIL_FROM  verified sender                        e.g. "EMNA Interijeri <upiti@emna.hr>"
+ * Every valid inquiry is first stored in the database (storeLead → leads table, the 3D snapshot
+ * goes to the private Blob store as leads/<id>.jpg), then e-mailed if e-mail is configured.
+ *
+ * Env:
+ *   DATABASE_URL           Neon Postgres (pooled)          — storing inquiries
+ *   BLOB_READ_WRITE_TOKEN  Vercel Blob (private store)     — 3D snapshots; optional
+ *   RESEND_API_KEY         re_…                            (resend.com → API Keys)
+ *   LEAD_EMAIL_TO          owner inbox, comma-separated     e.g. "upiti@emna.hr"
+ *   LEAD_EMAIL_FROM        verified sender                  e.g. "EMNA Interijeri <upiti@emna.hr>"
+ * The three e-mail variables are optional as a group: without them inquiries are only stored.
+ * Only when neither the database nor e-mail is available does the API answer 503 not_configured.
  */
 import { Resend } from "resend";
 import type { LeadInput } from "./lead-schema";
@@ -16,6 +23,8 @@ import { formatPrice, type LeadEmailData } from "./lead-email/shared";
 import { estimate } from "./studio/price";
 import { sanitizeConfig, studioPath } from "./studio/share";
 import { summarize } from "./studio/summary";
+import { insertLead, setLeadSnapshot } from "./db/leads";
+import { isBlobConfigured, leadSnapshotPath, putPrivateFile } from "./admin/files";
 
 /** a 3 MB snapshot data URL + the rest of the payload, with headroom */
 export const MAX_BODY_BYTES = 3_500_000;
@@ -191,6 +200,7 @@ function customerData(data: LeadEmailData): LeadEmailData {
     configUrl,
     snapshotCid: null,
     configAttached: false,
+    adminUrl: null,
   };
 }
 
@@ -208,6 +218,125 @@ function configAttachment(config: unknown): { content: string; filename: string;
     filename: "kuhinja-konfiguracija.json",
     contentType: "application/json",
   };
+}
+
+/* ================================================================== store */
+
+const MAX_PRICE_EUR = 10_000_000;
+
+function safePrice(p: LeadInput["price"]): { low: number; high: number } | null {
+  if (!p || !Number.isFinite(p.low) || !Number.isFinite(p.high)) return null;
+  const low = Math.round(Math.max(0, Math.min(p.low, p.high)));
+  const high = Math.round(Math.min(MAX_PRICE_EUR, Math.max(p.low, p.high)));
+  return high > 0 ? { low: Math.min(low, high), high } : null;
+}
+
+interface StudioRecord {
+  config: Record<string, unknown> | null;
+  configUrl: string | null;
+  summary: string[] | null;
+  price: { low: number; high: number } | null;
+}
+
+/**
+ * What we keep about a studio kitchen. The config is sanitized, and summary / price / link are
+ * rebuilt from it server-side (same code the studio runs), so the admin shows trustworthy data.
+ * If that fails (unexpected config shape), the client's own values are kept, flattened to plain text.
+ */
+export function studioRecord(lead: LeadInput, requestOrigin: string | null): StudioRecord {
+  if (lead.source !== "studio") return { config: null, configUrl: null, summary: null, price: null };
+  const clientSummary = (lead.summary ?? []).map((l) => l.replace(/[\r\n\t]+/g, " ").trim()).filter(Boolean);
+  const fallback: StudioRecord = {
+    config: null,
+    configUrl: safeConfigUrl(lead.configUrl, requestOrigin),
+    summary: clientSummary.length ? clientSummary : null,
+    price: safePrice(lead.price),
+  };
+  if (lead.config == null) return fallback;
+  try {
+    const cfg = sanitizeConfig(lead.config);
+    const base = originOf(site.url);
+    const config = JSON.parse(JSON.stringify(cfg)) as Record<string, unknown>;
+    let summary = fallback.summary;
+    let price = fallback.price;
+    let configUrl = fallback.configUrl;
+    try {
+      summary = summarize(cfg);
+    } catch {
+      /* keep the client's lines */
+    }
+    try {
+      price = safePrice(estimate(cfg)) ?? price;
+    } catch {
+      /* keep the client's range */
+    }
+    try {
+      if (base) configUrl = `${base}${studioPath(cfg)}`;
+    } catch {
+      /* keep the checked client link */
+    }
+    return { config, configUrl, summary, price };
+  } catch {
+    return fallback;
+  }
+}
+
+const opt = (v: string | undefined) => {
+  const t = v?.trim();
+  return t ? t : null;
+};
+const line = (v: string) => v.replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
+
+export interface StoredLead {
+  id: string;
+  /** "U-2026-0001" */
+  number: string;
+  /** private blob pathname of the 3D snapshot, when one was stored */
+  snapshotPath: string | null;
+}
+
+/**
+ * Saves a validated inquiry (throws when the database is unavailable — the caller decides).
+ * The snapshot upload is best effort: a failed upload never loses the inquiry itself.
+ */
+export async function storeLead(lead: LeadInput, opts: { requestOrigin: string | null; now?: Date }): Promise<StoredLead> {
+  const studio = studioRecord(lead, opts.requestOrigin);
+  const { id, number } = await insertLead(
+    {
+      source: lead.source,
+      status: "novi",
+      name: line(lead.name),
+      phone: line(lead.phone),
+      email: lead.email.trim(),
+      city: opt(lead.city && line(lead.city)),
+      interest: opt(lead.interest && line(lead.interest)),
+      timeline: opt(lead.timeline && line(lead.timeline)),
+      message: opt(lead.message),
+      config: studio.config,
+      configUrl: studio.configUrl,
+      summary: studio.summary,
+      priceLow: studio.price?.low ?? null,
+      priceHigh: studio.price?.high ?? null,
+    },
+    { at: opts.now },
+  );
+
+  let snapshotPath: string | null = null;
+  const snapshot = parseSnapshot(lead.snapshot);
+  if (snapshot && isBlobConfigured()) {
+    try {
+      const path = await putPrivateFile(
+        leadSnapshotPath(id, snapshot.contentType),
+        Buffer.from(snapshot.content, "base64"),
+        snapshot.contentType,
+      );
+      await setLeadSnapshot(id, path);
+      snapshotPath = path;
+    } catch (err) {
+      console.warn(`[upit] ${number}: 3D prikaz nije spremljen (${err instanceof Error ? err.name : "unknown"})`);
+    }
+  }
+  return { id, number, snapshotPath };
 }
 
 /* ================================================================== send */
@@ -228,20 +357,33 @@ export class LeadSendError extends Error {
  */
 export async function sendLeadEmails(
   lead: LeadInput,
-  opts: { env: LeadEmailEnv; requestOrigin: string | null; now?: Date },
+  opts: {
+    env: LeadEmailEnv;
+    requestOrigin: string | null;
+    now?: Date;
+    /** "U-2026-0001" when the inquiry was stored */
+    leadNumber?: string | null;
+    /** absolute link to the inquiry in the admin (owner e-mail only) */
+    adminUrl?: string | null;
+  },
 ): Promise<{ confirmationSent: boolean }> {
   const { env } = opts;
   const resend = new Resend(env.apiKey);
 
   const snapshot = parseSnapshot(lead.snapshot);
   const config = lead.source === "studio" ? configAttachment(lead.config) : null;
+  // the owner reads the same summary and price as the admin: rebuilt from the sanitized config (complete lines —
+  // the studio cuts each line it sends to 300 characters), the client's own values only when that is not possible
+  const studio = lead.source === "studio" ? studioRecord(lead, opts.requestOrigin) : null;
   const data: LeadEmailData = {
-    lead,
+    lead: studio?.summary ? { ...lead, summary: studio.summary } : lead,
     receivedAt: opts.now ?? new Date(),
     configUrl: safeConfigUrl(lead.configUrl, opts.requestOrigin),
-    price: formatPrice(lead.price),
+    price: formatPrice(studio?.price ?? lead.price),
     snapshotCid: snapshot ? SNAPSHOT_CID : null,
     configAttached: Boolean(config),
+    leadNumber: opts.leadNumber ?? null,
+    adminUrl: opts.adminUrl ?? null,
   };
 
   const image = snapshot
@@ -272,8 +414,8 @@ export async function sendLeadEmails(
   }
   if (sent.error) throw new LeadSendError(sent.error.name, sent.error.message);
 
-  const confirmation = customerEmail(customerData(data));
   try {
+    const confirmation = customerEmail(customerData(data));
     const res = await resend.emails.send({
       from: env.from,
       to: customerAddress,
@@ -284,11 +426,11 @@ export async function sendLeadEmails(
       tags: [...tags, { name: "kind", value: "confirmation" }],
     });
     if (res.error) {
-      console.warn(`[upit] potvrda kupcu nije poslana: ${res.error.name} — ${res.error.message}`);
+      console.warn(`[upit] potvrda kupcu nije poslana (${res.error.name})`);
       return { confirmationSent: false };
     }
   } catch (err) {
-    console.warn(`[upit] potvrda kupcu nije poslana: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[upit] potvrda kupcu nije poslana (${err instanceof Error ? err.name : "unknown"})`);
     return { confirmationSent: false };
   }
   return { confirmationSent: true };

@@ -2,12 +2,13 @@
  * Static copy and small helpers for the studio UI.
  * Materials, prices and module types come from lib/studio/catalog.ts — this file only holds UI wording.
  */
-import type { HandleStyle, Layout, WallId } from "@/lib/studio/types";
+import type { ListId, PlanSlot, RunId } from "@/lib/studio/plan";
+import type { FrontZone, Layout, WallId } from "@/lib/studio/types";
 
 /** the site-wide premium ease, as a framer-motion bezier */
 export const EASE = [0.2, 0.8, 0.2, 1] as const;
 
-export type StepId = "oblik" | "zidovi" | "fronte" | "ploca" | "dodaci" | "posalji";
+export type StepId = "oblik" | "zidovi" | "elementi" | "boje" | "ploca" | "posalji";
 
 export interface StepDef {
   id: StepId;
@@ -28,19 +29,26 @@ export const STEPS: StepDef[] = [
     title: "Zidovi",
     lead: "Upišite duljinu svakog zida u centimetrima. Točne mjere uzimamo na izmjeri.",
   },
-  { id: "fronte", short: "Fronte", title: "Fronte", lead: "Materijal vrata i ladica te način na koji se otvaraju." },
-  { id: "ploca", short: "Ploča", title: "Radna ploča", lead: "Površina za pripremu, kuhanje i serviranje." },
-  { id: "dodaci", short: "Dodaci", title: "Dodaci", lead: "Elementi za aparate u visini očiju, rasvjeta i otok." },
+  {
+    id: "elementi",
+    short: "Elementi",
+    title: "Elementi",
+    lead: "Svaki element možete zamijeniti, suziti, pomaknuti, dodati ili ukloniti. Odaberite ga na popisu ili kliknite u 3D prikazu.",
+    leadNoImage: "Svaki element možete zamijeniti, suziti, pomaknuti, dodati ili ukloniti. Odaberite ga na popisu.",
+  },
+  { id: "boje", short: "Boje", title: "Boje fronti", lead: "Materijal vrata i ladica. Kuhinja može biti jednobojna ili dvobojna." },
+  { id: "ploca", short: "Ploča", title: "Ploča i detalji", lead: "Radna ploča, ručke, sudoper i slavina, aparati, postolje, rasvjeta." },
   {
     id: "posalji",
     short: "Pošalji",
     title: "Pošalji upit",
-    lead: "Uz upit nam stižu mjere, oblik, materijali, slika i link koji otvara upravo ovu kuhinju.",
-    leadNoImage: "Uz upit nam stižu mjere, oblik, materijali i link koji otvara upravo ovu kuhinju.",
+    lead: "Uz upit nam stižu mjere, oblik, elementi, materijali, slika i link koji otvara upravo ovu kuhinju.",
+    leadNoImage: "Uz upit nam stižu mjere, oblik, elementi, materijali i link koji otvara upravo ovu kuhinju.",
   },
 ];
 
 export const LAST_STEP = STEPS.length - 1;
+export const stepIndex = (id: StepId) => STEPS.findIndex((s) => s.id === id);
 
 export const LAYOUTS: { id: Layout; name: string; desc: string }[] = [
   { id: "ravna", name: "Ravna", desc: "Uz jedan zid" },
@@ -51,32 +59,86 @@ export const LAYOUTS: { id: Layout; name: string; desc: string }[] = [
 
 export const WALL_HINT: Record<WallId, string> = { a: "stražnji", b: "lijevi", c: "desni" };
 
-export const HANDLE_OPTIONS: { id: HandleStyle; name: string; note: string }[] = [
-  {
-    id: "bez",
-    name: "Bez ručki",
-    note: "Profil Gola: fronte se otvaraju hvatom za udubljeni rub, linije ostaju čiste.",
-  },
-  { id: "letvica", name: "Letvica", note: "Tanka metalna letvica na svakoj fronti." },
-  { id: "gumb", name: "Gumb", note: "Mali okrugli gumb, klasičan i nenametljiv." },
-];
+/** shown when a new shape put the clicked-element edits back to their defaults */
+export const LAYOUT_RESET_NOTE =
+  "Novi oblik ima druge zidove i kutove, pa su elementi koje ste sami uredili vraćeni na zadani raspored.";
 
-/** shown (and announced) when a shape or measurement change puts clicked-element edits back to their defaults */
-export const EDITS_RESET_NOTE =
-  "Elementi su ponovno raspoređeni, pa su oni koje ste sami mijenjali vraćeni na zadanu izvedbu. Kliknite element u 3D prikazu ako ga želite ponovno promijeniti.";
+/** UI names of the catalogue's front families (tabs in the colour library) */
+export const FRONT_FAMILY_TAB: Record<string, string> = {
+  mat: "Mat lakovi",
+  sjaj: "Sjajni lakovi",
+  drvo: "Drvo",
+  kamen: "Kamen i beton",
+  metal: "Metalik",
+};
+
+export const FRONT_ZONE_NAME: Record<FrontZone, string> = {
+  base: "Donji",
+  upper: "Gornji",
+  tall: "Visoki",
+  island: "Otok",
+};
+export const FRONT_ZONE_LONG: Record<FrontZone, string> = {
+  base: "donji elementi",
+  upper: "gornji elementi",
+  tall: "visoki stup",
+  island: "otok",
+};
 
 export const TIMELINES = ["Što prije", "1–3 mjeseca", "3–6 mjeseci", "Samo istražujem"] as const;
 export type Timeline = (typeof TIMELINES)[number];
 
+/* ------------------------------------------------------------------ runs and rows */
 
-/** "Zid A · gornji" — a short, friendly name for a plan slot id */
-export function slotLabel(id: string): string {
-  const m = /^([abc])-(base|upper)-\d+$/.exec(id);
-  if (m) return `Zid ${m[1].toUpperCase()} · ${m[2] === "base" ? "donji" : "gornji"}`;
-  if (/^tall-/.test(id)) return "Visoki stup";
-  if (/^isl-/.test(id)) return "Otok";
-  return "Element";
+/** "Zid A" / "Otok" */
+export const runName = (run: RunId) => (run === "isl" ? "Otok" : `Zid ${run.toUpperCase()}`);
+
+/** a row of cabinets as the UI shows it: one zone of one run (corners belong to wall A's base / upper rows) */
+export type RowZone = "base" | "upper" | "tall" | "island";
+
+export const ROW_NAME: Record<RowZone, string> = {
+  upper: "Gornji elementi",
+  base: "Donji elementi",
+  tall: "Visoki stup",
+  island: "Elementi otoka",
+};
+const ROW_SHORT: Record<RowZone, string> = { upper: "gornji", base: "donji", tall: "visoki stup", island: "" };
+
+/**
+ * The island's run-local x runs right → left as seen from the room (its fronts face wall A), so the UI mirrors it:
+ * everywhere in the studio "left" is the left of the drawing, which matches the default 3D view.
+ */
+export const isFlipped = (run: RunId) => run === "isl";
+
+/** the slots of one row, in on-screen order (left → right as drawn) */
+export function rowSlots(slots: PlanSlot[], run: RunId, zone: RowZone): PlanSlot[] {
+  const out = slots.filter((s) => s.run === run && s.zone === zone).sort((p, q) => p.x - q.x);
+  return isFlipped(run) ? out.reverse() : out;
 }
+
+/** the row a slot belongs to */
+export const rowOf = (s: PlanSlot): { run: RunId; zone: RowZone } => ({ run: s.run, zone: s.zone });
+
+/** "Zid A · donji" / "Visoki stup" / "Otok" */
+export function slotPlace(s: PlanSlot): string {
+  if (s.zone === "tall") return "Visoki stup";
+  if (s.zone === "island") return "Otok";
+  return `${runName(s.run)} · ${ROW_SHORT[s.zone]}`;
+}
+
+/** wording that tells which way "left" is for a run */
+export function sideHint(run: RunId): string {
+  return run === "isl" ? "Lijevo i desno: gledano iz prostorije, prema zidu A." : `Lijevo i desno: gledano prema zidu ${run.toUpperCase()}.`;
+}
+
+/** the list a reset of this slot's run should clear (resetRun arguments) */
+export function resetTarget(s: PlanSlot): { run: WallId | "isl" | "tall"; zone?: "base" | "upper" } {
+  if (s.zone === "tall") return { run: "tall" };
+  if (s.zone === "island") return { run: "isl" };
+  return { run: s.run as WallId, zone: s.zone === "upper" ? "upper" : "base" };
+}
+
+export const listOfSlot = (s: PlanSlot): ListId | null => s.list?.id ?? null;
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 

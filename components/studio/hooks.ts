@@ -23,6 +23,23 @@ export function useMediaQuery(query: string): boolean {
 
 const noop = () => () => {};
 
+/** the window's inner size, re-read on resize (0 × 0 on the server) */
+let lastViewport = { w: 0, h: 0 };
+function readViewport() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (w !== lastViewport.w || h !== lastViewport.h) lastViewport = { w, h };
+  return lastViewport;
+}
+const SERVER_VIEWPORT = { w: 0, h: 0 };
+function subscribeResize(cb: () => void) {
+  window.addEventListener("resize", cb);
+  return () => window.removeEventListener("resize", cb);
+}
+export function useViewport(): { w: number; h: number } {
+  return useSyncExternalStore(subscribeResize, readViewport, () => SERVER_VIEWPORT);
+}
+
 /** window.location.origin on the client, the configured site URL on the server */
 export function useOrigin(): string {
   return useSyncExternalStore(

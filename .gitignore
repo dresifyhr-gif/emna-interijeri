@@ -25,3 +25,9 @@ yarn-error.log*
 .vercel
 .superpowers/
 *.tsbuildinfo
+.env*
+!.env.example
+
+# agent tooling (Neon skills)
+.agents/
+skills-lock.json

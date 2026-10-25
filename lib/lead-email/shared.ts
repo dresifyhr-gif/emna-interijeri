@@ -38,6 +38,10 @@ export interface LeadEmailData {
   snapshotCid: string | null;
   /** true when the raw KitchenConfig is attached as JSON (owner mail only) */
   configAttached: boolean;
+  /** server-generated inquiry number ("U-2026-0001") once the inquiry is stored; never submitter-controlled */
+  leadNumber?: string | null;
+  /** absolute link to the inquiry in the admin — owner mail only, always null for the customer */
+  adminUrl?: string | null;
 }
 
 export interface RenderedEmail {

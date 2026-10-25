@@ -4,14 +4,15 @@ import { MaskLines } from "./MaskLines";
 import { Spotlight } from "./Spotlight";
 import { StudioLaunch } from "./StudioLaunch";
 
-const STEPS = ["Oblik", "Zidovi", "Fronte", "Radna ploča", "Dodaci", "Pošalji"];
+/** the studio's steps (components/studio/meta.ts STEPS) */
+const STEPS = ["Oblik", "Zidovi", "Elementi", "Boje", "Ploča i detalji", "Pošalji"];
 
 /** 06 · Poziv u studio — a single spotlight from above, one sentence, one button. */
 export function StudioCall() {
   return (
     <section
       aria-labelledby="studio-naslov"
-      className="relative isolate overflow-hidden bg-ink-900 py-36 text-center text-fg sm:py-44 lg:py-56"
+      className="cv-auto relative isolate overflow-hidden bg-ink-900 py-36 text-center text-fg sm:py-44 lg:py-56"
     >
       <Spotlight />
       <div className="shell relative">
@@ -27,8 +28,8 @@ export function StudioCall() {
         />
         <Reveal delay={0.2}>
           <p className="mx-auto mt-8 max-w-xl text-base leading-relaxed text-fg/70 sm:text-lg">
-            Upišite mjere svojih zidova, odaberite oblik, fronte i radnu ploču. Okvirnu cijenu vidite odmah, a upit nam
-            šaljete s mjerama i slikom svoje kuhinje.
+            Upišite mjere svojih zidova, odaberite oblik i složite elemente, zatim boje fronti, radnu ploču i detalje.
+            Okvirnu cijenu vidite odmah, a upit nam šaljete s mjerama i slikom svoje kuhinje.
           </p>
         </Reveal>
         <Reveal delay={0.3} className="mt-11 flex justify-center">

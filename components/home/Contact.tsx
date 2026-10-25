@@ -87,7 +87,7 @@ function rows(): Row[] {
 export function Contact() {
   const list = rows();
   return (
-    <section id="kontakt" aria-labelledby="kontakt-naslov" className="scroll-mt-20 bg-paper text-ink">
+    <section id="kontakt" aria-labelledby="kontakt-naslov" className="cv-auto scroll-mt-20 bg-paper text-ink">
       <div className="shell py-28 sm:py-36 lg:py-48">
         <Reveal y={12}>
           <Eyebrow tone="paper" index="06">
