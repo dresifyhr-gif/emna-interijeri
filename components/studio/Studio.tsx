@@ -11,14 +11,18 @@
  * in the new plan; <Studio> applies it, keeps one undo step per edit and asks the engine to follow the element
  * (EngineApi.select) once the engine has the new config.
  *
- * Editing on the kitchen itself: a click on an element selects it and shows the element toolbar over it
- * (ElementToolbar — add left / right, width, replace, remove, mechanism, "Više" for the full ElementEditor in the
- * panel); a click on a dimension label opens the length editor there (DimEditor — the room's wall, or the kitchen run on
- * it, or the island); while editing (the "Elementi" step, or an element selected) "+" markers sit at every empty place
- * (GapLayer: the add picker, tall units at a run's end); a click on a wall or the floor opens its finishes
- * (SurfacePicker). Those edits say what they did in a toast with "Poništi" (Ctrl / ⌘ + Z works too). Rows of the
- * "Elementi" list light their element up in 3D. Overlays follow the view through the engine's ViewInfo (overlay.ts)
- * and never make the engine render.
+ * Editing on the kitchen itself — a click does the obvious thing: an element selects it and shows the element toolbar
+ * over it (ElementToolbar — add left / right, width, replace, remove, mechanism, "Više" for the full ElementEditor in the
+ * panel); a dimension label opens the length editor there (DimEditor — the room's wall, or the kitchen run on it, or the
+ * island); a "+" (GapLayer: in every step, quiet outside "Elementi"; on a full row one between two elements, where a
+ * neighbour gets narrower — only in "Elementi" / while editing) opens the add picker (AddPicker, tall units at a run's
+ * end); a wall or the floor, when nothing else is hit and nothing was open, opens its finishes (SurfacePicker).
+ * Those edits say what they did in a toast with "Poništi" (Ctrl / ⌘ + Z works too). Rows of the "Elementi" list light
+ * their element up in 3D. Overlays follow the view through the engine's ViewInfo (overlay.ts) and never make the engine
+ * render.
+ *
+ * "Jednostavno / Napredno" (the step header; remembered, hooks.ts StudioMode) leaves the finer controls out for
+ * customers by default. A first visit gets three skippable coach marks (CoachMarks).
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
@@ -34,15 +38,16 @@ import { DimEditor, type DimTargetState } from "./DimEditor";
 import { GapLayer } from "./GapLayer";
 import { ElementEditor, type ApplyOptions, type EditNote } from "./ElementEditor";
 import { ElementToolbar, SelectionLeader } from "./ElementToolbar";
-import { markEditHintSeen, useEditHintSeen, useMediaQuery, useOrigin, useViewport } from "./hooks";
-import { CursorIcon, OrbitIcon } from "./icons";
+import { CoachMarks } from "./CoachMarks";
+import { readCoach, setCoach, setStudioMode, useCoach, useMediaQuery, useOrigin, useStudioMode, useViewport } from "./hooks";
+import { OrbitIcon } from "./icons";
 import { fitToPlanner } from "./limits";
 import { EASE, LAST_STEP, STEPS, clamp, eur, islandWord, resetTarget, runName, stepIndex } from "./meta";
 import { isTyping, type Insets } from "./overlay";
 import { DesktopPanel, MobileSheet, MobileSummary, PANEL_GAP, PANEL_W } from "./Panel";
+import { Segmented } from "./controls";
 import { STEP_PANEL_ID, stepTabId } from "./StepNav";
 import { StudioLoader } from "./StudioLoader";
-import { fullKitchenWalls } from "./room";
 import { leadSnapshot, studioSnapshot } from "./snapshot";
 import s from "./studio.module.css";
 import { SurfacePicker, type SurfaceTarget } from "./SurfacePicker";
@@ -192,7 +197,10 @@ export function Studio() {
   const selKey = selSlot?.id ?? null;
   // what the selected element can do (every option planned) — shared by the toolbar and the editor
   const selInfo = useMemo(() => (selKey ? slotEditInfo(cfg, selKey) : null), [cfg, selKey]);
-  const editHintSeen = useEditHintSeen();
+  const coach = useCoach();
+  const studioMode = useStudioMode();
+  const advanced = studioMode === "advanced";
+  const touch = useMediaQuery("(hover: none)");
 
   useEffect(() => {
     selRef.current = selSlot ? selSlot.id : null;
@@ -220,7 +228,8 @@ export function Studio() {
       openedFrom.current = "canvas";
       setEditorFocus(0);
       setNote(null);
-      markEditHintSeen();
+      // the first coach mark ("Kliknite element") is done
+      if (readCoach() === "0") setCoach("1");
       const run = runOfSlot(m.id, slotsRef.current);
       if (run) setRunTab(run);
       const name = moduleDef(m.zone, m.type)?.name ?? "element";
@@ -231,7 +240,7 @@ export function Studio() {
 
   /** a dimension label in 3D was clicked: the length editor opens there */
   const handleDimLabel = useCallback((target: DimLabelTarget, rect: ScreenRect) => {
-    markEditHintSeen();
+    if (readCoach() === "2") setCoach("done");
     setHintsGone(true);
     const a = document.activeElement;
     dimOpener.current = a instanceof HTMLElement && a !== document.body ? a : null;
@@ -691,6 +700,11 @@ export function Studio() {
     if (back?.isConnected) back.focus({ preventScroll: true });
   }, []);
 
+  /** the room-wall editor's "Promijeni duljinu kuhinje": the kitchen-run editor at the same place */
+  const switchDim = useCallback((target: DimLabelTarget) => {
+    setDimEdit((d) => (d ? { target, rect: d.rect, n: performance.now() } : d));
+  }, []);
+
   /** the length editor's result: the room's wall (setWallLength / setRoomWall), the kitchen run (setKitchenExtent), the island */
   const applyDim = useCallback(
     (r: EditResult, say: string, same: boolean) => {
@@ -713,6 +727,21 @@ export function Studio() {
   );
 
   /* ---------------------------------------------------------------- "+" places and room surfaces */
+
+  /**
+   * a "+" was pressed (or its picker closed): the picker takes over from a selected element's toolbar and an open
+   * finishes popover; the second coach mark ("Plus dodaje novi element") is done
+   */
+  const openGap = useCallback(
+    (id: string | null) => {
+      setGapOpen(id);
+      if (!id) return;
+      setSurface(null);
+      if (selRef.current) closeEditor();
+      if (readCoach() === "1") setCoach("2");
+    },
+    [closeEditor],
+  );
 
   const insertAtGapDone = useCallback(
     (r: EditResult, say: string) => {
@@ -821,6 +850,7 @@ export function Studio() {
     setMood,
     compact: !desktop,
     engine: !failed,
+    advanced,
   };
 
   const st = STEPS[step];
@@ -835,9 +865,12 @@ export function Studio() {
           animate={{ opacity: 1, x: 0, transition: { duration: reduce ? 0 : 0.55, ease: EASE } }}
           exit={{ opacity: 0, x: reduce ? 0 : dir * -18, transition: { duration: reduce ? 0 : 0.2, ease: EASE } }}
         >
-          <p className="eyebrow tabular-nums text-mut">
-            Korak {String(step + 1).padStart(2, "0")} <span className="text-mut/50">/ {String(STEPS.length).padStart(2, "0")}</span>
-          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="eyebrow tabular-nums text-mut">
+              Korak {String(step + 1).padStart(2, "0")} <span className="text-mut/50">/ {String(STEPS.length).padStart(2, "0")}</span>
+            </p>
+            {st.id !== "posalji" && <ModeSwitch advanced={advanced} compact={!desktop} />}
+          </div>
           <h2
             ref={headingRef}
             tabIndex={-1}
@@ -925,11 +958,13 @@ export function Studio() {
   // the element toolbar: over the element (desktop) / docked above the sheet (phone, not while the editor fills it)
   const toolbarOn = Boolean(overlays && selInfo);
   const toolbarHidden = !desktop && (editorOpen || summaryOpen || Boolean(dimEdit) || Boolean(gapOpen));
-  // "+" markers while editing: the "Elementi" step, or an element selected (not behind the phone's editor or the summary)
-  const gapsOn = Boolean(overlays && (stepId === "elementi" || selSlot || gapOpen) && !dimEdit && !summaryOpen && !(editorOpen && !desktop));
+  // "+" markers in every step (not behind the phone's editor, the summary or the length editor): full while editing (the
+  // "Elementi" step, an element selected, a picker open), quiet otherwise
+  const gapsOn = Boolean(overlays && !dimEdit && !summaryOpen && !(editorOpen && !desktop));
+  const gapsQuiet = stepId !== "elementi" && !selSlot && !gapOpen;
   const panelLeft = viewport.w - PANEL_GAP - PANEL_W;
-  // walls whose kitchen run takes the whole wall (phone: their floor label is left out, the room label says it)
-  const fullKitchens = fullKitchenWalls(plan).join(" ");
+  // first-visit coach marks: once the UI is in, never over an open picker / editor / the thank-you
+  const coachOn = Boolean(overlays && coach !== "done" && !dimEdit && !gapOpen && !surface && !summaryOpen && !thanks && !(editorOpen && !desktop));
   const canDemo = Boolean(selSlot && moduleDef(selSlot.zone, selSlot.type)?.demo !== false);
 
   return (
@@ -951,18 +986,17 @@ export function Studio() {
         />
 
         {/* the 3D view */}
-        <div ref={containerRef} className={`absolute inset-0 z-0 bg-[#131315] ${s.stage}`} data-kfull={desktop ? undefined : fullKitchens || undefined} />
+        <div ref={containerRef} className={`absolute inset-0 z-0 bg-[#131315] ${s.stage}`} data-coach={coachOn && coach === "2" ? "dims" : undefined} />
 
         {failed && <NoWebGL desktop={desktop} />}
 
-        {/* interaction hints: how to orbit (this visit), and how to edit on the kitchen (until first used) */}
+        {/* how to orbit (this visit, once the coach marks are done) */}
         <div
           aria-hidden="true"
           className={`pointer-events-none absolute z-10 flex gap-2 ${desktop ? "bottom-6 left-8 items-end" : "inset-x-0 top-[64px] flex-col items-center"}`}
         >
           <AnimatePresence>
-            {/* on a phone the two stacked pills would cover the wall-length labels: one at a time, editing first */}
-            {uiShown && !failed && !selSlot && !hintsGone && !toast && !dimEdit && (desktop || editHintSeen) && (
+            {uiShown && !failed && !selSlot && !hintsGone && !toast && !dimEdit && coach === "done" && (
               <motion.div
                 key="orbit"
                 initial={{ opacity: 0, y: reduce ? 0 : 8 }}
@@ -972,20 +1006,22 @@ export function Studio() {
                 <Hint icon={<OrbitIcon className="h-4 w-4" />}>{desktop ? "Povucite za okretanje · kotačić približava" : "Povucite za okretanje"}</Hint>
               </motion.div>
             )}
-            {uiShown && !failed && !selSlot && !dimEdit && !toast && !editHintSeen && (
-              <motion.div
-                key="edit"
-                initial={{ opacity: 0, y: reduce ? 0 : 8 }}
-                animate={{ opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.9, delay: reduce ? 0 : 1.1, ease: EASE } }}
-                exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.5 } }}
-              >
-                <Hint icon={<CursorIcon className="h-4 w-4" />} accent>
-                  {desktop ? "Kliknite element, kotu, zid ili pod za izmjenu" : "Dodirnite element, kotu, zid ili pod za izmjenu"}
-                </Hint>
-              </motion.div>
-            )}
           </AnimatePresence>
         </div>
+
+        {coachOn && coach !== "done" && (
+          <CoachMarks
+            key={coach}
+            apiRef={apiRef}
+            live={live}
+            state={coach}
+            docked={!desktop}
+            touch={touch}
+            insetsRef={insetsRef}
+            onNext={() => setCoach(coach === "0" ? "1" : coach === "1" ? "2" : "done")}
+            onSkip={() => setCoach("done")}
+          />
+        )}
 
         {/* desktop, with the editor open in the panel: a leader line from the element to it */}
         {overlays && desktop && editorOpen && selSlot && (
@@ -1010,8 +1046,10 @@ export function Studio() {
                 plan={plan}
                 docked={!desktop}
                 insetsRef={insetsRef}
+                subtle={gapsQuiet}
+                pulse={coachOn && coach === "1"}
                 openId={gapOpen}
-                onOpen={setGapOpen}
+                onOpen={openGap}
                 onInsert={insertAtGapDone}
               />
             </motion.div>
@@ -1069,8 +1107,10 @@ export function Studio() {
                 target={dimEdit}
                 docked={!desktop}
                 insetsRef={insetsRef}
+                advanced={advanced}
                 onApply={applyDim}
                 onCancel={cancelDim}
+                onSwitch={switchDim}
               />
             </motion.div>
           )}
@@ -1132,13 +1172,27 @@ export function Studio() {
 
 /* ------------------------------------------------------------------ pieces */
 
-function Hint({ icon, accent = false, children }: { icon: ReactNode; accent?: boolean; children: ReactNode }) {
+/** "Jednostavno / Napredno" (remembered): simple leaves the finer controls out (hooks.ts StudioMode) */
+function ModeSwitch({ advanced, compact }: { advanced: boolean; compact: boolean }) {
   return (
-    <span
-      className={`flex items-center gap-2 rounded-full border bg-ink-900/55 px-3.5 py-2 text-[11.5px] backdrop-blur-md ${
-        accent ? "border-accent/30 text-fg/85" : "border-white/10 text-fg/75"
-      }`}
-    >
+    <Segmented
+      label="Prikaz postavki"
+      size="sm"
+      // phone: 44 px targets
+      className={`shrink-0 ${compact ? "w-[196px] [&_button]:h-11" : "w-[188px]"}`}
+      options={[
+        { id: "simple" as const, label: "Jednostavno", aria: "Jednostavno: samo glavne postavke" },
+        { id: "advanced" as const, label: "Napredno", aria: "Napredno: sve postavke" },
+      ]}
+      value={advanced ? "advanced" : "simple"}
+      onChange={setStudioMode}
+    />
+  );
+}
+
+function Hint({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-2 rounded-full border border-white/10 bg-ink-900/55 px-3.5 py-2 text-[11.5px] text-fg/75 backdrop-blur-md">
       <span className="text-accent">{icon}</span>
       {children}
     </span>

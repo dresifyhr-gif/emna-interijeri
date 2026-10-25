@@ -90,8 +90,11 @@ export class Materials {
   private carcasses = new Map<string, THREE.MeshStandardMaterial>();
   private textures: THREE.Texture[] = [];
   private highlights = new Map<THREE.Material, THREE.Material>();
+  private surfaceHighlights = new Map<THREE.Material, THREE.Material>();
   /** shared uniform for all highlight variants (accent rim strength) */
   readonly hl = { value: new THREE.Color(0, 0, 0) };
+  /** shared uniform of the room surfaces' hover tint (much fainter than a cabinet's rim) */
+  readonly hlSurface = { value: new THREE.Color(0, 0, 0) };
 
   readonly interior: THREE.MeshStandardMaterial;
   readonly drawer: THREE.MeshStandardMaterial;
@@ -437,6 +440,35 @@ export class Materials {
   }
 
   /**
+   * a copy of a room surface material (a wall) with a very light accent tint, strongest at grazing angles (shared
+   * uniform `hlSurface`): a hovered wall reads as clickable without turning beige
+   */
+  surfaceHighlight(m: THREE.Material): THREE.Material {
+    let h = this.surfaceHighlights.get(m);
+    if (h) return h;
+    if (!(m instanceof THREE.MeshStandardMaterial) || m.transparent) return m;
+    const c = m.clone();
+    const u = this.hlSurface;
+    c.onBeforeCompile = (shader) => {
+      shader.uniforms.uHlS = u;
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\nuniform vec3 uHlS;")
+        .replace(
+          "#include <emissivemap_fragment>",
+          `#include <emissivemap_fragment>
+          {
+            float hlF = pow(1.0 - saturate(abs(dot(normalize(normal), normalize(vViewPosition)))), 3.0);
+            totalEmissiveRadiance += uHlS * (0.025 + 0.12 * hlF);
+          }`,
+        );
+    };
+    c.customProgramCacheKey = () => "emna-hl-surface";
+    h = c;
+    this.surfaceHighlights.set(m, h);
+    return h;
+  }
+
+  /**
    * Hardware materials are mutated in place by setFinish; their highlight clones copied the old values.
    * Called after a finish change so a highlighted handle shows the new colour too.
    */
@@ -458,6 +490,7 @@ export class Materials {
     for (const m of this.wallMats.values()) all.add(m);
     for (const m of this.carcasses.values()) all.add(m);
     for (const m of this.highlights.values()) all.add(m);
+    for (const m of this.surfaceHighlights.values()) all.add(m);
     for (const v of Object.values(this)) if (v instanceof THREE.Material) all.add(v);
     for (const m of all) m.dispose();
     for (const t of this.textures) t.dispose();
@@ -467,6 +500,7 @@ export class Materials {
     this.wallMats.clear();
     this.carcasses.clear();
     this.highlights.clear();
+    this.surfaceHighlights.clear();
     this.textures = [];
   }
 }

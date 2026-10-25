@@ -641,15 +641,18 @@
     0 0 0 4px rgba(201, 185, 154, 0.8);
 }
 
-/*
- * phone: a kitchen run that takes its whole wall says the same as the room label above it, and the floor labels of an
- * L / U kitchen crowd each other — those are left out (<Studio> lists the walls in data-kfull); a kitchen shorter than
- * its wall keeps its label
- */
-.stage[data-kfull~="a"] :global(.emna-studio-dim.emna-studio-dim--run[aria-label*="uz zid A,"]),
-.stage[data-kfull~="b"] :global(.emna-studio-dim.emna-studio-dim--run[aria-label*="uz zid B,"]),
-.stage[data-kfull~="c"] :global(.emna-studio-dim.emna-studio-dim--run[aria-label*="uz zid C,"]) {
-  display: none;
+/* the first-visit coach mark points at the labels: they glow once */
+.stage[data-coach="dims"] :global(.emna-studio-dim[role="button"]) {
+  animation: coachGlow 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) 2;
+}
+@keyframes coachGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(201, 185, 154, 0);
+  }
+  45% {
+    box-shadow: 0 0 0 7px rgba(201, 185, 154, 0.28);
+  }
 }
 
 /* ---------------------------------------------------------------- "+" markers at the empty places */
@@ -706,6 +709,8 @@
   transition:
     opacity 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
     transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
     background-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
     color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
     box-shadow 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -717,6 +722,41 @@
 .gap[data-on] .gapDot {
   opacity: 1;
   transform: none;
+}
+/* outside "Elementi" (nothing selected): small and quiet — full on hover / focus */
+.gap[data-subtle] .gapDot {
+  width: 22px;
+  height: 22px;
+  border-color: rgba(201, 185, 154, 0.5);
+  background: rgba(17, 17, 19, 0.6);
+  box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.8);
+}
+.gap[data-subtle][data-docked] .gapDot {
+  width: 28px;
+  height: 28px;
+}
+.gap[data-subtle][data-on] .gapDot {
+  opacity: 0.85;
+}
+.gap[data-subtle] .gapDot svg {
+  width: 14px;
+  height: 14px;
+}
+.gap[data-subtle]:focus-visible .gapDot {
+  width: 26px;
+  height: 26px;
+  opacity: 1;
+}
+@media (hover: hover) {
+  .gap[data-subtle]:hover .gapDot {
+    width: 26px;
+    height: 26px;
+    opacity: 1;
+  }
+}
+/* the first-visit coach mark points at them */
+.gapLayer[data-pulse] .gap[data-on] .gapDot {
+  animation: coachGlow 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) 2;
 }
 @media (hover: hover) {
   .gap:hover .gapDot {
@@ -761,7 +801,9 @@
   opacity: 1;
   transform: translate(-50%, 0);
 }
-.gap[data-open] .gapTip {
+.gap[data-open] .gapTip,
+.gap[data-on][data-open]:hover .gapTip,
+.gap[data-on][data-open]:focus-visible .gapTip {
   opacity: 0;
 }
 @media (hover: none) {
@@ -776,15 +818,16 @@
   left: 0;
   top: 0;
   z-index: 2;
-  width: min(352px, calc(100vw - 16px));
+  width: min(360px, calc(100vw - 16px));
   pointer-events: auto;
   will-change: transform;
 }
+/* phone: a sheet of its own in front of the step panel (the 3D view with its "+" stays in sight above it) */
 .gapPop[data-docked] {
   left: 8px;
   right: 8px;
   top: auto;
-  bottom: calc(var(--studio-inset-bottom, 0px) + 10px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   width: auto;
   will-change: auto;
 }
@@ -805,7 +848,54 @@
   animation-name: popIn;
 }
 .gapPop[data-docked] .gapCard {
-  max-height: calc(100vh - var(--studio-inset-bottom, 0px) - var(--studio-inset-top, 56px) - 28px);
+  max-height: min(64svh, calc(100svh - var(--studio-inset-top, 56px) - 96px));
+}
+
+/* ---------------------------------------------------------------- first-visit coach marks */
+
+.coach {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 23;
+  width: min(300px, calc(100vw - 32px));
+  pointer-events: auto;
+  will-change: transform;
+}
+/* the card animates in (the outer box carries the position) */
+.coachCard {
+  animation: popIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  position: relative;
+  border: 1px solid rgba(201, 185, 154, 0.35);
+  border-radius: 18px;
+  background: rgba(17, 17, 19, 0.9);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.9);
+}
+/* the caret points at what the mark is about (above or below the card) */
+.coachCaret {
+  position: absolute;
+  left: var(--caret-x, 50%);
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  transform: rotate(45deg);
+  border: 1px solid rgba(201, 185, 154, 0.35);
+  background: rgba(17, 17, 19, 0.96);
+  display: none;
+}
+.coach[data-side="above"] .coachCaret {
+  display: block;
+  bottom: -6.5px;
+  border-top: 0;
+  border-left: 0;
+}
+.coach[data-side="below"] .coachCaret {
+  display: block;
+  top: -6.5px;
+  border-bottom: 0;
+  border-right: 0;
 }
 
 /* ---------------------------------------------------------------- the finishes of a clicked wall / the floor */
@@ -817,11 +907,12 @@
   z-index: 26;
   width: min(300px, calc(100vw - 16px));
 }
+/* phone: in front of the step sheet, like the add picker — the 3D view (the wall being painted) stays in sight above it */
 .surf[data-docked] {
   left: 8px;
   right: 8px;
   top: auto;
-  bottom: calc(var(--studio-inset-bottom, 0px) + 10px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   width: auto;
 }
 .surf .dimCard {
@@ -838,6 +929,11 @@
   .gapDot,
   .gapTip {
     transition: none;
+  }
+  .gapLayer[data-pulse] .gap[data-on] .gapDot,
+  .stage[data-coach="dims"] :global(.emna-studio-dim[role="button"]),
+  .coachCard {
+    animation: none;
   }
   .tb,
   .tb[data-docked],

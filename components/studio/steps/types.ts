@@ -31,4 +31,9 @@ export interface StepProps {
   compact: boolean;
   /** the 3D view is running (false when WebGL is not available) */
   engine: boolean;
+  /**
+   * "Napredno" is on (hooks.ts StudioMode): every control. Off ("Jednostavno", the default) a step leaves the finer
+   * ones out — unless their value is not the default, so nothing the kitchen has is hidden.
+   */
+  advanced: boolean;
 }

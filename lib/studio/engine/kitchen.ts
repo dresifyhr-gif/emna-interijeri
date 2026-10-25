@@ -73,13 +73,22 @@ export interface KitchenRT {
   /** the ceiling hood above the island hob (null = none); rebuilt by syncIslandHood when an edit moves the hob */
   islandHood: THREE.Group | null;
   walls: WallRT[];
-  /** room labels (one per wall), the island / peninsula, then the kitchen-run labels (one per wall, on the floor) */
-  labels: (DimLabel & { wall: WallId | "isl"; kind: "room" | "kitchen" })[];
+  /**
+   * room labels (one per wall), the island / peninsula, then the kitchen-run labels (one per wall, on the floor). A
+   * kitchen-run label measures the cabinets (RunPlan.cabinets) and sits in `holder`, hidden while that equals the room's
+   * wall (the room label above already says it) — syncKitchenLabels keeps it up to date after an element edit.
+   */
+  labels: (DimLabel & { wall: WallId | "isl"; kind: "room" | "kitchen"; holder?: THREE.Group })[];
   leds: LedZone[];
   windowLight: WindowLight | null;
   timeline: Timeline;
-  /** framing box (world): cabinets only */
+  /** framing box (world): the cabinets along the room's walls (lights, fog, the sweep) */
   box: THREE.Box3;
+  /**
+   * the studio's framing box (world): every room wall over its whole length, from the floor up to the room labels, the
+   * floor in front of the cabinets out to the kitchen labels, the island with its seats
+   */
+  frame: THREE.Box3;
   /** cabinets + walls up to the ceiling (world) — the whole "set" */
   room: THREE.Box3;
   /** last time something lands — used for the hero scroll mapping */
@@ -98,6 +107,8 @@ export interface KitchenEnv {
   plinth: string;
   labels: boolean;
   tempo: "cinematic" | "quick";
+  /** the dimension labels are there from the first frame (a rebuild in the studio: they stay put while it assembles) */
+  instantLabels?: boolean;
   /** the material of each room wall (KitchenConfig.room); absent = mats.wall for every wall */
   wallMat?: (wall: WallId) => THREE.Material;
 }
@@ -312,6 +323,7 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     windowLight: null,
     timeline: tl,
     box: new THREE.Box3(),
+    frame: new THREE.Box3(),
     room: new THREE.Box3(),
     assembled: 0,
   };
@@ -657,15 +669,25 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     }
   }
 
-  // ---- labels: the room's walls (above the wall units), the island, then the kitchen runs (on the floor in front)
+  // ---- labels: the room's walls (above the wall units), the island, then the kitchen runs (on the floor in front).
+  // After the assembly — or, rebuilding in the studio (env.instantLabels), from the first frame: they stay where they
+  // were while the new kitchen assembles and the camera moves
   const labelY = Math.max(ut + 0.02, Math.min(ut + 0.2, ceil - 0.05));
+  const labelAt = (d: DimLabel, at: number) => {
+    if (env.instantLabels) {
+      tl.add(d.group, "growX", -1, 0.01);
+      tl.add(d.obj, "label", -1, 0.01, 0, E.lin, d.el);
+      return;
+    }
+    tl.add(d.group, "growX", tEnd + at, 0.8 * k);
+    tl.add(d.obj, "label", tEnd + at + 0.5 * k, 0.5 * k, 0, E.lin, d.el);
+  };
   if (env.labels) {
     for (const r of plan.runs) {
       const run = K.runs.get(r.wall)!;
       const d = dimLine(doc, run.group, 0, run.length, labelY, 0.42, r.wall.toUpperCase(), r.length, mats.dim);
       K.labels.push({ ...d, wall: r.wall, kind: "room" });
-      tl.add(d.group, "growX", tEnd + 0.1, 0.8 * k);
-      tl.add(d.obj, "label", tEnd + 0.6 * k, 0.5 * k, 0, E.lin, d.el);
+      labelAt(d, 0.1);
     }
     if (plan.island && islandGroup) {
       const I = plan.island;
@@ -676,21 +698,20 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
       const name = I.kind === "poluotok" ? "Poluotok" : "Otok";
       const d = dimLine(doc, islandGroup, 0, L, ly, ext.z0 - 0.04, name, I.length, mats.dim);
       K.labels.push({ ...d, wall: "isl", kind: "kitchen" });
-      tl.add(d.group, "growX", tEnd + 0.2, 0.8 * k);
-      tl.add(d.obj, "label", tEnd + 0.7 * k, 0.5 * k, 0, E.lin, d.el);
+      labelAt(d, 0.2);
     }
-    // the kitchen run on each wall: on the floor, in front of the plinth (its own length — the room's wall is above)
+    // the cabinets on each wall: on the floor, in front of the plinth (what they measure — the room's wall is above)
     for (const r of plan.runs) {
       const run = K.runs.get(r.wall)!;
-      // B / C: the label sits a little towards the open end, away from the corner where A's label is
-      const k0 = cm(r.kitchen.from);
-      const k1 = cm(r.kitchen.to);
-      const d = dimLine(doc, run.group, k0, k1, 0.012, BASE_FACE + 0.16, `Kuhinja ${r.wall.toUpperCase()}`, r.kitchen.to - r.kitchen.from, mats.dim);
-      if (r.wall !== "a") d.obj.position.x = (k1 - k0) * (r.wall === "b" ? 0.3 : 0.7);
+      const holder = new THREE.Group();
+      run.group.add(holder);
+      const span = kitchenLabelSpan(r);
+      const d = dimLine(doc, holder, cm(span.from), cm(span.to), 0.012, BASE_FACE + 0.16, `Kuhinja ${r.wall.toUpperCase()}`, span.to - span.from, mats.dim);
+      d.setSpan(cm(span.from), cm(span.to), span.at);
       d.el.classList.add("emna-studio-dim--run");
-      K.labels.push({ ...d, wall: r.wall, kind: "kitchen" });
-      tl.add(d.group, "growX", tEnd + 0.25, 0.8 * k);
-      tl.add(d.obj, "label", tEnd + 0.75 * k, 0.5 * k, 0, E.lin, d.el);
+      holder.visible = span.shown;
+      K.labels.push({ ...d, wall: r.wall, kind: "kitchen", holder });
+      labelAt(d, 0.25);
     }
   }
 
@@ -717,6 +738,15 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     addLocal(islandGroup, ext.x0 - endL, ext.x1 + endR, 0, y1, ext.z0 - 0.35, 0.64);
   }
   K.box = box;
+  // the studio frames the room: every wall over its whole length up to the room labels, the floor out to the kitchen
+  // labels in front of the cabinets, the island with its seats
+  const frame = box.clone();
+  const frameTop = Math.min(ceil, labelY + 0.16);
+  for (const r of plan.runs) {
+    const run = K.runs.get(r.wall)!;
+    for (const x of [0, run.length]) for (const y of [0, frameTop]) for (const z of [0, BASE_FACE + 0.3]) frame.expandByPoint(run.group.localToWorld(pt.set(x, y, z)));
+  }
+  K.frame = frame;
   const roomBox = box.clone();
   for (const w of wallExt) {
     const run = K.runs.get(w.run)!;
@@ -732,6 +762,46 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   }
 
   return K;
+}
+
+// ---------------------------------------------------------------- kitchen-run labels
+
+/**
+ * where a wall's kitchen label goes and what it says: the cabinets (RunPlan.cabinets — the kitchen without the bare
+ * floor at its open ends), shown only when that differs from the room's wall (the room label already says it).
+ * B / C: the label sits a little towards the open end, away from the corner where A's label is.
+ */
+function kitchenLabelSpan(r: RunPlan): { from: number; to: number; at: number; shown: boolean } {
+  const c = r.cabinets ?? r.kitchen;
+  const shown = Boolean(r.cabinets) && Math.abs(c.to - c.from - r.length) >= 0.5;
+  return { from: c.from, to: c.to, at: r.wall === "a" ? 0.5 : r.wall === "b" ? 0.3 : 0.7, shown };
+}
+
+/**
+ * The kitchen-run labels follow the plan (an element edit can change where the cabinets end without a rebuild): span,
+ * text and whether they show. Returns whether anything changed.
+ */
+export function syncKitchenLabels(K: KitchenRT, plan: KitchenPlan): boolean {
+  let changed = false;
+  for (const l of K.labels) {
+    if (l.kind !== "kitchen" || l.wall === "isl" || !l.holder) continue;
+    const r = plan.runs.find((x) => x.wall === l.wall);
+    if (!r) continue;
+    const span = kitchenLabelSpan(r);
+    const cmNow = Math.round(span.to - span.from);
+    if (Number(l.el.dataset.cm ?? -1) !== cmNow) {
+      l.setText(span.to - span.from);
+      changed = true;
+    }
+    const x0 = l.group.position.x;
+    l.setSpan(cm(span.from), cm(span.to), span.at);
+    if (Math.abs(l.group.position.x - x0) > 1e-4) changed = true;
+    if (l.holder.visible !== span.shown) {
+      l.holder.visible = span.shown;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 // ---------------------------------------------------------------- per-run surfaces (rebuilt by syncRunSurfaces)
@@ -968,7 +1038,11 @@ function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPl
   const cs: BoxSpec[] = [];
   const plinth: THREE.Mesh[] = [];
   if (p.zone === "upper") {
-    if (p.kind === "panel") fm.push([x0, ub - lip, 0, x1, up, UPPER_FACE]);
+    if (p.kind === "panel") {
+      // the Gola lip below the wall units stands in front of the backsplash, not in the stone
+      fm.push([x0, ub, 0, x1, up, UPPER_FACE]);
+      if (lip > 0) fm.push([x0, ub - lip, cm(DIM.backsplashT), x1, ub, UPPER_FACE]);
+    }
     else {
       fm.push([x0 + 0.0015, ub - lip, D.upperCarcass + D.frontOff, x1 - 0.0015, up, UPPER_FACE]);
       cs.push([x0 + 0.001, ub, 0.004, x1 - 0.001, ut, D.upperCarcass]);
@@ -1165,8 +1239,11 @@ function buildIslandExtras(K: KitchenRT, env: KitchenEnv, I: IslandPlan): Island
     const own = K.plan.cfg.islandSpec?.bar?.top;
     const topMat = own ? mats.top(own) : mats.top(env.topId);
     const tops: THREE.Mesh[] = [];
-    const x0 = cm(b.from);
-    const x1 = cm(b.to);
+    // a peninsula's raised bar reaching wall A stops at the face of A's backsplash (not 1.2 cm into the stone)
+    const wallEnd = I.kind === "poluotok" ? (I.side === "right" ? "left" : "right") : null;
+    const splash = b.kind === "raised" ? cm(DIM.backsplashT) : 0;
+    const x0 = cm(b.from) + (wallEnd === "left" && b.from < 0.05 ? splash : 0);
+    const x1 = cm(b.to) - (wallEnd === "right" && b.to > I.length - 0.05 ? splash : 0);
     const yTop = cm(b.height);
     if (b.kind === "raised" && b.upstand) {
       const u = b.upstand;

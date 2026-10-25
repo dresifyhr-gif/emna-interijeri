@@ -10,6 +10,9 @@
  * (Ctrl / ⌘ + Z; a slider or held − / + is one step); the ceiling is a room measure like the walls. What the last
  * change caused (a window sill lowered, heights fitted under the ceiling, elements left out) stays next to these
  * controls until the room changes again — <WallsStep> keeps that note and leaves it out of its own list.
+ *
+ * "Jednostavno" shows the ceiling and "Kuhinja do stropa" only; the top of the tall column, the worktop height and the
+ * wall-unit heights join them in "Napredno" (or while they are not the standard ones).
  */
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { heightChoices, setCeiling, setHeights, type HeightChoices } from "@/lib/studio/edit";
@@ -52,11 +55,12 @@ export function HeightsSection({
   plan,
   update,
   edit,
+  advanced,
   fresh,
   kept,
   onNotes,
   onCeilingActive,
-}: Pick<StepProps, "cfg" | "plan" | "update" | "edit"> & {
+}: Pick<StepProps, "cfg" | "plan" | "update" | "edit" | "advanced"> & {
   /** what the last change here caused (shown in a live region) */
   fresh: string[];
   /** what the heights keep saying (custom heights lowered under this ceiling) */
@@ -109,6 +113,9 @@ export function HeightsSection({
   const reasonId = blocked.length ? `${uid}-why` : undefined;
 
   const worktop = choices.worktop.find((w) => w.current)?.value ?? cur.worktop;
+  // "Jednostavno": the finer heights only while they are in use
+  const fine = advanced || custom;
+  const showWorktop = advanced || worktop !== 90;
 
   return (
     <>
@@ -122,7 +129,7 @@ export function HeightsSection({
           onActive={onCeilingActive}
         />
 
-        {hasTall && choices.mode !== "do-stropa" && (
+        {fine && hasTall && choices.mode !== "do-stropa" && (
           <TallTopField
             ceiling={cfg.ceiling}
             tall={choices.tallTop}
@@ -139,8 +146,7 @@ export function HeightsSection({
           onChange={(on) => change({ mode: on ? "do-stropa" : "standard" })}
           description={
             <>
-              {hasTall ? "Gornji elementi i visoki stup sežu" : "Gornji elementi sežu"} do stropa, a lajsna u boji fronti zatvara razmak i
-              skriva neravnine.
+              {hasTall ? "Gornji elementi i visoki stup" : "Gornji elementi"} do stropa, s lajsnom u boji fronti.
               <span className="mt-1.5 block tabular-nums text-fg/80">
                 Uz strop od {cfg.ceiling} cm: {dsHint}.
               </span>
@@ -148,58 +154,62 @@ export function HeightsSection({
           }
         />
 
-        <div>
-          <p id={`${uid}-wt`} className="mb-2.5 text-[13px] text-fg">
-            Visina radne ploče
-          </p>
-          <Segmented
-            labelledBy={`${uid}-wt`}
-            options={choices.worktop.map((w) => ({ id: String(w.value), label: `${w.value} cm`, aria: `${w.value} cm` }))}
-            value={String(worktop)}
-            onChange={(v) => change({ worktop: Number(v) }, { coalesce: "heights-worktop" })}
-            size="sm"
-          />
-          <p className="mt-2 text-[12px] leading-snug text-mut">Standardno 90 cm. Mijenja se postolje, a gornji elementi prate ploču.</p>
-        </div>
+        {showWorktop && (
+          <div>
+            <p id={`${uid}-wt`} className="mb-2.5 text-[13px] text-fg">
+              Visina radne ploče
+            </p>
+            <Segmented
+              labelledBy={`${uid}-wt`}
+              options={choices.worktop.map((w) => ({ id: String(w.value), label: `${w.value} cm`, aria: `${w.value} cm` }))}
+              value={String(worktop)}
+              onChange={(v) => change({ worktop: Number(v) }, { coalesce: "heights-worktop" })}
+              size="sm"
+            />
+            <p className="mt-2 text-[12px] leading-snug text-mut">Standardno 90 cm. Mijenja se postolje, a gornji elementi prate ploču.</p>
+          </div>
+        )}
 
-        <Disclosure
-          title="Visine po mjeri"
-          value={nowText}
-          icon={<HeightIcon className="h-5 w-5" />}
-          open={open}
-          onToggle={() => setOpen((o) => !o)}
-        >
-          <div className="space-y-5 pt-1">
-            <div>
-              <p id={`${uid}-up`} className="mb-2.5 text-[13px] text-fg">
-                Visina gornjih elemenata
-              </p>
-              <HeightChips
-                labelledBy={`${uid}-up`}
-                describedBy={reasonId}
-                options={upper}
-                value={upperValue}
-                onChange={(v) => change({ mode: "custom", upper: v }, { coalesce: "heights-upper" })}
-              />
-              {blocked.length > 0 && (
-                <p id={reasonId} className="mt-2 text-[12px] leading-snug text-mut">
-                  {andList(blocked.map((u) => u.value))} cm ne {blocked.length > 1 ? "stanu" : "stane"} ispod stropa od {cfg.ceiling} cm — za{" "}
-                  {blocked[0].value} cm strop mora biti visok barem {blocked[0].minCeiling} cm.
+        {fine && (
+          <Disclosure
+            title="Visine po mjeri"
+            value={nowText}
+            icon={<HeightIcon className="h-5 w-5" />}
+            open={open}
+            onToggle={() => setOpen((o) => !o)}
+          >
+            <div className="space-y-5 pt-1">
+              <div>
+                <p id={`${uid}-up`} className="mb-2.5 text-[13px] text-fg">
+                  Visina gornjih elemenata
                 </p>
+                <HeightChips
+                  labelledBy={`${uid}-up`}
+                  describedBy={reasonId}
+                  options={upper}
+                  value={upperValue}
+                  onChange={(v) => change({ mode: "custom", upper: v }, { coalesce: "heights-upper" })}
+                />
+                {blocked.length > 0 && (
+                  <p id={reasonId} className="mt-2 text-[12px] leading-snug text-mut">
+                    {andList(blocked.map((u) => u.value))} cm ne {blocked.length > 1 ? "stanu" : "stane"} ispod stropa od {cfg.ceiling} cm — za{" "}
+                    {blocked[0].value} cm strop mora biti visok barem {blocked[0].minCeiling} cm.
+                  </p>
+                )}
+              </div>
+              {custom && (
+                <button
+                  type="button"
+                  onClick={() => change({ mode: "standard" })}
+                  className="inline-flex min-h-10 items-center gap-2 text-[12.5px] font-medium text-mut transition-colors duration-300 hover:text-fg"
+                >
+                  <ResetIcon className="h-4 w-4" />
+                  Vrati standardne visine
+                </button>
               )}
             </div>
-            {custom && (
-              <button
-                type="button"
-                onClick={() => change({ mode: "standard" })}
-                className="inline-flex min-h-10 items-center gap-2 text-[12.5px] font-medium text-mut transition-colors duration-300 hover:text-fg"
-              >
-                <ResetIcon className="h-4 w-4" />
-                Vrati standardne visine
-              </button>
-            )}
-          </div>
-        </Disclosure>
+          </Disclosure>
+        )}
       </div>
 
       {/* what the last change caused is read out; what the heights keep saying is not, on every centimetre of the ceiling */}

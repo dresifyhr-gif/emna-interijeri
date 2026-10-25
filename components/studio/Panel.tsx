@@ -243,7 +243,10 @@ export function MobileSheet({
       aria-label="Postavke kuhinje"
       inert={!shown || covered}
       initial={false}
-      animate={shown && !covered ? { opacity: 1, y: 0 } : { opacity: 0, y: reduce ? 0 : covered ? 0 : 40 }}
+      // the hidden offset does not depend on reduced motion (initial={false}: the server renders this state, and
+      // useReducedMotion is null there — a different y on the client was a hydration mismatch); reduced motion just
+      // makes the change instant (duration 0), and the sheet is invisible while it is offset
+      animate={shown && !covered ? { opacity: 1, y: 0 } : { opacity: 0, y: covered ? 0 : 40 }}
       transition={{ duration: reduce ? 0 : covered ? 0.35 : 1, ease: EASE }}
       className={`glass absolute inset-x-0 bottom-0 z-20 rounded-t-[26px] border-b-0 shadow-[0_-30px_80px_-40px_rgba(0,0,0,.9)] ${
         shown && !covered ? "" : "pointer-events-none"

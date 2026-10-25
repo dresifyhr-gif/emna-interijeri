@@ -273,27 +273,31 @@ describe("tall columns anywhere (tallAt / tallRuns)", () => {
 });
 
 describe("gaps (the studio's \"+\")", () => {
-  it("default kitchens have no gaps on the walls; an island can grow at its ends", () => {
+  it("default kitchens have no free place on the walls (the joints of their full rows only); an island can grow at its ends", () => {
     for (const layout of LAYOUTS) {
       const gaps = planGaps(planKitchen(kitchen({ layout })));
-      assert.ok(gaps.every((g) => g.kind === "island"), `${layout}: ${gaps.map((g) => g.id).join(", ")}`);
+      assert.ok(gaps.every((g) => g.kind === "island" || g.kind === "seam"), `${layout}: ${gaps.map((g) => g.id).join(", ")}`);
     }
     assert.deepEqual(
-      planGaps(planKitchen(kitchen({ layout: "otok" }))).map((g) => g.id),
+      planGaps(planKitchen(kitchen({ layout: "otok" })))
+        .filter((g) => g.kind !== "seam")
+        .map((g) => g.id),
       ["isl:left", "isl:right"],
     );
   });
 
   it("lists bare floor, bare wall beyond the kitchen, empty space and bare wall above the worktop", () => {
     const ids = (c: KitchenConfig) => planGaps(planKitchen(c)).map((g) => g.id);
-    assert.deepEqual(ids(ownerEdited()), ["end:b-left"]);
+    // the bare floor (base cabinets or a tall unit), the bare wall above it (wall units), the 25 cm left beside the hood
+    assert.deepEqual(ids(ownerEdited()), ["end:b-left", "upend:b-left", "up:b:390"]);
     const ext = setKitchenExtent(kitchen({ ...OWNER, walls: { a: 400, b: 450, c: 220 } }), "a", { length: 300 }).cfg;
     const g = planGaps(planKitchen(ext)).find((x) => x.id === "end:a-right")!;
     assert.deepEqual([g.floor, g.outside, g.maxWidth], [0, 100, 100]);
     const free = kitchen({ layout: "ravna", walls: { a: 300, b: 220, c: 220 }, tall: false, runs: { a: [{ type: "ladice", width: 60 }, { type: "slobodno", width: 60 }, { type: "ladice", width: 60 }] } });
     assert.ok(ids(free).some((x) => /^free:a-base-/.test(x)), ids(free).join(", "));
     const bare = kitchen({ layout: "ravna", walls: { a: 300, b: 220, c: 220 }, tall: false, upperRuns: { a: [{ type: "vrata", width: 60 }] } });
-    assert.ok(ids(bare).some((x) => /^up:a:/.test(x)), ids(bare).join(", "));
+    // the edited list leaves the rest of the wall bare at its open end: the end of the wall-unit row
+    assert.ok(ids(bare).some((x) => /^up(end)?:a[:-]/.test(x)), ids(bare).join(", "));
     // a corner end never has a gap
     for (const x of planGaps(planKitchen(ext))) assert.notEqual(x.id, "end:a-left");
   });

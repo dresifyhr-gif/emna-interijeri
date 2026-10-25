@@ -14,6 +14,11 @@
  *                             needs free space at the end of the run (or an adjacent "Slobodno mjesto")
  *   wall units:               they hang on their own — removing one leaves bare wall ("Bez gornjeg elementa"),
  *                             a new or wider one takes that space; the hood stays above the hob
+ *   inserts next to an element (insertBefore / insertAfter, previewed by insertOptions — insertWays): into the free
+ *                             room; next to the last element before a free end of the run, as that end's "+" does it
+ *                             (the run grows — "Kuhinja na zidu B duža je za 60 cm."); in a full run the element beside
+ *                             it gets narrower to make room ("… sada je 50 cm umjesto 90 cm.") — never a corner unit,
+ *                             the hood above the hob or a tall unit
  *   blind corners:            fixed width, only their type changes
  *   tall column:              1 to MAX_TALL units of any mix of widths (e.g. 30 larder + 96 side-by-side fridge niche
  *                             + 60 oven); its width moves the base run next to it, and it may grow as long as the
@@ -24,8 +29,10 @@
  *                             the kitchen stands on a wall: length / offset / anchor), kitchenExtent (what the controls offer)
  *   tall columns anywhere:    moveTall (another free run end), tallPlaces; new columns come from insertAtGap
  *   "+" places:               gapOptions / insertAtGap on plan.ts planGaps (ViewInfo.gaps): empty space, the free end of
- *                             a run (bare floor, the bare wall beyond the kitchen it grows into), bare wall above the
- *                             worktop, the ends of the island
+ *                             a run (bare floor, the bare wall beyond the kitchen it grows into), bare wall in the
+ *                             wall-unit row (beside the window, between wall units, over bare floor and beyond the
+ *                             kitchen at a free end of the row), the ends of the island. planGaps lists only places
+ *                             where something fits (gapHasOption, registered with plan.ts registerGapCheck)
  *   room surfaces:            setRoomFinish / roomFinishes (StudioEngineOptions.onSurfaceClick)
  *   ceiling:                  raiseCeilingFor ("Podigni strop na X cm"; heightChoices().tallTop.maxReason says the limit)
  *   island / peninsula:       setIsland (any KitchenConfig.islandSpec field) and its shorthands setIslandFunctions (hob /
@@ -38,6 +45,7 @@
 
 import { FINISH_DEFAULTS, catalog, cornerFoot, cornerTypes, moduleDef, moduleTypes, roomFloorDef, roomWallDef, widthAllowed, type ModuleGroup, type ModuleTypeDef } from "./catalog";
 import {
+  GAP_LABEL,
   GAP_MIN,
   MAX_LIST,
   MAX_TALL,
@@ -54,8 +62,11 @@ import {
   parseRunEnd,
   planGaps,
   planKitchen,
+  registerGapCheck,
   runEnd,
+  SEAM_MIN,
   sanitizeConfig,
+  seamDef,
   tallCapacity,
   tallListEnd,
   wallsFor,
@@ -511,6 +522,75 @@ function insertAt(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id: ListId,
   return commit(ctx, withList(cfg, id, placed), id, placed.indexOf(el), "");
 }
 
+/**
+ * A full run: the element an insert goes next to (the selected one) makes room by getting narrower — the widest of its
+ * widths that leaves `need` cm more. Base, wall-unit and island lists only; never a corner unit, a hood that follows
+ * the hob, empty space or the tall column. null = it cannot.
+ */
+function shrinkFor(ctx: Ctx, id: ListId, list: CabinetSpec[], need: number): { index: number; width: number; from: number; name: string } | null {
+  const ls = listSlot(ctx);
+  const zone = listZone(id);
+  if (!ls || ls.id !== id || zone === "tall" || ctx.slot.corner || ctx.slot.anchored) return null;
+  const e = list[ls.index];
+  const def = e ? defOf(zone, e.type) : undefined;
+  if (!e || !def || def.spacer || def.corner || def.hood) return null;
+  const w = def.widths.filter((x) => x < e.width - 0.5 && e.width - x >= need - 0.5).sort((a, b) => b - a)[0];
+  return w === undefined ? null : { index: ls.index, width: w, from: e.width, name: def.name };
+}
+
+/**
+ * Next to the first / last element of a run whose free end has room beyond it (bare floor, bare wall the kitchen can
+ * grow into, the island's own end): that end's "+" (planGaps) — so "+ lijevo / + desno" there grow the run like the
+ * "+" does instead of squeezing the element. null elsewhere.
+ */
+function endGapFor(ctx: Ctx, id: ListId, at: number, length: number): PlanGap | null {
+  if ((at !== 0 && at !== length) || listZone(id) === "tall") return null;
+  const side = at === 0 ? "left" : "right";
+  return planGaps(ctx.plan).find((g) => g.list === id && g.side === side && (g.kind === "end" || g.kind === "island" || g.kind === "upper")) ?? null;
+}
+
+/**
+ * An insert of `el` at `at` of list `id` (prepared by `editable`), every way there is, in this order: into the free room
+ * (`room`, roomAt); at a free end of the run, as its "+" does it (growing the run); with the element beside it narrower
+ * (a full run). insertOptions previews exactly this.
+ */
+function insertWays(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id: ListId, at: number, room: number, el: CabinetSpec): EditResult {
+  if (el.width <= room) return insertAt(ctx, cfg, list, id, at, el);
+  const eg = endGapFor(ctx, id, at, list.length);
+  if (eg) {
+    const r = insertGapIn(ctx.cfg, ctx.plan, eg, el.type, el.width, listZone(id));
+    if (r.ok) return grewNote(ctx.cfg, r, eg);
+  }
+  const sh = shrinkFor(ctx, id, list, el.width - room + 0.5);
+  return sh ? insertShrunk(ctx, cfg, list, id, at, el, sh) : fail(ctx.cfg, "", ctx.slot.id);
+}
+
+/** an insert at a run's free end that made the kitchen run (or the island) longer says so */
+function grewNote(cfg0: KitchenConfig, r: EditResult, gap: PlanGap): EditResult {
+  let note: string | null = null;
+  if (gap.run === "isl") {
+    const d = Math.round(r.cfg.island - cfg0.island);
+    if (d > 0) note = `${isPeninsula(cfg0.layout) ? "Poluotok" : "Otok"} je duži za ${d} cm.`;
+  } else {
+    const len = (c: KitchenConfig) => {
+      const k = kitchenRange(c, gap.run as WallId);
+      return k.to - k.from;
+    };
+    const d = Math.round(len(r.cfg) - len(cfg0));
+    if (d > 0) note = `Kuhinja na zidu ${gap.run.toUpperCase()} duža je za ${d} cm.`;
+  }
+  return note ? { ...r, warning: r.warning ? `${note} ${r.warning}` : note } : r;
+}
+
+/** insertAt with the element beside the spot made narrower first (shrinkFor), saying so */
+function insertShrunk(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id: ListId, at: number, el: CabinetSpec, sh: NonNullable<ReturnType<typeof shrinkFor>>): EditResult {
+  const next = list.map((e, i) => (i === sh.index ? { ...e, width: sh.width } : { ...e }));
+  const r = insertAt(ctx, cfg, next, id, at, el);
+  if (!r.ok) return r;
+  const note = `Za novi element napravljeno je mjesto: ${sh.name.charAt(0).toLowerCase()}${sh.name.slice(1)} sada je ${sh.width} cm umjesto ${sh.from} cm.`;
+  return { ...r, warning: r.warning ? `${note} ${r.warning}` : note };
+}
+
 function insert(input: KitchenConfig, slotId: string, type: string, width: number | undefined, after: boolean): EditResult {
   const ctx = context(input, slotId);
   if (!ctx) return fail(sanitizeConfig(input), "Element više ne postoji.");
@@ -532,11 +612,7 @@ function insert(input: KitchenConfig, slotId: string, type: string, width: numbe
       last = fail(ctx.cfg, `${def.name} dolazi u širinama: ${def.widths.join(", ")} cm.`, slot.id);
       continue;
     }
-    if (w > room) {
-      last = fail(ctx.cfg, zone === "tall" ? noRoomIn(ctx, id, w) : `Za novi element (${w} cm) nema mjesta — slobodno je još ${Math.floor(freeOf(ctx.plan, id))} cm.`, slot.id);
-      continue;
-    }
-    last = insertAt(ctx, cfg, list, id, at, { type, width: w });
+    last = insertWays(ctx, cfg, list, id, at, room, { type, width: w });
     if (last.ok) return last;
     last = fail(ctx.cfg, zone === "tall" ? noRoomIn(ctx, id, w) : `Za novi element (${w} cm) nema mjesta — slobodno je još ${Math.floor(freeOf(ctx.plan, id))} cm.`, slot.id);
   }
@@ -809,17 +885,28 @@ function insertOptionsIn(ctx: Ctx, after: boolean, tallCap?: number): TypeChoice
   if (list.length >= listMax(zone)) return pool.map((d) => choice(d, null, false, []));
   const room = roomAt(ctx, t.id, list, t.at, false, tallCap);
   const probed = new Map<number, boolean>();
+  /** the insert of `type` at width `w` works (exactly as insert() does it: insertWays) */
+  const works = (type: string, w: number) => insertWays(ctx, cfg, list, t.id, t.at, room, { type, width: w }).ok;
   const fitsWidth = (w: number) => {
     let ok = probed.get(w);
     if (ok === undefined) {
       const type = probeType(zone, w);
-      ok = Boolean(type) && insertAt(ctx, cfg, list, t.id, t.at, { type: type as string, width: w }).ok;
+      ok = Boolean(type) && works(type as string, w);
       probed.set(w, ok);
     }
     return ok;
   };
+  // the most an insert can take: the room, or what the element beside it can give up
+  const sel = listSlot(ctx);
+  const selDef = sel && sel.id === t.id ? defOf(zone, list[sel.index]?.type ?? "") : undefined;
+  const give =
+    zone !== "tall" && selDef && !selDef.spacer && !selDef.hood && !selDef.corner && !ctx.slot.corner && !ctx.slot.anchored
+      ? (list[sel!.index]?.width ?? 0) - Math.min(...selDef.widths)
+      : 0;
+  // a free end beyond: what its "+" allows (insertGapIn decides; every width is probed)
+  const reach = endGapFor(ctx, t.id, t.at, list.length) ? Infinity : Math.max(room, room + give);
   return pool.map((d) => {
-    const fitting = d.widths.filter((w) => w <= room && (d.hood ? insertAt(ctx, cfg, list, t.id, t.at, { type: d.id, width: w }).ok : fitsWidth(w)));
+    const fitting = d.widths.filter((w) => w <= reach && (d.hood ? works(d.id, w) : fitsWidth(w)));
     const width = widthsNew(d).find((w) => fitting.includes(w)) ?? null;
     return choice(d, width, false, fitting);
   });
@@ -1439,8 +1526,13 @@ export interface KitchenExtentInfo {
   wall: WallId;
   /** the room's wall: its length and the range it may have (cm) */
   room: { value: number; min: number; max: number };
-  /** where the kitchen stands on it (wall-local cm, as seen facing the wall) */
+  /** where the kitchen stands on it (wall-local cm, as seen facing the wall) — the room the kitchen reserves */
   kitchen: Range;
+  /**
+   * where its cabinets stand (plan.ts RunPlan.cabinets: the kitchen without the bare floor at its open ends) — what the
+   * kitchen label on the floor measures; null when the run holds no cabinet
+   */
+  cabinets: Range | null;
   /** the kitchen run's length and the range it may have from where it starts (cm) */
   length: { value: number; min: number; max: number };
   /** cm of bare wall between the anchor end and the kitchen, and its range */
@@ -1470,6 +1562,7 @@ export function kitchenExtent(input: KitchenConfig, wall: WallId): KitchenExtent
     wall,
     room: { value: L, min: lim[0], max: lim[1] },
     kitchen: k,
+    cabinets: run?.cabinets ?? null,
     length: { value: k.to - k.from, min, max: L - offset },
     offset: { value: offset, min: 0, max: L - min },
     anchor,
@@ -1750,6 +1843,9 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
   const refuse = `Za ${w} cm ovdje nema mjesta${gap.maxWidth >= GAP_MIN ? ` — stane najviše ${gap.maxWidth} cm` : ""}.`;
   const el: CabinetSpec = { type, width: w };
   const put = (list: CabinetSpec[], at: number) => [...list.slice(0, at), el, ...list.slice(at)];
+  // a hood goes only where it hangs above a hob (the planner centres it there)
+  if (zone === "upper" && defOf("upper", type)?.hood && !gap.hob) return fail(cfg, "Element za napu ide iznad ploče za kuhanje.");
+  if (gap.kind === "seam") return insertSeam(cfg, plan, gap, el, refuse);
   if (gap.kind === "free") {
     const slot = plan.slots.find((s) => s.id === gap.slotId);
     if (!slot?.list) return fail(cfg, "Tog slobodnog mjesta više nema.");
@@ -1762,14 +1858,35 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
     next[i] = el;
     if (cur.width - w >= 5) next.splice(i + 1, 0, { type: cur.type, width: cur.width - w });
     else if (w > cur.width) growInto(next, i, w - cur.width, listZone(id));
-    const final = tidy(next, listZone(id), el);
-    return commitPlan(cfg, plan, null, withList(c1, id, final), id, final.indexOf(el), refuse);
+    // (tidy merges into its entries: on copies, so `next` stays as it was for the second try)
+    const final = tidy(next.map((e) => (e === el ? e : { ...e })), listZone(id), el);
+    const r = commitPlan(cfg, plan, null, withList(c1, id, final), id, final.indexOf(el), refuse);
+    if (r.ok || final.length === next.length) return r;
+    // wall units: two empty spaces that tidy merged may stand in different stretches (either side of the window) —
+    // the merged one fits in neither; keep them apart
+    const apart = next.filter((e) => e === el || !isSpacer(listZone(id), e.type) || e.width >= 5);
+    return commitPlan(cfg, plan, null, withList(c1, id, apart), id, apart.indexOf(el), refuse);
   }
+  if (gap.kind === "upper" && gap.side) return insertUpperEnd(cfg, plan, gap, el, refuse);
   if (gap.kind === "upper") {
+    // into the bare wall itself: the wall units beside it stay where they are
+    if (w > gap.maxWidth + 0.5) return fail(cfg, refuse);
     const { cfg: c1, list } = editableIn(cfg, plan, gap.list);
     if (list.length >= MAX_LIST) return fail(cfg, fullNote("upper"));
-    const placed = placeInto(list, Math.min(gap.index, list.length), el, "upper");
-    return commitPlan(cfg, plan, null, withList(c1, gap.list, placed), gap.list, placed.indexOf(el), refuse);
+    // straight into the list (not out of empty space beside it, as an insert next to an element does: that would put it
+    // on the empty space instead of this bare wall). The list flows left → right into the first stretch with room: bare
+    // wall between the element before it and this gap that would take the new unit first stays bare — empty space of its
+    // size goes there.
+    const at = Math.min(gap.index, list.length);
+    const p1 = c1 === cfg ? plan : planKitchen(c1);
+    const prev = at > 0 ? p1.slots.find((s) => s.list?.id === gap.list && s.list.index === at - 1) : undefined;
+    const x0 = prev ? prev.x + prev.width : -Infinity;
+    const pads: CabinetSpec[] = (p1.runs.find((r) => r.wall === gap.run)?.upperFree ?? [])
+      .filter((u) => u.from >= x0 - 0.5 && u.to <= gap.from + 0.5 && u.room >= w - 0.5)
+      .map((u) => ({ type: SPACER.upper, width: Math.floor(u.room) }));
+    if (list.length + pads.length >= MAX_LIST) return fail(cfg, fullNote("upper"));
+    const placed = [...list.slice(0, at), ...pads, el, ...list.slice(at)];
+    return onTheGap(cfg, commitPlan(cfg, plan, null, withList(c1, gap.list, placed), gap.list, placed.indexOf(el), refuse), gap, refuse);
   }
   if (gap.kind === "island") {
     const { cfg: c1, list } = editableIn(cfg, plan, "isl");
@@ -1788,17 +1905,32 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
   /**
    * Commit `build(grow)` — the run grown by `grow` cm more than the element needs. A longer run can let a tall column
    * stand again that did not fit before (it stays in the config, KitchenConfig.tallRuns / tallRun): it then takes the
-   * room the element was to get, so try once more with the run grown by that column too (while the wall allows it).
+   * room the element was to get, so try once more with the run grown by that column too (while the wall allows it); when
+   * the wall does not, that column stays left out (KitchenConfig.tall off / its tallRuns entry removed, with a note) so
+   * the "+" still adds what was asked for.
    */
   const withRevived = (id: ListId, at: number, room: number, build: (grow: number) => KitchenConfig): EditResult => {
     const first = commitPlan(cfg, plan, null, build(0), id, at, refuse);
     if (first.ok) return first;
     const revived = revivedTall(plan, planKitchen(sanitizeConfig(build(0))), wall, id);
-    if (revived.cm < 0.5 || revived.cm > room + 0.5) return first;
-    const again = commitPlan(cfg, plan, null, build(revived.cm), id, at, refuse);
-    if (!again.ok) return first;
-    const note = "Uz duži niz sada stane i visoki stup koji prije nije stao.";
-    return { ...again, warning: again.warning ? `${again.warning} ${note}` : note };
+    if (revived.cm < 0.5) return first;
+    const say = (r: EditResult, note: string): EditResult => ({ ...r, warning: r.warning ? `${r.warning} ${note}` : note });
+    if (revived.cm <= room + 0.5) {
+      const again = commitPlan(cfg, plan, null, build(revived.cm), id, at, refuse);
+      if (again.ok) return say(again, "Uz duži niz sada stane i visoki stup koji prije nije stao.");
+    }
+    // no room for both: the column that did not fit stays left out (the customer adds it again when there is room) —
+    // it must not take the room of the element asked for
+    const kept = revived.ids.reduce<KitchenConfig>((c, l) => (l === "tall" ? { ...c, tall: false } : withList(c, l, undefined)), build(0));
+    const last = commitPlan(cfg, plan, null, kept, id, at, refuse);
+    if (!last.ok) return first;
+    const names = revived.ids.map((l) => (l === "tall" ? "visoki stup" : `visoki stup uz zid ${wall.toUpperCase()}`));
+    return say(
+      last,
+      revived.ids.includes("tall") && revived.ids.length === 1
+        ? "Visoki stup koji nije stao ostaje isključen — uključite ga ponovno kad za njega bude mjesta."
+        : `${names.length > 1 ? "Visoki stupovi koji nisu stali ostaju izostavljeni" : "Visoki stup koji nije stao ostaje izostavljen"} — dodajte ga ponovno s „+” na kraju niza kad za njega bude mjesta.`,
+    );
   };
   if (zone === "tall") {
     if (gap.tallList) {
@@ -1839,22 +1971,146 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
   const need = w - floor;
   if (need > outside + 0.5) return fail(cfg, refuse);
   const at = side === "left" ? 0 : list.length;
-  return withRevived(wall, at, outside - Math.max(0, need), (more) => withList(extendRun(c1, wall, side, Math.max(0, need) + more), wall, put(list, at)));
+  const r = withRevived(wall, at, outside - Math.max(0, need), (more) => withList(extendRun(c1, wall, side, Math.max(0, need) + more), wall, put(list, at)));
+  // the "+" stands beyond the tall column at this end, the cabinet joins the others: the column moves out by its width
+  if (r.ok && gap.tallList) {
+    const note = "Novi ormarić stoji uz ostale donje elemente, a visoki stup pomaknut je prema kraju zida.";
+    return { ...r, warning: r.warning ? `${note} ${r.warning}` : note };
+  }
+  return r;
+}
+
+/**
+ * Something can be put into this gap (what gapOptions would offer: the narrowest width of each kind is tried first). plan.ts
+ * planGaps lists only such gaps — this module registers it there (registerGapCheck below), so every "+" the studio
+ * shows offers at least one element. A plan or two per gap, once per plan (planGaps is memoised).
+ */
+function gapHasOption(plan: KitchenPlan, gap: PlanGap): boolean {
+  const cfg = plan.cfg;
+  const zone: ListZone = gap.zone === "upper" ? "upper" : gap.zone === "island" ? "island" : "base";
+  const fitsIn = (z: ListZone) => {
+    const widths = [...new Set(poolOf(z).filter((d) => !d.spacer && !d.corner && !d.hood).flatMap((d) => d.widths))]
+      .filter((w) => z === "tall" || w <= gap.maxWidth + 0.5)
+      .sort((a, b) => a - b);
+    for (const w of widths) {
+      const t = probeType(z, w);
+      if (t && insertGapIn(cfg, plan, gap, t, w, z).ok) return true;
+    }
+    return false;
+  };
+  if (gap.kind === "end") {
+    // the end of a run: what it really offers names it (plan.ts guessed from the geometry alone) — a wall unit hung
+    // over the bare floor there, for one, leaves no room for a tall unit
+    const base = fitsIn(zone);
+    const tall = fitsIn("tall");
+    gap.label = base && tall ? GAP_LABEL.baseOrTall : tall ? GAP_LABEL.tall : GAP_LABEL.base;
+    if (base || tall) return true;
+  } else if (fitsIn(zone)) return true;
+  if (gap.hob) {
+    for (const d of poolOf("upper").filter((x) => x.hood)) {
+      for (const w of d.widths) if (w <= gap.maxWidth + 0.5 && insertGapIn(cfg, plan, gap, d.id, w, "upper").ok) return true;
+    }
+  }
+  return false;
+}
+registerGapCheck(gapHasOption);
+
+/**
+ * A new element between two elements of a full row (PlanGap kind "seam"): one of the two gets narrower — the widest of
+ * its own widths that leaves enough room (at least SEAM_MIN), as "+ lijevo / + desno" on a full row do (shrinkFor). A plain cabinet gives
+ * way before the sink, the hob or the dishwasher, the wider one first. Base runs use their free cm first; wall units
+ * never (that room may lie beyond the window: the row must not flow over it). Says what got narrower.
+ */
+function insertSeam(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, el: CabinetSpec, refuse: string): EditResult {
+  if (el.width > gap.maxWidth + 0.5 || !gap.between) return fail(cfg, refuse);
+  const id = gap.list;
+  const z = listZone(id);
+  if (z !== "base" && z !== "upper") return fail(cfg, refuse);
+  const { cfg: c1, list } = editableIn(cfg, plan, id);
+  if (list.length >= MAX_LIST) return fail(cfg, fullNote(z));
+  const at = gap.index;
+  const [left, right] = gap.between.map((sid) => plan.slots.find((s) => s.id === sid));
+  // the list must still be the one the seam was found in
+  if (!left || !right || list[at - 1]?.type !== left.type || list[at]?.type !== right.type) return fail(cfg, "Tog mjesta više nema.");
+  const need = el.width - (z === "base" ? freeOf(plan, id) : 0);
+  const order = [at - 1, at].sort((p, q) => {
+    const dp = defOf(z, list[p].type);
+    const dq = defOf(z, list[q].type);
+    return Number(Boolean(dp?.feature)) - Number(Boolean(dq?.feature)) || list[q].width - list[p].width;
+  });
+  for (const i of order) {
+    const e = list[i];
+    const d = seamDef(z, e.type);
+    if (!d) continue;
+    const nw = need > 0.5 ? d.widths.filter((x) => x < e.width - 0.5 && x >= SEAM_MIN && e.width - x >= need - 0.5).sort((p, q) => q - p)[0] : e.width;
+    if (nw === undefined) continue;
+    const next = list.map((x, j) => (j === i ? { ...x, width: nw } : { ...x }));
+    const placed = [...next.slice(0, at), el, ...next.slice(at)];
+    const r = commitPlan(cfg, plan, null, withList(c1, id, placed), id, at, refuse);
+    if (!r.ok) continue;
+    if (nw >= e.width - 0.5) return r;
+    const note = `Za novi element napravljeno je mjesto: ${d.name.charAt(0).toLowerCase()}${d.name.slice(1)} sada je ${nw} cm umjesto ${e.width} cm.`;
+    return { ...r, warning: r.warning ? `${note} ${r.warning}` : note };
+  }
+  return fail(cfg, refuse);
+}
+
+/** a wall unit put into a gap must hang on that bare wall (the list could flow it elsewhere): else the refusal */
+function onTheGap(cfg0: KitchenConfig, r: EditResult, gap: PlanGap, refuse: string): EditResult {
+  if (!r.ok) return r;
+  const sl = r.slotId ? planKitchen(r.cfg).slots.find((s) => s.id === r.slotId) : undefined;
+  if (!sl || sl.x + sl.width <= gap.from + 0.5 || sl.x >= gap.to - 0.5) return fail(cfg0, refuse);
+  return r;
+}
+
+/**
+ * A wall unit at a free end of the wall-unit row (PlanGap kind "upper" with a side): onto that end of the wall-unit list,
+ * over the bare floor there, and — when it needs more room — with the kitchen run grown into the bare wall beyond it.
+ * The base cabinets stay as they are (made explicit), so the floor under the new wall unit stays bare.
+ */
+function insertUpperEnd(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, el: CabinetSpec, refuse: string): EditResult {
+  if (el.width > gap.maxWidth + 0.5) return fail(cfg, refuse);
+  const wall = gap.run as WallId;
+  const side = gap.side ?? "right";
+  const upId = gap.list;
+  if ((planList(plan, upId)?.entries.length ?? 0) >= MAX_LIST) return fail(cfg, fullNote("upper"));
+  const k = kitchenRange(cfg, wall);
+  const dir = side === "left" ? -1 : 1;
+  const kEnd = side === "left" ? k.from : k.to;
+  // the row's edge (where the new unit starts) and the far end of the bare wall
+  const S = side === "left" ? gap.to : gap.from;
+  const E = side === "left" ? gap.from : gap.to;
+  const room = Math.max(0, dir * (E - kEnd));
+  const g0 = Math.max(0, Math.ceil(dir * (S - kEnd) + el.width - 1e-6));
+  let last: EditResult = fail(cfg, refuse);
+  // the end panel(s) of a new stretch beyond the window may need a little more
+  for (const g of [...new Set([g0, g0 + DIM.panel, g0 + 2 * DIM.panel])]) {
+    if (g > room + 0.5) break;
+    const c1 = materializeLists(cfg, plan, g > 0 ? [wall, upId] : [upId]);
+    const list = (listOf(c1, upId) ?? []).map((e) => ({ ...e }));
+    const at = side === "left" ? 0 : list.length;
+    const next = withList(extendRun(c1, wall, side, g), upId, [...list.slice(0, at), el, ...list.slice(at)]);
+    last = onTheGap(cfg, commitPlan(cfg, plan, null, next, upId, at, refuse), gap, refuse);
+    if (last.ok) return last;
+  }
+  return last;
 }
 
 /**
  * The tall columns on `wall` that `after` places and `before` did not (growing a run can let a column that did not fit
- * stand again), `except` the list being edited: their width incl. cover panels (cm).
+ * stand again), `except` the list being edited: their lists and their width incl. cover panels (cm).
  */
-function revivedTall(before: KitchenPlan, after: KitchenPlan, wall: WallId, except: ListId): { cm: number } {
+function revivedTall(before: KitchenPlan, after: KitchenPlan, wall: WallId, except: ListId): { cm: number; ids: ListId[] } {
   const placed = (p: KitchenPlan) => new Set(p.slots.filter((s) => s.zone === "tall" && s.run === wall && s.list).map((s) => s.list!.id));
   const was = placed(before);
   let cm = 0;
+  const ids: ListId[] = [];
   for (const id of placed(after)) {
     if (id === except || was.has(id)) continue;
+    ids.push(id);
     cm += after.slots.filter((s) => s.list?.id === id).reduce((n, s) => n + s.width, 0) + 2 * DIM.panel;
   }
-  return { cm };
+  return { cm, ids };
 }
 
 // ---------------------------------------------------------------- room surfaces — KitchenConfig.room

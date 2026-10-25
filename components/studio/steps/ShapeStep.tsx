@@ -8,7 +8,7 @@ import { IslandSection } from "./IslandSection";
 import type { StepProps } from "./types";
 
 /** "Oblik": the six layouts, and for the island / peninsula its options (IslandSection) */
-export function ShapeStep({ cfg, setLayout, compact, edit, goTo, onUndoLayout }: StepProps & { onUndoLayout: (() => void) | null }) {
+export function ShapeStep({ cfg, setLayout, compact, edit, goTo, advanced, onUndoLayout }: StepProps & { onUndoLayout: (() => void) | null }) {
   return (
     <div>
       <RadioGrid
@@ -43,11 +43,7 @@ export function ShapeStep({ cfg, setLayout, compact, edit, goTo, onUndoLayout }:
           </>
         )}
       </RadioGrid>
-      {hasIsland(cfg.layout) && <IslandSection cfg={cfg} edit={edit} goTo={goTo} />}
-      <p className="mt-6 text-[12.5px] leading-relaxed text-mut">
-        Mjere prostorije i koliki dio zidova zauzima kuhinja upisujete u sljedećem koraku, a zatim po želji mijenjate svaki
-        element: ladice, vrata, sudoper, aparate, police.
-      </p>
+      {hasIsland(cfg.layout) && <IslandSection cfg={cfg} edit={edit} goTo={goTo} advanced={advanced} />}
       <Notes
         items={
           onUndoLayout

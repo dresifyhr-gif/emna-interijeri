@@ -8,9 +8,9 @@
 import { useEffect } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
 import { isEdited } from "@/lib/studio/edit";
-import type { PlanSlot, RunId } from "@/lib/studio/plan";
+import { planGaps, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { Notes, Segmented, SectionLabel, ToggleRow } from "../controls";
-import { ChevronRight, CursorIcon, ModuleGlyph, ResetIcon } from "../icons";
+import { ChevronRight, ModuleGlyph, PlusIcon, ResetIcon } from "../icons";
 import { islandWord, rowName, rowSlots, runName, sideHint, type RowZone } from "../meta";
 import { RunElevation } from "../RunElevation";
 import type { StepProps } from "./types";
@@ -46,7 +46,14 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
       : isEdited(cfg, run) || isEdited(cfg, `${run}:u`) || (run === "a" && Boolean(cfg.corners && Object.keys(cfg.corners).length));
   const len = run === "isl" ? Math.round(plan.island?.length ?? cfg.island) : cfg.walls[run];
   const runPlan = run === "isl" ? null : plan.runs.find((r) => r.wall === run);
-  const kitchenLen = runPlan ? Math.round(runPlan.kitchen.to - runPlan.kitchen.from) : len;
+  // what the kitchen label in 3D says: the cabinets (bare floor at an open end is not part of them)
+  const cab = runPlan ? (runPlan.cabinets ?? runPlan.kitchen) : null;
+  const kitchenLen = cab ? Math.round(cab.to - cab.from) : len;
+  // a "+" on a free place somewhere in 3D; else one between elements of a full row (a neighbour gets narrower); else
+  // the hint says how to make room
+  const gapsNow = planGaps(plan);
+  const anyFree = gapsNow.some((g) => g.kind !== "seam");
+  const anySeam = !anyFree && gapsNow.length > 0;
 
   return (
     <div>
@@ -128,8 +135,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
           title="Visoki stup"
           description={
             <>
-              Visoki elementi za ugradbeni hladnjak i pećnicu u visini očiju — ili smočnica, ormar, perilica rublja. Sami
-              aparati nisu uračunati u okvirnu cijenu.
+              Hladnjak i pećnica u visini očiju. Aparati nisu u okvirnoj cijeni.
               {tallWall && tallWall !== run && (
                 <>
                   {" "}
@@ -150,14 +156,18 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
         />
       </div>
 
-      <div className="mt-6 flex gap-3.5 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-        <CursorIcon className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
-        <p className="text-[12.5px] leading-relaxed text-fg/80">
-          {engine
-            ? "Kliknite element u 3D prikazu: iznad njega su brze radnje — dodaj lijevo ili desno, širina, zamijeni, ukloni. Znak + na slobodnim mjestima dodaje novi element, a na kraju kuhinje i visoki stup (npr. dvokrilni hladnjak). Klik na kotu mijenja duljinu zida ili kuhinje."
-            : "Odaberite element na popisu: promjene se odmah vide u rasporedu i okvirnoj cijeni."}
+      {engine && (
+        <p className="mt-5 flex items-center gap-2.5 text-[12px] leading-snug text-mut">
+          <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent/50 text-accent">
+            <PlusIcon className="h-3.5 w-3.5" />
+          </span>
+          {anyFree
+            ? "Znak + u 3D prikazu dodaje element na slobodno mjesto — na zidu, na podu i na kraju kuhinje."
+            : anySeam
+              ? "Sve je popunjeno: znak + između dva elementa dodaje novi, a susjedni se suzi i napravi mu mjesto."
+              : "Sve je popunjeno: kliknite element pa + lijevo ili + desno — element se suzi i napravi mjesto novome."}
         </p>
-      </div>
+      )}
 
       {isEdited(cfg) && (
         <button

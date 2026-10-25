@@ -3,6 +3,7 @@
 /**
  * "Ploča i detalji": the worktop library, then the details as collapsed rows (progressive disclosure) —
  * handles with their finish, sink and tap, appliance fronts, plinth and LED (the room around the kitchen is in "Boje").
+ * "Jednostavno" leaves the appliance fronts and the plinth out (unless one was chosen).
  */
 import { useState, type ReactNode } from "react";
 import {
@@ -16,7 +17,7 @@ import {
   topDef,
 } from "@/lib/studio/catalog";
 import type { FinishSpec, HandleStyle } from "@/lib/studio/types";
-import { ChoiceChips, Disclosure, RadioGrid, SectionLabel, Switch } from "../controls";
+import { ChoiceChips, Disclosure, MoreOptions, RadioGrid, SectionLabel, Switch } from "../controls";
 import { CheckIcon, HandleGlyph, MoonIcon, SunIcon } from "../icons";
 import { MaterialLibrary } from "../MaterialLibrary";
 import { stepIndex } from "../meta";
@@ -46,7 +47,7 @@ function Label({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
-export function TopStep({ cfg, plan, update, goTo, mood, setMood }: StepProps) {
+export function TopStep({ cfg, plan, update, goTo, mood, setMood, advanced }: StepProps) {
   const [open, setOpen] = useState<Section | null>(null);
   const toggle = (k: Section) => setOpen((o) => (o === k ? null : k));
   const top = topDef(cfg.top);
@@ -94,14 +95,7 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood }: StepProps) {
         label="Radna ploča"
         idPrefix="studio-tops"
       />
-      <p className="mt-4 text-[12.5px] leading-relaxed text-mut">
-        Ploča prati sve donje elemente, a između nje i gornjih elemenata ide obloga od istog materijala
-        {cfg.layout === "otok" || cfg.layout === "poluotok" || cfg.layout === "G"
-          ? cfg.islandSpec?.waterfall === false
-            ? `; ${cfg.layout === "otok" ? "otok" : "poluotok"} ima bočne ploče u boji fronti.`
-            : `; na ${cfg.layout === "otok" ? "otoku" : "poluotoku"} se na slobodnim krajevima spušta do poda.`
-          : "."}
-      </p>
+      <p className="mt-4 text-[12px] leading-relaxed text-mut">Isti materijal ide i na zid između ploče i gornjih elemenata.</p>
 
       {/* ---------------------------------------------------------------- details */}
       <SectionLabel className="mt-9">Detalji</SectionLabel>
@@ -182,42 +176,46 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood }: StepProps) {
           />
         </Disclosure>
 
-        <Disclosure
-          title="Fronte aparata"
-          value={hasOven ? (appl?.name ?? "") : `${appl?.name ?? ""} · u kuhinji nema pećnice`}
-          icon={<Dot swatch={appl?.swatch} off={!hasOven} />}
-          open={open === "aparati"}
-          onToggle={() => toggle("aparati")}
-        >
-          <p className="mb-1 text-[12px] leading-relaxed text-mut">
-            Izgled vrata pećnice i mikrovalne u prikazu. Sami aparati nisu uračunati u okvirnu cijenu.
-            {!hasOven && <> Pećnicu dodajete u koraku {goElements}.</>}
-          </p>
-          <ChoiceChips
-            label="Fronte aparata"
-            className="mt-3"
-            options={catalog.finishes.appliances}
-            value={f.appliances ?? FINISH_DEFAULTS.appliances}
-            onChange={(id) => setFinish({ appliances: id })}
-          />
-        </Disclosure>
+        {(advanced || f.appliances !== undefined) && (
+          <Disclosure
+            title="Fronte aparata"
+            value={hasOven ? (appl?.name ?? "") : `${appl?.name ?? ""} · u kuhinji nema pećnice`}
+            icon={<Dot swatch={appl?.swatch} off={!hasOven} />}
+            open={open === "aparati"}
+            onToggle={() => toggle("aparati")}
+          >
+            <p className="mb-1 text-[12px] leading-relaxed text-mut">
+              Izgled vrata pećnice i mikrovalne u prikazu. Sami aparati nisu uračunati u okvirnu cijenu.
+              {!hasOven && <> Pećnicu dodajete u koraku {goElements}.</>}
+            </p>
+            <ChoiceChips
+              label="Fronte aparata"
+              className="mt-3"
+              options={catalog.finishes.appliances}
+              value={f.appliances ?? FINISH_DEFAULTS.appliances}
+              onChange={(id) => setFinish({ appliances: id })}
+            />
+          </Disclosure>
+        )}
 
-        <Disclosure
-          title="Postolje"
-          value={plinth?.name ?? ""}
-          icon={<Dot swatch={plinth?.swatch} />}
-          open={open === "postolje"}
-          onToggle={() => toggle("postolje")}
-        >
-          <p className="mb-1 text-[12px] leading-relaxed text-mut">Uvučena traka ispod donjih elemenata (cokl).</p>
-          <ChoiceChips
-            label="Postolje"
-            className="mt-3"
-            options={catalog.finishes.plinths}
-            value={f.plinth ?? FINISH_DEFAULTS.plinth}
-            onChange={(id) => setFinish({ plinth: id })}
-          />
-        </Disclosure>
+        {(advanced || f.plinth !== undefined) && (
+          <Disclosure
+            title="Postolje"
+            value={plinth?.name ?? ""}
+            icon={<Dot swatch={plinth?.swatch} />}
+            open={open === "postolje"}
+            onToggle={() => toggle("postolje")}
+          >
+            <p className="mb-1 text-[12px] leading-relaxed text-mut">Uvučena traka ispod donjih elemenata (cokl).</p>
+            <ChoiceChips
+              label="Postolje"
+              className="mt-3"
+              options={catalog.finishes.plinths}
+              value={f.plinth ?? FINISH_DEFAULTS.plinth}
+              onChange={(id) => setFinish({ plinth: id })}
+            />
+          </Disclosure>
+        )}
 
         <Disclosure
           title="LED rasvjeta"
@@ -258,6 +256,7 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood }: StepProps) {
           )}
         </Disclosure>
       </div>
+      {!advanced && <MoreOptions what="Fronte pećnice i mikrovalne, boja postolja." className="mt-3" />}
     </div>
   );
 }

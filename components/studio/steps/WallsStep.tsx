@@ -14,14 +14,15 @@
  *                        "Podigni strop na X cm"), "Kuhinja do stropa", the worktop, wall-unit heights (HeightsSection)
  *
  * What a change caused (a kitchen run moved off a corner, an element left out) stays next to the control that caused it
- * until the room changes again; the planner's other notes are listed at the end.
+ * until the room changes again; the planner's other notes are listed at the end. "Jednostavno" leaves out the window
+ * sill, the kitchen's distance from the end of its wall and the finer heights (each stays while it is not the default).
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useMemo, useState } from "react";
 import { kitchenExtent, setKitchenExtent, wallLimits, type ExtentResult } from "@/lib/studio/edit";
 import { geometryKey, hasIsland, isPeninsula, limitsFor, planHeights, wallsFor } from "@/lib/studio/plan";
 import type { KitchenConfig, WallId, WindowSpec } from "@/lib/studio/types";
-import { Notes, NumberField, Segmented, SectionLabel, Switch, ToggleRow } from "../controls";
+import { MoreOptions, Notes, NumberField, Segmented, SectionLabel, Switch, ToggleRow } from "../controls";
 import { KitchenBar } from "../KitchenBar";
 import { shorterKitchen } from "../room";
 import { fitToPlanner, windowLimits } from "../limits";
@@ -37,7 +38,7 @@ interface LastNotes {
   items: string[];
 }
 
-export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) {
+export function WallsStep({ cfg, plan, update, edit, engine, goTo, advanced }: StepProps) {
   const reduce = useReducedMotion();
   const [focus, setFocus] = useState<SchematicFocus>(null);
   const [last, setLast] = useState<LastNotes | null>(null);
@@ -78,7 +79,7 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) 
   return (
     <div>
       {/* ================================================================ the room */}
-      <PartHeading n="1" title="Prostorija" lead="Mjere sobe u kojoj stoji kuhinja. Visinu stropa upisujete niže, uz visine kuhinje." />
+      <PartHeading n="1" title="Prostorija" lead="Duljine zidova i prozor." />
 
       <div className="relative -mx-1 mt-5 overflow-hidden rounded-2xl border border-white/10 bg-ink-900/40">
         <WallSchematic plan={plan} focus={focus} className="block h-auto w-full" />
@@ -87,7 +88,7 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) 
       </div>
 
       <SectionLabel className="mt-7">Zidovi prostorije</SectionLabel>
-      {engine && <p className="mt-2.5 text-[12px] leading-snug text-mut">Duljinu zida možete promijeniti i klikom na sivu kotu iznad elemenata u 3D prikazu.</p>}
+      {engine && <p className="mt-2.5 text-[12px] leading-snug text-mut">Ili kliknite sivu kotu u 3D prikazu.</p>}
       <div className="mt-4 space-y-5">
         {used.map((w) => (
           <NumberField
@@ -107,7 +108,7 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) 
       <div className="mt-4">
         <ToggleRow
           title="Na zidu kuhinje je prozor"
-          description="Gornji elementi se ispred prozora izostavljaju, donji i radna ploča nastavljaju ispod njega."
+          description="Ispred prozora nema gornjih elemenata."
           checked={Boolean(win)}
           onChange={toggleWindow}
         >
@@ -141,8 +142,8 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) 
                     </div>
                   )}
                   <NumberField
-                    label="Udaljenost od lijevog ruba"
-                    hint="Od lijevog kraja zida do prozora, gledano prema zidu."
+                    label="Od lijevog kraja zida"
+                    hint="Do prozora, gledano prema zidu."
                     value={win.offset}
                     min={0}
                     max={Math.max(0, winLen - win.width)}
@@ -155,14 +156,16 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) 
                     max={winLim?.width[1] ?? lim.windowWidth[1]}
                     onChange={(v) => setWindow({ width: v, offset: Math.min(win.offset, Math.max(0, winLen - v)) })}
                   />
-                  <NumberField
-                    label="Visina parapeta"
-                    hint="Od poda do donjeg ruba prozora."
-                    value={win.sill}
-                    min={winLim?.sill[0] ?? lim.sill[0]}
-                    max={winLim?.sill[1] ?? lim.sill[1]}
-                    onChange={(v) => setWindow({ sill: v })}
-                  />
+                  {(advanced || win.sill !== 95) && (
+                    <NumberField
+                      label="Visina parapeta"
+                      hint="Od poda do donjeg ruba prozora."
+                      value={win.sill}
+                      min={winLim?.sill[0] ?? lim.sill[0]}
+                      max={winLim?.sill[1] ?? lim.sill[1]}
+                      onChange={(v) => setWindow({ sill: v })}
+                    />
+                  )}
                 </div>
               </motion.div>
             )}
@@ -175,7 +178,7 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) 
         n="2"
         className="mt-12"
         title="Kuhinja na zidovima"
-        lead="Kuhinja ne mora zauzeti cijeli zid. Za svaki zid odaberite koliko je duga i gdje počinje — ostatak zida ostaje slobodan."
+        lead="Kuhinja ne mora zauzeti cijeli zid — ostatak ostaje slobodan."
       />
       <div className="mt-5 space-y-3">
         {used.map((w) => (
@@ -186,6 +189,7 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) 
             wall={w}
             edit={edit}
             many={used.length > 1}
+            advanced={advanced}
             focused={focus === `k-${w}`}
             onActive={active(`k-${w}` as SchematicFocus)}
             notes={freshOf(`ext-${w}`)}
@@ -207,36 +211,35 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) 
               max={island.max}
               onChange={(v) => update({ island: v })}
               onActive={active("island")}
-              hint={pen ? "Od zida A do slobodnog kraja poluotoka." : "Otok stoji ispred kuhinje uz zid A, centriran na nju."}
+              hint={pen ? "Od zida A do slobodnog kraja." : undefined}
             />
             <button
               type="button"
               onClick={() => goTo(stepIndex("oblik"))}
               className="mt-3 text-[12px] text-fg/80 underline decoration-white/25 underline-offset-4 transition-colors hover:decoration-accent"
             >
-              Ploča, sudoper, sjedenje i šank: korak Oblik
+              Sudoper, ploča i šank: korak Oblik
             </button>
           </div>
         )}
       </div>
 
       {/* ================================================================ ceiling and heights */}
-      <PartHeading n="3" className="mt-12" title="Strop i visine" lead="Visina stropa prostorije, a ispod nje koliko visoko idu elementi kuhinje." />
+      <PartHeading n="3" className="mt-12" title="Strop i visine" lead="Visina stropa i koliko visoko ide kuhinja." />
       <HeightsSection
         cfg={cfg}
         plan={plan}
         update={update}
         edit={edit}
+        advanced={advanced}
         fresh={freshOf("heights")}
         kept={kept}
         onNotes={onHeightNotes}
         onCeilingActive={active("ceiling")}
       />
 
-      <p className="mt-8 text-[12.5px] leading-relaxed text-mut">
-        Elementi koje ste uredili ostaju na svom mjestu. Ako neki više ne stane uz nove mjere, ovdje ćete vidjeti napomenu.
-      </p>
-      <Notes items={rest} />
+      {!advanced && <MoreOptions what="Visina parapeta, razmak kuhinje od kraja zida, vrh visokog stupa, visina radne ploče i gornjih elemenata." className="mt-8" />}
+      <Notes items={rest} className="mt-8" />
     </div>
   );
 }
@@ -283,11 +286,12 @@ function KitchenOnWall({
   wall,
   edit,
   many,
+  advanced,
   focused,
   onActive,
   notes,
   onNotes,
-}: Pick<StepProps, "cfg" | "plan" | "edit"> & {
+}: Pick<StepProps, "cfg" | "plan" | "edit" | "advanced"> & {
   wall: WallId;
   many: boolean;
   focused: boolean;
@@ -305,6 +309,10 @@ function KitchenOnWall({
   const win = plan.window && plan.window.wall === wall ? { from: plan.window.offset, to: plan.window.offset + plan.window.width } : null;
   const anchorFrom = wallEndName(cfg.layout, wall, info.anchor, true);
   const len = info.length.value;
+  // the cabinets (what the kitchen label in 3D measures) when bare floor is left at an open end
+  const cab = info.cabinets ? Math.round(info.cabinets.to - info.cabinets.from) : null;
+  // "Jednostavno": where the kitchen starts only when it does not start right at the wall's corner end
+  const showOffset = advanced || info.offset.value > 0 || !info.anchorIsCorner;
 
   const apply = (r: ExtentResult, coalesce?: string) => {
     if (edit(r, { coalesce })) onNotes(r.notes, r.cfg);
@@ -338,7 +346,7 @@ function KitchenOnWall({
             {many && <span className="ml-1.5 font-sans text-[12.5px] font-normal text-mut">{WALL_HINT[wall]}</span>}
           </p>
           <p className="mt-1 text-[12px] tabular-nums leading-snug text-mut">
-            Zid {L} cm · kuhinja {len} cm
+            Zid {L} cm · kuhinja {len} cm{cab !== null && cab < len ? ` · ormarići ${cab} cm` : ""}
           </p>
         </div>
         <label className="flex shrink-0 cursor-pointer items-center gap-2.5 text-[12px] text-fg/80">
@@ -359,36 +367,40 @@ function KitchenOnWall({
       />
 
       {info.full ? (
-        <p className="mt-2 text-[12px] leading-relaxed text-mut">Kuhinja zauzima cijeli zid i prati njegovu duljinu. Isključite „Cijeli zid” za kraću kuhinju.</p>
+        <p className="mt-2 text-[12px] leading-relaxed text-mut">Kuhinja prati duljinu zida.</p>
       ) : (
         <div className="mt-3 space-y-5">
           <NumberField label="Duljina kuhinje" value={len} min={info.length.min} max={info.length.max} onChange={setLength} />
-          <NumberField
-            label="Razmak"
-            sub={`od ${anchorFrom}`}
-            hint={info.offset.value > 0 ? `Do kuhinje ostaje ${info.offset.value} cm slobodnog zida.` : "Kuhinja počinje odmah uz taj kraj zida."}
-            value={info.offset.value}
-            min={info.offset.min}
-            max={info.offset.max}
-            onChange={setOffset}
-          />
-          <div>
-            <p id={`studio-anchor-${wall}`} className="mb-2.5 text-[13px] text-fg">
-              Razmak mjerim od
-            </p>
-            <Segmented
-              labelledBy={`studio-anchor-${wall}`}
-              options={(["left", "right"] as const).map((sd) => ({
-                id: sd,
-                label: sd === "left" ? "lijevog kraja" : "desnog kraja",
-                aria: `${sd === "left" ? "Lijevog" : "Desnog"} kraja zida: ${wallEndName(cfg.layout, wall, sd)}`,
-              }))}
-              value={info.anchor}
-              onChange={setAnchor}
-              size="sm"
-            />
-            <p className="mt-2 text-[11.5px] leading-snug text-mut">Lijevo i desno: gledano prema zidu {W}.</p>
-          </div>
+          {showOffset && (
+            <>
+              <NumberField
+                label="Razmak"
+                sub={`od ${anchorFrom}`}
+                hint={info.offset.value > 0 ? `Do kuhinje ostaje ${info.offset.value} cm slobodnog zida.` : "Kuhinja počinje odmah uz taj kraj zida."}
+                value={info.offset.value}
+                min={info.offset.min}
+                max={info.offset.max}
+                onChange={setOffset}
+              />
+              <div>
+                <p id={`studio-anchor-${wall}`} className="mb-2.5 text-[13px] text-fg">
+                  Razmak mjerim od
+                </p>
+                <Segmented
+                  labelledBy={`studio-anchor-${wall}`}
+                  options={(["left", "right"] as const).map((sd) => ({
+                    id: sd,
+                    label: sd === "left" ? "lijevog kraja" : "desnog kraja",
+                    aria: `${sd === "left" ? "Lijevog" : "Desnog"} kraja zida: ${wallEndName(cfg.layout, wall, sd)}`,
+                  }))}
+                  value={info.anchor}
+                  onChange={setAnchor}
+                  size="sm"
+                />
+                <p className="mt-2 text-[11.5px] leading-snug text-mut">Lijevo i desno: gledano prema zidu {W}.</p>
+              </div>
+            </>
+          )}
         </div>
       )}
       <div aria-live="polite">{notes.length > 0 && <Notes items={notes} className="mt-4" />}</div>

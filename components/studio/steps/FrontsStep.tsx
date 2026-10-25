@@ -3,7 +3,7 @@
 /**
  * "Boje": the front library (families as tabs, large swatches) and the two-tone switch. With two tones on, the
  * customer first picks the part of the kitchen (donji, gornji, visoki stup, otok), then its colour; each part keeps
- * its own colour from then on. Then "Prostor": the room's walls (all of them or one) and floor — only for the look in
+ * its own colour from then on. Then, folded away, the room's walls (all of them or one) and floor — only for the look in
  * 3D (clicking a wall or the floor in 3D opens the same samples there).
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -12,7 +12,8 @@ import { catalog, frontDef } from "@/lib/studio/catalog";
 import { roomFinishes, setRoomFinish } from "@/lib/studio/edit";
 import { frontFor, isPeninsula, wallsFor, type KitchenPlan } from "@/lib/studio/plan";
 import type { FrontZone, KitchenConfig, WallId } from "@/lib/studio/types";
-import { RadioGrid, SectionLabel, Segmented, Switch } from "../controls";
+import { Disclosure, RadioGrid, SectionLabel, Segmented, Switch } from "../controls";
+import { PaletteIcon } from "../icons";
 import { MaterialLibrary } from "../MaterialLibrary";
 import { EASE, FRONT_FAMILY_TAB, FRONT_ZONE_LONG, FRONT_ZONE_NAME, WALL_HINT } from "../meta";
 import { FLOORS, RoomSwatches, WALL_FINISHES, WALL_PAINTS } from "../SurfacePicker";
@@ -154,9 +155,7 @@ export function FrontsStep({ cfg, plan, update, edit, engine, fronts }: StepProp
         idPrefix="studio-fronts"
       />
 
-      <p className="mt-7 text-[12.5px] leading-relaxed text-mut">
-        Boje na zaslonu su približne — ovise o zaslonu i svjetlu u prostoru.
-      </p>
+      <p className="mt-5 text-[12px] leading-relaxed text-mut">Boje na zaslonu su približne.</p>
 
       <RoomSection cfg={cfg} edit={edit} engine={engine} />
     </div>
@@ -166,6 +165,7 @@ export function FrontsStep({ cfg, plan, update, edit, engine, fronts }: StepProp
 /** "Prostor": the room's walls (every wall, or one) and the floor — the look in 3D only, not the kitchen or its price */
 function RoomSection({ cfg, edit, engine }: Pick<StepProps, "cfg" | "edit" | "engine">) {
   const walls = wallsFor(cfg.layout);
+  const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<WallId | "all">("all");
   const which: WallId | "all" = scope !== "all" && walls.includes(scope) ? scope : "all";
   const f = roomFinishes(cfg);
@@ -180,42 +180,49 @@ function RoomSection({ cfg, edit, engine }: Pick<StepProps, "cfg" | "edit" | "en
     });
 
   return (
-    <div className="mt-10">
-      <SectionLabel>Prostor</SectionLabel>
-      <p className="mt-2.5 text-[12.5px] leading-relaxed text-mut">
-        Zidovi i pod oko kuhinje — samo za dojam u 3D prikazu, ne utječu na cijenu.
-        {engine ? " Zid ili pod možete kliknuti i u 3D prikazu." : ""}
-      </p>
+    <div className="mt-8">
+      <Disclosure
+        title="Zidovi i pod prostorije"
+        value={`Zidovi: ${mixed ? "različiti" : name(f.walls[walls[0]]).toLowerCase()} · pod: ${floorName.toLowerCase()}`}
+        icon={<PaletteIcon className="h-5 w-5" />}
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+      >
+        <p className="text-[12px] leading-relaxed text-mut">
+          Samo za dojam, ne utječe na cijenu.
+          {engine ? " Zid ili pod možete kliknuti i u 3D prikazu." : ""}
+        </p>
 
-      <p className="mt-5 text-[13px] text-fg">
-        Zidovi
-        <span className="ml-2 text-mut">{which === "all" && mixed ? "različiti" : name(value)}</span>
-      </p>
-      {walls.length > 1 && (
-        <Segmented
-          className="mt-2.5"
-          label="Koji zid"
-          size="sm"
-          options={[
-            { id: "all" as const, label: "Svi zidovi" },
-            ...walls.map((w) => ({ id: w, label: `Zid ${w.toUpperCase()}`, aria: `Zid ${w.toUpperCase()}, ${WALL_HINT[w]}` })),
-          ]}
-          value={which}
-          onChange={setScope}
-        />
-      )}
-      <p className="mb-2 mt-3.5 text-[10px] font-medium uppercase tracking-[0.2em] text-mut/90">Boje</p>
-      <RoomSwatches label={which === "all" ? "Boja svih zidova" : `Zid ${which.toUpperCase()}: boja`} items={WALL_PAINTS} value={which === "all" && mixed ? "" : value} onChange={pick} />
-      <p className="mb-2 mt-4 text-[10px] font-medium uppercase tracking-[0.2em] text-mut/90">Obloge</p>
-      <RoomSwatches label={which === "all" ? "Obloga svih zidova" : `Zid ${which.toUpperCase()}: obloga`} items={WALL_FINISHES} value={which === "all" && mixed ? "" : value} onChange={pick} />
+        <p className="mt-4 text-[13px] text-fg">
+          Zidovi
+          <span className="ml-2 text-mut">{which === "all" && mixed ? "različiti" : name(value)}</span>
+        </p>
+        {walls.length > 1 && (
+          <Segmented
+            className="mt-2.5"
+            label="Koji zid"
+            size="sm"
+            options={[
+              { id: "all" as const, label: "Svi zidovi" },
+              ...walls.map((w) => ({ id: w, label: `Zid ${w.toUpperCase()}`, aria: `Zid ${w.toUpperCase()}, ${WALL_HINT[w]}` })),
+            ]}
+            value={which}
+            onChange={setScope}
+          />
+        )}
+        <p className="mb-2 mt-3.5 text-[10px] font-medium uppercase tracking-[0.2em] text-mut/90">Boje</p>
+        <RoomSwatches label={which === "all" ? "Boja svih zidova" : `Zid ${which.toUpperCase()}: boja`} items={WALL_PAINTS} value={which === "all" && mixed ? "" : value} onChange={pick} />
+        <p className="mb-2 mt-4 text-[10px] font-medium uppercase tracking-[0.2em] text-mut/90">Obloge</p>
+        <RoomSwatches label={which === "all" ? "Obloga svih zidova" : `Zid ${which.toUpperCase()}: obloga`} items={WALL_FINISHES} value={which === "all" && mixed ? "" : value} onChange={pick} />
 
-      <p className="mt-6 text-[13px] text-fg">
-        Pod
-        <span className="ml-2 text-mut">{floorName}</span>
-      </p>
-      <div className="mt-3">
-        <RoomSwatches label="Pod" items={FLOORS} value={f.floor} onChange={(id) => edit(setRoomFinish(cfg, { floor: id }), { coalesce: "room-floor", say: `Pod: ${catalog.room.floors.find((x) => x.id === id)?.name ?? ""}.` })} square />
-      </div>
+        <p className="mt-6 text-[13px] text-fg">
+          Pod
+          <span className="ml-2 text-mut">{floorName}</span>
+        </p>
+        <div className="mt-3">
+          <RoomSwatches label="Pod" items={FLOORS} value={f.floor} onChange={(id) => edit(setRoomFinish(cfg, { floor: id }), { coalesce: "room-floor", say: `Pod: ${catalog.room.floors.find((x) => x.id === id)?.name ?? ""}.` })} square />
+        </div>
+      </Disclosure>
     </div>
   );
 }

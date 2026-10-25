@@ -54,12 +54,31 @@ export function releaseStyle(doc: Document): void {
   if (styleUsers === 0) doc.getElementById(STYLE_ID)?.remove();
 }
 
+/**
+ * A label pill's size (px) for ViewInfo, measured once per text (DimLabel.setText forgets it): reading it on every
+ * frame would force a layout after the CSS2D renderer has moved the labels. undefined while it is not laid out.
+ */
+export function labelSize(el: HTMLElement): { w: number; h: number } | undefined {
+  const c = el.dataset.size;
+  if (c) {
+    const [w, h] = c.split("x").map(Number);
+    return { w, h };
+  }
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  if (!w || !h) return undefined;
+  el.dataset.size = `${w}x${h}`;
+  return { w, h };
+}
+
 export interface DimLabel {
   group: THREE.Group;
   obj: CSS2DObject;
   el: HTMLElement;
   /** the measure shown (also kept in el.dataset.cm) */
   setText(cm: number): void;
+  /** move the line to x0 … x1 (parent frame, m), the label `at` (0 … 1) along it; no-op when nothing changes */
+  setSpan(x0: number, x1: number, at?: number): void;
 }
 
 /**
@@ -69,16 +88,15 @@ export interface DimLabel {
 export function dimLine(doc: Document, parent: THREE.Object3D, x0: number, x1: number, y: number, z: number, tag: string, cmValue: number, mat: THREE.Material): DimLabel {
   const group = new THREE.Group();
   group.position.set(x0, y, z);
-  const len = Math.max(0.01, x1 - x0);
   const t = 0.0045;
-  const bar = new THREE.Mesh(
+  const barGeo = (len: number) =>
     boxes([
       [0, -t / 2, -t / 2, len, t / 2, t / 2],
       [0, -0.05, -t / 2, t, 0.05, t / 2],
       [len - t, -0.05, -t / 2, len, 0.05, t / 2],
-    ]),
-    mat,
-  );
+    ]);
+  let len = Math.max(0.01, x1 - x0);
+  const bar = new THREE.Mesh(barGeo(len), mat);
   bar.renderOrder = 2;
   group.add(bar);
   const el = doc.createElement("div");
@@ -95,9 +113,26 @@ export function dimLine(doc: Document, parent: THREE.Object3D, x0: number, x1: n
   const setText = (cm: number) => {
     span.textContent = `${Math.round(cm)} cm`;
     el.dataset.cm = String(Math.round(cm));
+    // measured again (labelSize) with the new text
+    delete el.dataset.size;
   };
   setText(cmValue);
-  return { group, obj, el, setText };
+  let from = x0;
+  let at0 = 0.5;
+  const setSpan = (a: number, b: number, at = 0.5) => {
+    const l = Math.max(0.01, b - a);
+    if (Math.abs(a - from) < 1e-4 && Math.abs(l - len) < 1e-4 && Math.abs(at - at0) < 1e-4) return;
+    if (Math.abs(l - len) >= 1e-4) {
+      bar.geometry.dispose();
+      bar.geometry = barGeo(l);
+    }
+    from = a;
+    len = l;
+    at0 = at;
+    group.position.x = a;
+    obj.position.x = l * at;
+  };
+  return { group, obj, el, setText, setSpan };
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -126,6 +161,7 @@ export function makeEditable<T extends DimLabel>(label: T, aria: (cm: number) =>
   svg.appendChild(path);
   pen.appendChild(svg);
   el.appendChild(pen);
+  delete el.dataset.size;
   el.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();

@@ -7,8 +7,8 @@
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
-import { useHoldRepeat } from "./hooks";
-import { ChevronUp, MinusIcon, NoteIcon, PlusIcon } from "./icons";
+import { setStudioMode, useHoldRepeat } from "./hooks";
+import { ChevronDown, ChevronUp, MinusIcon, NoteIcon, PlusIcon } from "./icons";
 import { EASE, clamp } from "./meta";
 import s from "./studio.module.css";
 
@@ -583,6 +583,26 @@ export function Notes({ items, className = "mt-6" }: { items: (string | { text: 
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * "Jednostavno" left something out of this step: "Više opcija" switches the studio to "Napredno" (remembered), which
+ * shows it — `what` says what it is ("razmak od kraja zida, visine po mjeri").
+ */
+export function MoreOptions({ what, className = "mt-6" }: { what: string; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => setStudioMode("advanced")}
+      className={`group flex w-full items-center gap-3 rounded-2xl border border-dashed border-white/[0.12] px-4 py-3 text-left transition-colors duration-300 hover:border-white/25 ${className}`}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-medium text-fg/85 group-hover:text-fg">Više opcija</span>
+        <span className="mt-0.5 block text-[11.5px] leading-snug text-mut">{what}</span>
+      </span>
+      <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-fg/45" />
+    </button>
   );
 }
 

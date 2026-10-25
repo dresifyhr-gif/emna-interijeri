@@ -1,15 +1,17 @@
 /**
- * Studio UI helpers (components/studio/meta.ts, room.ts) on top of lib/studio/edit.ts: the names the room / kitchen
- * controls use (wall ends, "+" places, the peninsula), what "Cijeli zid" off, the kitchen-length editor, "Podigni strop
- * na X cm" and the bar's length switch do, and that every "+" the studio can show offers something to add.
+ * Studio UI helpers (components/studio/meta.ts, room.ts, addModel.ts) on top of lib/studio/edit.ts: the names the room /
+ * kitchen controls use (wall ends, "+" places, the peninsula), what "Cijeli zid" off, the kitchen-length editor,
+ * "Podigni strop na X cm" and the bar's length switch do, that every "+" the studio can show offers something to add,
+ * and that what the add picker offers first (its first tile at the preselected width) can be added.
  *
  *   npx tsx --test lib/studio/ui.test.ts
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { extentRange, fullKitchenWalls, offsetFrom, raiseForTall, shorterBar, shorterKitchen } from "../../components/studio/room";
+import { extentRange, offsetFrom, raiseForTall, shorterBar, shorterKitchen } from "../../components/studio/room";
+import { addItems, addModel, bestWidth, gapStretch, widthFor, type AddZone } from "../../components/studio/addModel";
 import { gapPlace, isRoomCorner, islandWord, resetTarget, runName, seatsText, wallEndName } from "../../components/studio/meta";
-import { gapOptions, gapsOf, heightChoices, insertAtGap, islandChoices, kitchenExtent, setBar, setKitchenExtent } from "./edit";
+import { gapOptions, gapsOf, heightChoices, insertAtGap, islandChoices, kitchenExtent, remove, setBar, setKitchenExtent } from "./edit";
 import { planKitchen, sanitizeConfig } from "./plan";
 import { configFromQuery, encodeConfig } from "./share";
 import { DEFAULT_CONFIG, type KitchenConfig, type Layout } from "./types";
@@ -84,12 +86,6 @@ describe("room vs kitchen controls", () => {
     assert.deepEqual(extentRange(450, other, off, e.length.value), e.kitchen);
     const moved = setKitchenExtent(cfg, "b", { anchor: other, offset: off, length: e.length.value });
     assert.deepEqual(kitchenExtent(moved.cfg, "b")?.kitchen, e.kitchen);
-  });
-
-  it("phone labels: the walls whose kitchen takes the whole wall", () => {
-    assert.deepEqual(fullKitchenWalls(planKitchen(cfgOf({}))), ["a", "b"]);
-    const k = setKitchenExtent(cfgOf({}), "b", { length: 160 }).cfg;
-    assert.deepEqual(fullKitchenWalls(planKitchen(k)), ["a"]);
   });
 });
 
@@ -176,5 +172,93 @@ describe("island panel", () => {
       assert.equal(b?.length.value, len);
       assert.equal(Math.round((b?.plan?.to ?? 0) - (b?.plan?.from ?? 0)), len);
     }
+  });
+});
+
+describe("add picker", () => {
+  const zoneOf = (z: string): AddZone => (z === "upper" ? "upper" : z === "island" ? "island" : "base");
+
+  it("the preselected width fills the free place when it can, else 60 cm", () => {
+    const ws = [30, 40, 45, 50, 60, 80, 90, 100, 120];
+    assert.equal(bestWidth(ws, 45), 45);
+    assert.equal(bestWidth(ws, 47), 45);
+    assert.equal(bestWidth(ws, 90), 90);
+    assert.equal(bestWidth(ws, 150), 60);
+    assert.equal(bestWidth(ws, null), 60);
+    assert.equal(bestWidth([30, 40], null), 40);
+    assert.equal(bestWidth([], 60), null);
+  });
+
+  it("a tile takes the chosen width when its type comes in it, else the nearest below", () => {
+    const t = { id: "perilica", name: "Perilica posuđa", description: "", group: "voda" as const, widths: [45, 60], width: 60, current: false, fitting: [45, 60] };
+    assert.equal(widthFor({ t, tall: false }, 45), 45);
+    assert.equal(widthFor({ t, tall: false }, 90), 60);
+    assert.equal(widthFor({ t, tall: false }, 30), 45);
+    assert.equal(widthFor({ t, tall: false }, null), 60);
+  });
+
+  it("every '+': six common tiles at most, and the first one at the preselected width goes in", () => {
+    const cfgs: KitchenConfig[] = [];
+    for (const layout of LAYOUTS) {
+      const base = cfgOf({ layout, walls: { a: 480, b: 420, c: 420 } });
+      cfgs.push(base);
+      const e = kitchenExtent(base, "a");
+      if (e) cfgs.push(setKitchenExtent(base, "a", { length: e.length.min + 40 }).cfg);
+      // a wall unit taken away: bare wall with a "+"
+      const up = planKitchen(base).slots.find((x) => x.zone === "upper" && !x.corner && !x.anchored);
+      if (up) {
+        const r = remove(base, up.id);
+        if (r.ok) cfgs.push(r.cfg);
+      }
+    }
+    let seen = 0;
+    for (const cfg of cfgs) {
+      for (const g of gapsOf(cfg)) {
+        const o = gapOptions(cfg, g.id);
+        assert.ok(o, g.id);
+        const m = addModel(addItems(o.types, o.tall), zoneOf(g.zone), gapStretch(g));
+        assert.ok(m.top.length > 0 && m.top.length <= 6, `${cfg.layout} ${g.id}: ${m.top.length} tiles`);
+        assert.equal(m.best === null, m.chips.length === 0, `${g.id}: a width is preselected when there are widths`);
+        assert.equal(m.top.length + m.rest.length, m.fit.length);
+        const first = m.top[0];
+        const w = widthFor(first, m.best);
+        assert.ok(w !== null);
+        const r = insertAtGap(cfg, g.id, first.t.id, w, first.tall ? "tall" : undefined);
+        assert.ok(r.ok, `${cfg.layout} ${g.id} ${first.t.id} ${w}: ${r.warning}`);
+        seen++;
+      }
+    }
+    assert.ok(seen >= 10, `only ${seen} gaps`);
+  });
+
+  it("bare wall left by a wall unit: its width preselected; above a hob the hood comes first", () => {
+    const cfg = cfgOf({});
+    const slots = planKitchen(cfg).slots.filter((x) => x.zone === "upper" && !x.corner);
+    const plain = slots.find((x) => x.type !== "napa" && x.width >= 60 && x.width <= 90);
+    assert.ok(plain);
+    const r = remove(cfg, plain.id);
+    assert.ok(r.ok);
+    const g = gapsOf(r.cfg).find((x) => x.slotId === plain.id);
+    assert.ok(g);
+    const o = gapOptions(r.cfg, g.id)!;
+    assert.equal(addModel(addItems(o.types), "upper", gapStretch(g)).best, plain.width);
+    const hood = slots.find((x) => x.type === "napa");
+    assert.ok(hood);
+    const h = remove(cfg, hood.id);
+    const hg = gapsOf(h.cfg).find((x) => x.slotId === hood.id);
+    assert.ok(hg?.hob);
+    const ho = gapOptions(h.cfg, hg.id)!;
+    assert.equal(addModel(addItems(ho.types), "upper", gapStretch(hg)).top[0].t.id, "napa");
+  });
+
+  it("a run's free end mixes base cabinets and tall units, the tall ones also under 'Više'", () => {
+    const cfg = setKitchenExtent(cfgOf({ walls: { a: 450, b: 300, c: 220 } }), "a", { length: 300 }).cfg;
+    const g = gapsOf(cfg).find((x) => x.kind === "end");
+    assert.ok(g);
+    const o = gapOptions(cfg, g.id)!;
+    const m = addModel(addItems(o.types, o.tall), "base", gapStretch(g));
+    assert.ok(m.top.some((x) => x.tall) && m.top.some((x) => !x.tall));
+    assert.ok(m.groups.some((x) => x.id === "tall" && x.items.every((i) => i.tall)));
+    assert.equal(m.best, 60);
   });
 });

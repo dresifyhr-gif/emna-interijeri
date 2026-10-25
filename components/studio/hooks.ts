@@ -50,42 +50,63 @@ export function useOrigin(): string {
 }
 
 /**
- * A one-time hint that stays gone once it has been used ("Kliknite element ili kotu za izmjenu"): remembered in
- * localStorage, and only in memory when storage is blocked (private mode), so it then shows again next visit.
- * On the server (and in the first client render) it counts as seen, so it never flashes in before hydration.
+ * A small value remembered in localStorage (and only in memory when storage is blocked), shared by every component
+ * that reads it. `server` is what the server render (and hydration) sees.
  */
-const HINT_KEY = "emna-studio-hint-edit";
-let hintSeen: boolean | null = null;
-const hintSubs = new Set<() => void>();
-function readHintSeen(): boolean {
-  if (hintSeen === null) {
-    try {
-      hintSeen = window.localStorage.getItem(HINT_KEY) === "1";
-    } catch {
-      hintSeen = false;
+function rememberedValue<T extends string>(key: string, parse: (raw: string | null) => T, server: T) {
+  let value: T | null = null;
+  const subs = new Set<() => void>();
+  const read = (): T => {
+    if (value === null) {
+      let raw: string | null = null;
+      try {
+        raw = window.localStorage.getItem(key);
+      } catch {
+        // storage blocked: the default
+      }
+      value = parse(raw);
     }
-  }
-  return hintSeen;
-}
-function subscribeHint(cb: () => void) {
-  hintSubs.add(cb);
-  return () => {
-    hintSubs.delete(cb);
+    return value;
   };
+  const subscribe = (cb: () => void) => {
+    subs.add(cb);
+    return () => {
+      subs.delete(cb);
+    };
+  };
+  const set = (v: T) => {
+    if (read() === v) return;
+    value = v;
+    try {
+      window.localStorage.setItem(key, v);
+    } catch {
+      // storage blocked: remembered for this visit only
+    }
+    subs.forEach((cb) => cb());
+  };
+  const useValue = () => useSyncExternalStore(subscribe, read, () => server);
+  return { read, set, useValue };
 }
-export function markEditHintSeen(): void {
-  if (readHintSeen()) return;
-  hintSeen = true;
-  try {
-    window.localStorage.setItem(HINT_KEY, "1");
-  } catch {
-    // storage blocked: remembered for this visit only
-  }
-  hintSubs.forEach((cb) => cb());
-}
-export function useEditHintSeen(): boolean {
-  return useSyncExternalStore(subscribeHint, readHintSeen, () => true);
-}
+
+/**
+ * "Jednostavno / Napredno": simple (the default for customers) leaves the finer controls out — the kitchen's distance
+ * from the wall's end, custom heights, the worktop height, the window sill, the island's depth, overhang, stools, bar
+ * depth and height, the finishes of appliances and the plinth. A control whose value is not the default stays visible.
+ */
+export type StudioMode = "simple" | "advanced";
+const mode = rememberedValue<StudioMode>("emna-studio-mode", (raw) => (raw === "advanced" ? "advanced" : "simple"), "simple");
+export const setStudioMode = mode.set;
+export const useStudioMode = mode.useValue;
+
+/**
+ * First-visit coach marks (CoachMarks): how far the customer got — "0", "1", "2" (the mark shown) or "done". On the
+ * server (and in the first client render) they count as done, so they never flash in before hydration.
+ */
+export type CoachState = "0" | "1" | "2" | "done";
+const coach = rememberedValue<CoachState>("emna-studio-coach", (raw) => (raw === "1" || raw === "2" || raw === "done" ? raw : "0"), "done");
+export const setCoach = coach.set;
+export const readCoach = coach.read;
+export const useCoach = coach.useValue;
 
 /**
  * Press-and-hold repeat for − / + steppers. The step grows the longer you hold

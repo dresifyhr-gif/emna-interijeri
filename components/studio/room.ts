@@ -4,8 +4,8 @@
  * (lib/studio/ui.test.ts) and the walls step, the 3D length editor and the island panel do the same thing.
  */
 import { raiseCeilingFor, setHeights, type EditResult, type IslandChoices, type KitchenExtentInfo } from "@/lib/studio/edit";
-import type { KitchenPlan, Range } from "@/lib/studio/plan";
-import type { KitchenConfig, WallId } from "@/lib/studio/types";
+import type { Range } from "@/lib/studio/plan";
+import type { KitchenConfig } from "@/lib/studio/types";
 
 /** a kitchen shorter than its wall starts 60 cm (one cabinet) shorter, so the bare wall shows right away */
 export const SHORTER_BY = 60;
@@ -41,11 +41,6 @@ export function raiseForTall(cfg: KitchenConfig, wish: number): { result: EditRe
   const res = setHeights(raised.cfg, { mode: "custom", tallTop: Math.min(wish, raised.maxTop) });
   const notes = [raised.warning, ...res.notes].filter((x): x is string => Boolean(x));
   return { result: { ...res, warning: notes.length ? notes.join(" ") : null }, notes, ceiling: raised.ceiling };
-}
-
-/** the walls whose kitchen run takes the whole wall */
-export function fullKitchenWalls(plan: KitchenPlan): WallId[] {
-  return plan.runs.filter((r) => r.kitchen.from <= 0.5 && r.kitchen.to >= r.length - 0.5).map((r) => r.wall);
 }
 
 /** "Cijelom duljinom" switched off: a bar three quarters of the island long (5 cm steps), clearly shorter than it */

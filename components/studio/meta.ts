@@ -27,23 +27,23 @@ export const STEPS: StepDef[] = [
     id: "zidovi",
     short: "Zidovi",
     title: "Zidovi",
-    lead: "Prvo mjere prostorije — zidovi, prozor, strop — a zatim koliki dio svakog zida zauzima kuhinja. Točne mjere uzimamo na izmjeri.",
+    lead: "Mjere prostorije, a zatim koliko je duga kuhinja. Točne mjere uzimamo na izmjeri.",
   },
   {
     id: "elementi",
     short: "Elementi",
     title: "Elementi",
-    lead: "Svaki element možete zamijeniti, suziti, pomaknuti, dodati ili ukloniti. Odaberite ga na popisu ili kliknite u 3D prikazu.",
-    leadNoImage: "Svaki element možete zamijeniti, suziti, pomaknuti, dodati ili ukloniti. Odaberite ga na popisu.",
+    lead: "Kliknite element u 3D prikazu ili na popisu — pa ga zamijenite, suzite ili uklonite.",
+    leadNoImage: "Odaberite element na popisu — pa ga zamijenite, suzite ili uklonite.",
   },
-  { id: "boje", short: "Boje", title: "Boje fronti", lead: "Materijal vrata i ladica. Kuhinja može biti jednobojna ili dvobojna." },
-  { id: "ploca", short: "Ploča", title: "Ploča i detalji", lead: "Radna ploča, ručke, sudoper i slavina, aparati, postolje, rasvjeta." },
+  { id: "boje", short: "Boje", title: "Boje fronti", lead: "Vrata i ladice — jednobojno ili dvobojno." },
+  { id: "ploca", short: "Ploča", title: "Ploča i detalji", lead: "Radna ploča, ručke, sudoper i rasvjeta." },
   {
     id: "posalji",
     short: "Pošalji",
     title: "Pošalji upit",
-    lead: "Uz upit nam stižu mjere, oblik, elementi, materijali, slika i link koji otvara upravo ovu kuhinju.",
-    leadNoImage: "Uz upit nam stižu mjere, oblik, elementi, materijali i link koji otvara upravo ovu kuhinju.",
+    lead: "Uz upit stižu mjere, elementi, materijali, slika i link na ovu kuhinju.",
+    leadNoImage: "Uz upit stižu mjere, elementi, materijali i link na ovu kuhinju.",
   },
 ];
 
@@ -95,8 +95,9 @@ export const isRoomCorner = (layout: Layout, wall: WallId, side: "left" | "right
 /** "Zid A · desni kraj" / "Zid B · gornji elementi" / "Otok · lijevi kraj" — where a "+" adds something */
 export function gapPlace(g: Pick<PlanGap, "kind" | "run" | "side" | "zone">, layout?: Layout): string {
   const where = g.run === "isl" ? islandWord(layout) : `Zid ${g.run.toUpperCase()}`;
-  if (g.kind === "upper") return `${where} · gornji elementi`;
+  if (g.kind === "upper") return `${where} · gornji elementi${g.side ? `, ${g.side === "left" ? "lijevi" : "desni"} kraj` : ""}`;
   if (g.kind === "free") return `${where} · ${g.zone === "upper" ? "prazan zid" : "slobodno mjesto"}`;
+  if (g.kind === "seam") return `${where} · između ${g.zone === "upper" ? "gornjih" : "donjih"} elemenata`;
   return `${where} · ${g.side === "left" ? "lijevi" : "desni"} kraj`;
 }
 

@@ -15,7 +15,10 @@
  *
  * A centimetre field with − / + (±1, ±10 with Shift; hold to repeat) and the range, and before anything changes a
  * preview of what the new numbers would cause (an element that no longer fits, a corner the kitchen has to keep clear
- * of). Enter applies, Escape cancels.
+ * of). Enter applies, Escape cancels. The kitchen label measures the cabinets (bare floor at an open end is not part of
+ * it): when the room the kitchen reserves is longer, the editor says both. "Jednostavno" leaves the distance from the
+ * wall's end out (unless the kitchen has one); the room editor offers the kitchen's own length (its label is hidden
+ * while the cabinets take the whole wall).
  *
  * Desktop: anchored to the label and following it while the view moves (ViewInfo, written straight into the DOM).
  * Phone: docked under the top bar, where the on-screen keyboard never covers it.
@@ -55,8 +58,10 @@ export function DimEditor({
   target,
   docked,
   insetsRef,
+  advanced,
   onApply,
   onCancel,
+  onSwitch,
 }: {
   apiRef: RefObject<StudioEngineApi | null>;
   live: boolean;
@@ -65,9 +70,13 @@ export function DimEditor({
   target: DimTargetState;
   docked: boolean;
   insetsRef: RefObject<Insets>;
+  /** "Napredno": the kitchen's distance from the end of the wall is always there */
+  advanced: boolean;
   /** apply an edit (`same` = nothing changes: just close); `say` = the toast */
   onApply: (r: EditResult, say: string, same: boolean) => void;
   onCancel: () => void;
+  /** open the editor of another label at the same place (the room's wall → the kitchen on it) */
+  onSwitch: (target: DimLabelTarget) => void;
 }) {
   const uid = useId();
   const { wall, kind } = target.target;
@@ -115,6 +124,12 @@ export function DimEditor({
   /** the kitchen inside the wall as the drafted numbers put it (the bar above the fields) */
   const draftRange = kitchen && ext ? extentRange(L, anchor, offset, value) : null;
   const run = !isl ? plan.runs.find((r) => r.wall === wall) : undefined;
+  // the cabinets (what the label measures) when they are shorter than the room the kitchen reserves
+  const cabLen = ext?.cabinets ? Math.round(ext.cabinets.to - ext.cabinets.from) : null;
+  const reserved = ext ? Math.round(ext.kitchen.to - ext.kitchen.from) : 0;
+  const bare = cabLen !== null && reserved - cabLen >= 1 ? reserved - cabLen : 0;
+  // "Jednostavno": where the kitchen starts only when it does not start at the wall's corner end
+  const showOffset = advanced || (ext ? ext.offset.value > 0 || !ext.anchorIsCorner : false);
 
   /* ---------------------------------------------------------------- placement */
 
@@ -125,7 +140,11 @@ export function DimEditor({
       const ins = insetsRef.current ?? { top: 0, right: 0, bottom: 0, left: 0 };
       const size = v?.size ?? { w: window.innerWidth, h: window.innerHeight };
       const A = areaOf(size, ins, 8);
-      const l = v?.walls.find((x) => x.wall === wall && (x.kind ?? "room") === kind);
+      // the kitchen label is hidden while the cabinets take the whole wall: then at the room label above it
+      const l =
+        v?.walls.find((x) => x.wall === wall && (x.kind ?? "room") === kind && x.visible) ??
+        v?.walls.find((x) => x.wall === wall && x.visible) ??
+        v?.walls.find((x) => x.wall === wall && (x.kind ?? "room") === kind);
       const c = l ? l.label : fallback ? { x: fallback.x + fallback.w / 2, y: fallback.y + fallback.h / 2 } : null;
       if (!c) return;
       const w = root.offsetWidth;
@@ -226,6 +245,8 @@ export function DimEditor({
       aria-describedby={`${uid}-r`}
       onKeyDown={onKeyDown}
       onBlur={(e) => {
+        // fading out (another label's editor took over): focus moving to it closes nothing
+        if (!present) return;
         const to = e.relatedTarget as Node | null;
         if (to && !e.currentTarget.contains(to) && !(to as HTMLElement).closest?.(".emna-studio-dim[role=button]")) onCancel();
       }}
@@ -276,10 +297,15 @@ export function DimEditor({
         />
         <p id={`${uid}-r`} className={`mt-2 px-4 text-center text-[11px] tabular-nums leading-snug ${out ? "text-[#E9AE9C]" : "text-mut"}`}>
           {out ? (n < lim.min ? `Najmanje ${lim.min} cm` : `Najviše ${maxLen} cm`) : `Od ${lim.min} do ${maxLen} cm`}
-          <span className="text-mut/70"> · Shift + strelica: 10 cm</span>
+          {!docked && <span className="text-mut/70"> · Shift + strelica: 10 cm</span>}
         </p>
+        {kitchen && bare > 0 && same && (
+          <p className="mt-2 px-4 text-center text-[11.5px] tabular-nums leading-snug text-fg/75">
+            Ormarići {cabLen} cm · još {bare} cm slobodnog poda (znak + dodaje element)
+          </p>
+        )}
 
-        {kitchen && ext && (
+        {kitchen && ext && showOffset && (
           <div className="mt-3.5 space-y-3 border-t border-white/[0.07] px-4 pt-3.5">
             <SmallField
               label={`Razmak od ${anchorFrom}`}
@@ -329,10 +355,15 @@ export function DimEditor({
                 <Switch id={`${uid}-fs`} checked={follow} onChange={setFollow} labelledBy={`${uid}-f`} />
               </div>
             ) : (
-              <p className="text-[11.5px] leading-snug text-mut">
-                Kuhinja na ovom zidu ostaje {ext.length.value} cm — nju mijenjate klikom na kotu „Kuhinja {W}” na podu ispred elemenata.
-              </p>
+              <p className="text-[11.5px] leading-snug text-mut">Kuhinja na ovom zidu ostaje {ext.length.value} cm.</p>
             )}
+            <button
+              type="button"
+              onClick={() => onSwitch({ kind: "kitchen", wall })}
+              className={`mt-1.5 inline-flex items-center text-[12px] font-medium text-accent transition-colors duration-300 hover:text-fg ${docked ? "min-h-11" : "min-h-8"}`}
+            >
+              {ext.full ? "Kraća kuhinja na ovom zidu" : "Promijeni duljinu kuhinje"}
+            </button>
           </div>
         )}
 

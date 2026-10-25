@@ -33,11 +33,13 @@ import {
   type SlotEditInfo,
   type TypeChoice,
 } from "@/lib/studio/edit";
-import { planKitchen, type KitchenPlan, type PlanSlot } from "@/lib/studio/plan";
+import { planGaps, planKitchen, type KitchenPlan, type PlanSlot } from "@/lib/studio/plan";
 import type { KitchenConfig, StudioEngineApi, ViewInfo } from "@/lib/studio/types";
+import { AddPicker, addItems } from "./AddPicker";
+import { gapStretch } from "./addModel";
 import type { ApplyOptions } from "./ElementEditor";
 import { ChevronDown, CloseIcon, InsertIcon, ModuleGlyph, MoreIcon, PlayIcon, SwapIcon, TrashIcon } from "./icons";
-import { clamp, isFlipped, noRoomText, rowSlots } from "./meta";
+import { clamp, isFlipped, islandWord, noRoomText, rowSlots } from "./meta";
 import { areaOf, moveFocus, useEngineView, type Area, type Insets } from "./overlay";
 import s from "./studio.module.css";
 
@@ -361,7 +363,7 @@ export function ElementToolbar({
     root.dataset.popOpen = "";
     placePop();
     const p = popRef.current;
-    const first = p?.querySelector<HTMLElement>("[data-current]") ?? p?.querySelector<HTMLElement>("[data-row]");
+    const first = p?.querySelector<HTMLElement>("[data-current]") ?? p?.querySelector<HTMLElement>("[data-tile]") ?? p?.querySelector<HTMLElement>("[data-row]");
     if (!p || !first) return;
     // the current option in view, inside the picker only (the page itself never scrolls)
     if (first.offsetTop + first.offsetHeight > p.clientHeight) p.scrollTop = first.offsetTop - p.clientHeight / 2 + first.offsetHeight / 2;
@@ -470,8 +472,39 @@ export function ElementToolbar({
     width: "Širina",
     type: "Zamijeni element",
   };
+  /**
+   * the last element before a free end of the run on that side: the "+" there (bare floor, bare wall the kitchen can
+   * grow into, the island's own end) — an insert on that side grows the run like that "+" does (edit.ts insertWays)
+   */
+  const endGap = (sd: Side) => {
+    const row = rowSlots(plan.slots, slot.run, slot.zone);
+    if (row[row.findIndex((x) => x.id === slot.id) + (sd === "left" ? -1 : 1)] || !slot.list) return null;
+    const local = (sd === "left") !== flip ? "left" : "right";
+    return planGaps(plan).find((g) => g.list === slot.list?.id && g.side === local && g.kind !== "free") ?? null;
+  };
+  /** no free room on that side (no empty space beside it, no free end): the element makes room by getting narrower (edit.ts) */
+  const tight = (sd: Side) => {
+    if (info.free >= 15 || endGap(sd)) return false;
+    const row = rowSlots(plan.slots, slot.run, slot.zone);
+    const nb = row[row.findIndex((x) => x.id === slot.id) + (sd === "left" ? -1 : 1)];
+    return !(nb && (nb.type === "slobodno" || nb.type === "prazno"));
+  };
+  /** what the add picker on that side starts with (addModel bestWidth) */
+  const addStretch = (sd: Side) => {
+    const g = endGap(sd);
+    if (g) return gapStretch(g);
+    // a full run: the element splits — the widest new width up to half of it comes preselected
+    if (tight(sd)) return Math.floor(width / 2);
+    return info.free >= 15 ? info.free : null;
+  };
   const popSub = (k: PopKind): string | null => {
-    if (k === "add-left" || k === "add-right") return info.free >= 1 ? `Slobodno je još ${Math.floor(info.free)} cm.` : "Novi element zauzima slobodan prostor do njega.";
+    if (k === "add-left" || k === "add-right") {
+      const sd: Side = k === "add-left" ? "left" : "right";
+      const g = info.free < 15 ? endGap(sd) : null;
+      if (g) return `${g.run === "isl" ? islandWord(cfg.layout) : "Kuhinja"} se produžuje do novog elementa — slobodno ${Math.floor(g.maxWidth)} cm.`;
+      if (tight(sd)) return `Nema slobodnog mjesta — ovaj element (${width} cm) suzit će se koliko treba.`;
+      return info.free >= 1 ? `Slobodno je još ${Math.floor(info.free)} cm.` : "Novi element zauzima slobodan prostor do njega.";
+    }
     if (k === "width") return widthNote ?? `${name} · sada ${width} cm`;
     return `${name}, ${width} cm — odaberite što će stajati na ovom mjestu.`;
   };
@@ -612,11 +645,13 @@ export function ElementToolbar({
               </div>
               <div className="px-2 pb-2">
                 {(kind === "add-left" || kind === "add-right") && (
-                  <AddList
-                    items={fitsOn(kind === "add-left" ? "left" : "right")}
+                  <AddPicker
+                    key={`${slot.id}-${kind}`}
+                    items={addItems(fitsOn(kind === "add-left" ? "left" : "right"))}
                     zone={slot.zone}
+                    stretch={addStretch(kind === "add-left" ? "left" : "right")}
                     docked={docked}
-                    onPick={(t, w) => doInsert(kind === "add-left" ? "left" : "right", t, w)}
+                    onPick={(it, w) => doInsert(kind === "add-left" ? "left" : "right", it.t, w)}
                   />
                 )}
                 {kind === "width" && (
@@ -780,67 +815,6 @@ function ToolButton({
       {docked && <span className={s.tbCap}>{caption}</span>}
       {!docked && <Tip>{off ? disabledWhy : (tip ?? label)}</Tip>}
     </button>
-  );
-}
-
-/** types that fit next to the element (or into a "+" place), each with every width that fits there (the usual one marked) */
-export function AddList({
-  items,
-  zone,
-  docked,
-  onPick,
-  rowOffset = 0,
-}: {
-  items: TypeChoice[];
-  zone: string;
-  docked: boolean;
-  onPick: (t: TypeChoice, w: number) => void;
-  /** a second list in the same picker continues the arrow-key rows (overlay.moveFocus) */
-  rowOffset?: number;
-}) {
-  return (
-    <ul className="space-y-0.5">
-      {items.map((t, i) => {
-        const r = i + rowOffset;
-        const widths = t.fitting?.length ? t.fitting : t.width !== null ? [t.width] : [];
-        const usual = t.width ?? widths[0];
-        const many = widths.length > 1;
-        const chip = (w: number, c: number) => (
-          <button
-            key={w}
-            type="button"
-            data-row={r}
-            data-col={c}
-            aria-label={`${t.name}, ${w} cm`}
-            onClick={() => onPick(t, w)}
-            className={`${s.popChip} ${docked ? "h-10 min-w-[44px]" : "h-8 min-w-[40px]"}`}
-            data-usual={w === usual || undefined}
-          >
-            {w}
-          </button>
-        );
-        return (
-          <li key={t.id} className="rounded-xl px-1 py-1 transition-colors duration-300 hover:bg-white/[0.035]">
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                data-row={r}
-                data-col={0}
-                title={t.description}
-                aria-label={`${t.name}, ${usual} cm${many ? `; širine ${widths.join(", ")} cm` : ""}`}
-                onClick={() => onPick(t, usual)}
-                className={`group flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 text-left outline-none transition-colors duration-300 focus-visible:bg-white/[0.06] ${docked ? "min-h-11" : "min-h-9"}`}
-              >
-                <ModuleGlyph type={t.id} zone={zone} className="h-7 w-7 shrink-0 text-fg/60 transition-colors duration-300 group-hover:text-fg" />
-                <span className="min-w-0 flex-1 text-[12.5px] leading-tight text-fg/85 group-hover:text-fg">{t.name}</span>
-              </button>
-              {!many && widths.length === 1 && <div className="shrink-0 pr-0.5">{chip(widths[0], 1)}</div>}
-            </div>
-            {many && <div className="mb-0.5 ml-[46px] mt-1 flex flex-wrap gap-1">{widths.map((w, i) => chip(w, i + 1))}</div>}
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 

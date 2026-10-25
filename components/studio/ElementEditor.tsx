@@ -49,6 +49,8 @@ import {
 } from "./icons";
 import { ChipRadio } from "./controls";
 import { EASE, isFlipped, islandOf, noRoomText, rowSlots, runName, sideHint, slotPlace, wallEndName } from "./meta";
+import { AddPicker, addItems } from "./AddPicker";
+import { moveFocus } from "./overlay";
 import { PriceBlock } from "./Price";
 import { RunElevation } from "./RunElevation";
 import s from "./studio.module.css";
@@ -128,6 +130,7 @@ export function ElementEditor({
   const reduce = Boolean(useReducedMotion());
   const titleRef = useRef<HTMLHeadingElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const addRef = useRef<HTMLDivElement>(null);
   // "add an element" picker, open for one element only (an edit or another element closes it)
   const [adding, setAdding] = useState<{ id: string; side: Side } | null>(null);
   const addSide = adding && adding.id === slotId ? adding.side : null;
@@ -139,9 +142,10 @@ export function ElementEditor({
     if (focusKey > 0) titleRef.current?.focus({ preventScroll: true });
   }, [focusKey]);
 
-  // a new element (or the add picker) starts at the top of the editor
+  // a new element (or the add picker) starts at the top of the editor; the picker with its first tile focused
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: 0 });
+    if (addSide) addRef.current?.querySelector<HTMLElement>("[data-tile]")?.focus({ preventScroll: true });
   }, [slotId, addSide]);
 
   // Esc also works when focus fell back to the page (a pressed control went away)
@@ -172,13 +176,13 @@ export function ElementEditor({
       canMove: flip ? info.canMoveRight : info.canMoveLeft,
       move: () => (flip ? moveRight : moveLeft)(cfg, slot.id),
       options: flip ? info.insertAfter : info.insertBefore,
-      insert: (type: string) => (flip ? insertAfter : insertBefore)(cfg, slot.id, type),
+      insert: (type: string, w?: number) => (flip ? insertAfter : insertBefore)(cfg, slot.id, type, w),
     },
     right: {
       canMove: flip ? info.canMoveLeft : info.canMoveRight,
       move: () => (flip ? moveLeft : moveRight)(cfg, slot.id),
       options: flip ? info.insertBefore : info.insertAfter,
-      insert: (type: string) => (flip ? insertBefore : insertAfter)(cfg, slot.id, type),
+      insert: (type: string, w?: number) => (flip ? insertBefore : insertAfter)(cfg, slot.id, type, w),
     },
   };
   const canAdd = (sd: Side) => side[sd].options.some((o) => o.width !== null);
@@ -200,8 +204,8 @@ export function ElementEditor({
     const r = side[sd].move();
     onEdit(r, { say: `Pomaknuto ${sd === "left" ? "lijevo" : "desno"}.` });
   };
-  const doInsert = (sd: Side, t: TypeChoice) => {
-    const r = side[sd].insert(t.id);
+  const doInsert = (sd: Side, t: TypeChoice, width?: number) => {
+    const r = side[sd].insert(t.id, width);
     const w = widthOf(r);
     if (onEdit(r, { say: `Dodan element ${sd === "left" ? "lijevo" : "desno"}: ${lower(t.name)}${w ? `, ${Math.round(w)} cm` : ""}.` })) {
       setAdding(null);
@@ -503,14 +507,22 @@ export function ElementEditor({
           ? `${slot.zone === "tall" ? "U visokom stupu" : "Na ovom nizu"} slobodno je još ${Math.floor(info.free)} cm.`
           : "Novi element zauzima slobodan prostor do njega."}
       </p>
-      <div className="mt-3">
-        <Tiles
-          labelledBy={`${titleId}-add`}
-          items={side[addSide].options}
+      <div
+        ref={addRef}
+        role="group"
+        aria-labelledby={`${titleId}-add`}
+        className="-mx-1.5 mt-3"
+        onKeyDown={(e) => {
+          if (addRef.current && (e.target as HTMLElement).dataset.row !== undefined && moveFocus(addRef.current, e)) e.preventDefault();
+        }}
+      >
+        <AddPicker
+          key={`${slot.id}-${addSide}`}
+          items={addItems(side[addSide].options)}
           zone={slot.zone}
-          strip={false}
-          autoFocus
-          onPick={(t) => (t.width === null ? refuse(notFit(t, info.free, side[addSide].insert(t.id).warning)) : doInsert(addSide, t))}
+          stretch={info.free >= 15 ? info.free : null}
+          docked={!desktop}
+          onPick={(it, w) => doInsert(addSide, it.t, w)}
         />
       </div>
     </div>
@@ -651,7 +663,6 @@ function Tiles({
   zone,
   strip,
   pressed = false,
-  autoFocus = false,
   labelledBy,
   onPick,
 }: {
@@ -661,7 +672,6 @@ function Tiles({
   strip: boolean;
   /** the tiles are a choice with a current one (aria-pressed) */
   pressed?: boolean;
-  autoFocus?: boolean;
   labelledBy: string;
   onPick: (t: TypeChoice) => void;
 }) {
@@ -671,10 +681,6 @@ function Tiles({
   const [focusIdx, setFocusIdx] = useState<number | null>(null);
   const tabIdx = focusIdx !== null && focusIdx < items.length ? focusIdx : current;
   const cols = strip ? 1 : 3;
-
-  useEffect(() => {
-    if (autoFocus) refs.current[0]?.focus({ preventScroll: true });
-  }, [autoFocus]);
 
   // phone strip: keep the current type in view
   const currentId = items[current]?.id;

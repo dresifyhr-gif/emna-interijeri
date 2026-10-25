@@ -30,7 +30,9 @@ export function TopBar({
   const st = STEPS[step];
   const fade = {
     initial: false as const,
-    animate: { opacity: controls ? 1 : 0, y: controls || reduce ? 0 : -6 },
+    // y does not depend on reduced motion: the server renders this (initial false) without knowing it — a different y on
+    // the client was a hydration mismatch; reduced motion makes it instant (duration 0) while it is still invisible
+    animate: { opacity: controls ? 1 : 0, y: controls ? 0 : -6 },
     transition: { duration: reduce ? 0 : 0.9, ease: EASE },
   };
 

@@ -327,12 +327,16 @@ export interface GapView {
    * free   an empty-space element ("Slobodno mjesto" / "Bez gornjeg elementa") — something can take its place
    * end    a free end of a wall's kitchen run: the bare floor left at the end of the run and / or the bare wall beyond
    *        the kitchen (an insert there extends the run — "produži kuhinju"); base cabinets or a tall column
-   * upper  bare wall above the worktop with no wall units
+   * upper  bare wall in the wall-unit row: between wall units, beside the window, or (with `side`) at a free end of the
+   *        row — over bare floor and on the bare wall beyond the kitchen (an insert there grows the kitchen run)
    * island an end of the island / peninsula (free room in it, or it can grow)
+   * seam   a full row: the joint between two elements — a new one goes in between, one of the two gets narrower
    */
-  kind: "free" | "end" | "upper" | "island";
+  kind: "free" | "end" | "upper" | "island" | "seam";
   run: WallId | "isl";
   zone: "base" | "upper" | "island";
+  /** what a "+" here adds ("Gornji element", "Donji element", "Donji ili visoki element", "Element otoka" …); absent in older engines */
+  label?: string;
   side?: "left" | "right";
   /** run-local cm: left edge of the empty stretch, and its width */
   offset_cm: number;
@@ -385,6 +389,8 @@ export interface ViewInfo {
     length_cm: number;
     /** centre of the label (px) */
     label: { x: number; y: number };
+    /** the label pill's size (px) — overlays keep clear of it; absent in older engines and before it is laid out */
+    size?: { w: number; h: number };
     /** shown, faded in and on screen */
     visible: boolean;
   }>;

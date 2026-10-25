@@ -311,19 +311,23 @@ class Mod {
     const p = 0.016;
     const z0 = FT / 2 - 0.01;
     const z1 = FT / 2 + 0.0008;
+    // the profile caps the front's edge 0.3 mm proud of it and stops 0.3 mm short of its corners: no face of the
+    // profile lies in a face of the front (they would flicker)
+    const e = 0.0003;
     let prof: BoxSpec;
     let groove: BoxSpec;
     if (at.edge === "mid" && at.free !== undefined) {
       const sx = at.free > 0 ? fw / 2 : -fw / 2;
-      const a = Math.min(sx, sx - Math.sign(sx) * p);
-      const b = Math.max(sx, sx - Math.sign(sx) * p);
-      prof = [a, -fh / 2, z0, b, fh / 2, z1];
+      const out = sx + Math.sign(sx) * e;
+      const a = Math.min(out, sx - Math.sign(sx) * p);
+      const b = Math.max(out, sx - Math.sign(sx) * p);
+      prof = [a, -fh / 2 + e, z0, b, fh / 2 - e, z1];
       const g0 = sx > 0 ? sx - 0.012 : sx + 0.004;
       groove = [g0, -fh / 2 + 0.0005, FT / 2 - 0.004, g0 + 0.008, fh / 2 - 0.0005, z1 + 0.0004];
     } else {
       const top = at.edge !== "bottom";
       const y1 = top ? fh / 2 : -fh / 2 + p;
-      prof = [-fw / 2, y1 - p, z0, fw / 2, y1, z1];
+      prof = [-fw / 2 + e, y1 - p - (top ? 0 : e), z0, fw / 2 - e, y1 + (top ? e : 0), z1];
       const gy = top ? fh / 2 - 0.012 : -fh / 2 + 0.004;
       groove = [-fw / 2 + 0.0005, gy, FT / 2 - 0.004, fw / 2 - 0.0005, gy + 0.008, z1 + 0.0004];
     }
@@ -1034,7 +1038,8 @@ function buildShapedCorner(b: Mod, zone: "base" | "upper", includeBody: boolean)
 
   // ---- fronts
   if (base && gola) {
-    const g = mesh(boxes([bx(dc, f1 + 0.001, dc - 0.03, w, TOP_Y - 0.001, dc + 0.001), bx(dc - 0.03, f1 + 0.001, dc, dc + 0.001, TOP_Y - 0.001, across)]), mats.gola, false, true);
+    // (each leg ends a millimetre inside the carcass end it runs to: not in one plane with that board)
+    const g = mesh(boxes([bx(dc, f1 + 0.001, dc - 0.03, w - 0.001, TOP_Y - 0.001, dc + 0.001), bx(dc - 0.03, f1 + 0.001, dc, dc + 0.001, TOP_Y - 0.001, across - 0.001)]), mats.gola, false, true);
     m.fronts.add(g);
   }
   const H = f1 - f0;
@@ -1342,7 +1347,8 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
     const bins: BoxSpec[] = [];
     for (const f of [0.2, 0.45, 0.7]) {
       const yy = -doorH / 2 + doorH * f;
-      bins.push(...tray(-fw / 2 + 0.04, yy, -doorT - 0.09, fw / 2 - 0.04, yy + 0.07, -doorT, 0.004));
+      // (inset so that, closed, their sides are not in one plane with the freezer baskets inside)
+      bins.push(...tray(-fw / 2 + 0.043, yy, -doorT - 0.09, fw / 2 - 0.043, yy + 0.07, -doorT, 0.004));
     }
     const bm = mesh(boxes(bins), mats.liner);
     bm.position.set(lx, 0, 0);
@@ -1495,7 +1501,8 @@ function buildTall(b: Mod, includeBody: boolean): void {
       b.piece("broom:stick", () => new THREE.CylinderGeometry(0.012, 0.012, 1.25, 12), mats.steel, narrow ? bx : w * 0.42, y0 + T + 0.7, narrow ? z + 0.17 : z + 0.08);
       if (w >= 0.44) {
         const vx = narrow ? w * 0.68 : w * 0.62;
-        b.body(boxes([[vx - 0.1, y0 + T, z - 0.12, vx + 0.1, y0 + T + 0.32, z + 0.14]]), mats.bin);
+        // (a millimetre above the shelf: not in one plane with the broom head beside it)
+        b.body(boxes([[vx - 0.1, y0 + T + 0.001, z - 0.12, vx + 0.1, y0 + T + 0.32, z + 0.14]]), mats.bin);
         b.piece("vac:hose", () => new THREE.TorusGeometry(0.09, 0.016, 10, 28), mats.trim, vx, y0 + T + 0.44, z);
       }
     }

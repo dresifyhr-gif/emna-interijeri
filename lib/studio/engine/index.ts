@@ -49,12 +49,13 @@ import {
   removeUnderLeds,
   replacePieces,
   syncIslandHood,
+  syncKitchenLabels,
   syncRunSurfaces,
   underLeds,
   type KitchenRT,
   type ModuleEnv,
 } from "./kitchen";
-import { injectStyle, makeEditable, releaseStyle, retireLabel, widthTag, type WidthTag } from "./labels";
+import { injectStyle, labelSize, makeEditable, releaseStyle, retireLabel, widthTag, type WidthTag } from "./labels";
 import { Lights, MOODS } from "./lights";
 import { ACCENT, Materials, finishLook, type FinishLook, type Mat } from "./materials";
 import { canDemo, playDemo, stopDemo } from "./mechanisms";
@@ -586,7 +587,7 @@ class Engine {
     }
   }
 
-  private build(cfg: KitchenConfig, tempo: "cinematic" | "quick"): KitchenRT {
+  private build(cfg: KitchenConfig, tempo: "cinematic" | "quick", instantLabels = false): KitchenRT {
     const plan = planKitchen(cfg);
     return buildKitchen(
       {
@@ -595,6 +596,7 @@ class Engine {
         topId: this.applied.top,
         labels: this.mode === "studio",
         tempo,
+        instantLabels,
         wallMat: (w) => this.wallMatFor(cfg, w),
       },
       plan,
@@ -666,8 +668,9 @@ class Engine {
     this.lights.setLeds(ledLights(K, this.lights.pool.length));
     this.refreshLedVisibility();
     this.refreshRayTargets();
-    const c = K.box.getCenter(new THREE.Vector3());
-    const r = K.box.getSize(new THREE.Vector3()).length() / 2;
+    const fb = this.mode === "studio" ? K.frame : K.box;
+    const c = fb.getCenter(new THREE.Vector3());
+    const r = fb.getSize(new THREE.Vector3()).length() / 2;
     if (this.controls) {
       this.controls.cursor.copy(c);
       this.controls.maxTargetRadius = Math.max(1, r * 0.7);
@@ -882,17 +885,19 @@ class Engine {
   }
 
   /** fit distance for the current kitchen at (az, el); the hero frames the whole set incl. walls */
+  /** fit distance for the current kitchen at (az, el): the hero frames the whole set incl. walls, the studio the room */
   private fitAt(az: number, el: number) {
     const K = this.kitchen;
     if (!K) return null;
-    const box = this.mode === "showcase" ? K.room : K.box;
+    const box = this.mode === "showcase" ? K.room : K.frame;
     const target = this.frameTarget(K);
     return fitBox(this.camera, box, target, viewDir(az, el), this.region, 1.5, 60);
   }
 
   private frameTarget(K: KitchenRT, out = new THREE.Vector3()): THREE.Vector3 {
+    if (this.mode === "studio") return K.frame.getCenter(out);
     const t = K.box.getCenter(out);
-    if (this.mode === "showcase") t.y = (K.room.min.y + K.room.max.y) / 2;
+    t.y = (K.room.min.y + K.room.max.y) / 2;
     return t;
   }
 
@@ -1405,14 +1410,17 @@ class Engine {
     this.dirty = true;
   }
 
+  /** the labels say the new lengths at once (the rebuild follows a moment later); kitchen labels: the cabinets */
   private updateLabelText(cfg: KitchenConfig): void {
     const K = this.kitchen;
     if (!K) return;
+    const plan = planKitchen(cfg);
     for (const l of K.labels) {
       if (l.wall === "isl") l.setText(cfg.island);
       else if (l.kind === "kitchen") {
-        const k = kitchenRange(cfg, l.wall);
-        l.setText(k.to - k.from);
+        const r = plan.runs.find((x) => x.wall === l.wall);
+        const c = r?.cabinets ?? r?.kitchen ?? kitchenRange(cfg, l.wall);
+        l.setText(c.to - c.from);
       } else l.setText(cfg.walls[l.wall]);
     }
     this.dirty = true;
@@ -1468,7 +1476,8 @@ class Engine {
       this.presets = this.makePresets();
       this.presetIdx = 0;
     }
-    const K = this.build(this.cfg, this.mode === "studio" ? "quick" : "cinematic");
+    // the studio's dimension labels stay on screen through a rebuild: the new ones are there from its first frame
+    const K = this.build(this.cfg, this.mode === "studio" ? "quick" : "cinematic", this.mode === "studio" && Boolean(old));
     this.kitchen = K;
     this.scene.add(K.root);
     this.afterBuild(K);
@@ -1479,7 +1488,10 @@ class Engine {
     this.listHoverId = null;
     if (old) {
       for (const l of old.labels) {
-        l.el.style.opacity = "0";
+        // studio: hidden on the frame that first shows the new kitchen's labels (they stand in their place from its
+        // first frame) — never a moment without labels, and they do not sink with the old kitchen. The hero fades.
+        if (this.mode === "studio") l.group.visible = false;
+        else l.el.style.opacity = "0";
         retireLabel(l);
       }
       if (this.mode === "studio" && !this.reduced) {
@@ -1626,6 +1638,8 @@ class Engine {
     if (syncIslandHood(K, { mats: this.mats }, plan)) this.dirty = true;
     // the worktop, backsplash and plinth end with the cabinets: an edit that changes where they end rebuilds them
     if (syncRunSurfaces(K, this.mats, plan, this.mats.top(this.applied.top), this.mode === "studio")) this.dirty = true;
+    // and the kitchen labels on the floor measure them
+    if (syncKitchenLabels(K, plan)) this.dirty = true;
     K.plan = plan;
     K.order = [...plan.slots]
       .sort((p, q) => zoneRank(p) - zoneRank(q))
@@ -1762,7 +1776,8 @@ class Engine {
   private assign(me: THREE.Mesh, mat: THREE.Material): void {
     if (me.userData.hl) {
       me.userData.baseMat = mat;
-      me.material = this.mats.highlight(mat);
+      // a hovered wall keeps its faint surface tint (hoverSurface), a cabinet part its rim
+      me.material = me.userData.hlSurface ? this.mats.surfaceHighlight(mat) : this.mats.highlight(mat);
     } else me.material = mat;
   }
 
@@ -2070,27 +2085,32 @@ class Engine {
     return p.x >= r.min.x - FLOOR_REACH && p.x <= r.max.x + FLOOR_REACH && p.z >= r.min.z - FLOOR_REACH && p.z <= r.max.z + FLOOR_REACH;
   }
 
-  /** the faint accent rim on the room surface under the pointer (null = none) */
+  /**
+   * the very light accent tint on the wall under the pointer (null = none) — its own uniform, far fainter than a
+   * cabinet's rim (with the pointer cursor that is enough to say "clickable"); the floor gets the cursor only
+   */
   private hoverSurface(me: THREE.Mesh | null): void {
     const prev = this.surfaceHover;
     if (prev === me) return;
     if (prev && prev.userData.hl) {
       prev.material = prev.userData.baseMat as THREE.Material;
       prev.userData.hl = false;
+      prev.userData.hlSurface = false;
     }
     this.surfaceHover = me;
     if (me && !me.userData.hl) {
       const mat = me.material as THREE.Material;
-      const hl = this.mats.highlight(mat);
+      const hl = this.mats.surfaceHighlight(mat);
       if (hl !== mat) {
         me.userData.baseMat = mat;
         me.material = hl;
         me.userData.hl = true;
-        const u = this.mats.hl.value;
-        const target = ACCENT.clone().multiplyScalar(0.55);
-        this.tweens.cancel("hl");
+        me.userData.hlSurface = true;
+        const u = this.mats.hlSurface.value;
+        const target = ACCENT.clone().multiplyScalar(0.35);
+        this.tweens.cancel("hlSurface");
         const from = u.clone();
-        this.tweens.add(0.25, 0, (e) => u.copy(from).lerp(target, e), { tag: "hl" });
+        this.tweens.add(0.25, 0, (e) => u.copy(from).lerp(target, e), { tag: "hlSurface" });
       }
     }
     this.dirty = true;
@@ -2317,12 +2337,15 @@ class Engine {
       if (l.el.getAttribute("aria-hidden") === "true") continue;
       const p = this.toScreen(l.obj.getWorldPosition(this.tmpC));
       const faded = Number(l.el.style.opacity || "1") < 0.5;
+      const visible = Boolean(p) && !faded && this.shown(l.obj) && l.el.style.display !== "none" && onScreen(p?.x ?? -1, p?.y ?? -1);
+      const size = visible ? labelSize(l.el) : undefined;
       view.walls.push({
         wall: l.wall,
         kind: l.kind,
         length_cm: Number(l.el.dataset.cm ?? 0),
         label: p ?? { x: 0, y: 0 },
-        visible: Boolean(p) && !faded && this.shown(l.obj) && l.el.style.display !== "none" && onScreen(p?.x ?? -1, p?.y ?? -1),
+        visible,
+        ...(size ? { size } : {}),
       });
     }
     if (this.mode === "studio") view.gaps = this.computeGaps(K, onScreen);
@@ -2342,6 +2365,7 @@ class Engine {
         kind: g.kind,
         run: g.run,
         zone: g.zone,
+        label: g.label,
         ...(g.side ? { side: g.side } : {}),
         offset_cm: Math.round(g.from * 10) / 10,
         width_cm: Math.round((g.to - g.from) * 10) / 10,
