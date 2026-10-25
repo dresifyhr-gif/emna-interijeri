@@ -13,32 +13,39 @@
  *
  * Editing on the kitchen itself: a click on an element selects it and shows the element toolbar over it
  * (ElementToolbar — add left / right, width, replace, remove, mechanism, "Više" for the full ElementEditor in the
- * panel); a click on a dimension label opens the wall-length editor there (DimEditor). Those edits say what they did
- * in a toast with "Poništi" (Ctrl / ⌘ + Z works too). Rows of the "Elementi" list light their element up in 3D.
- * Overlays follow the view through the engine's ViewInfo (overlay.ts) and never make the engine render.
+ * panel); a click on a dimension label opens the length editor there (DimEditor — the room's wall, or the kitchen run on
+ * it, or the island); while editing (the "Elementi" step, or an element selected) "+" markers sit at every empty place
+ * (GapLayer: the add picker, tall units at a run's end); a click on a wall or the floor opens its finishes
+ * (SurfacePicker). Those edits say what they did in a toast with "Poništi" (Ctrl / ⌘ + Z works too). Rows of the
+ * "Elementi" list light their element up in 3D. Overlays follow the view through the engine's ViewInfo (overlay.ts)
+ * and never make the engine render.
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
-import { isEdited, remove, resetAll, resetRun, setWallLength, slotEditInfo, type EditResult } from "@/lib/studio/edit";
+import { isEdited, remove, resetAll, resetRun, slotEditInfo, type EditResult, type RunRef } from "@/lib/studio/edit";
 import { geometryKey, planKitchen, sanitizeConfig, wallsFor, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { estimate } from "@/lib/studio/price";
 import { configFromQuery, encodeConfig, studioPath } from "@/lib/studio/share";
 import { summarize } from "@/lib/studio/summary";
-import type { DimTarget, FrontZone, KitchenConfig, Layout, ModuleInfo, Mood, ScreenRect, WallId } from "@/lib/studio/types";
+import type { DimLabelTarget, FrontZone, KitchenConfig, Layout, ModuleInfo, Mood, ScreenRect, SurfaceHit, WallId } from "@/lib/studio/types";
 import { DimEditor, type DimTargetState } from "./DimEditor";
+import { GapLayer } from "./GapLayer";
 import { ElementEditor, type ApplyOptions, type EditNote } from "./ElementEditor";
 import { ElementToolbar, SelectionLeader } from "./ElementToolbar";
 import { markEditHintSeen, useEditHintSeen, useMediaQuery, useOrigin, useViewport } from "./hooks";
 import { CursorIcon, OrbitIcon } from "./icons";
 import { fitToPlanner } from "./limits";
-import { EASE, LAST_STEP, STEPS, clamp, eur, runName, stepIndex } from "./meta";
+import { EASE, LAST_STEP, STEPS, clamp, eur, islandWord, resetTarget, runName, stepIndex } from "./meta";
 import { isTyping, type Insets } from "./overlay";
 import { DesktopPanel, MobileSheet, MobileSummary, PANEL_GAP, PANEL_W } from "./Panel";
 import { STEP_PANEL_ID, stepTabId } from "./StepNav";
 import { StudioLoader } from "./StudioLoader";
+import { fullKitchenWalls } from "./room";
 import { leadSnapshot, studioSnapshot } from "./snapshot";
+import s from "./studio.module.css";
+import { SurfacePicker, type SurfaceTarget } from "./SurfacePicker";
 import { SuccessOverlay } from "./SuccessOverlay";
 import { TOPBAR_H, TopBar } from "./TopBar";
 import { useStudioEngine } from "./useStudioEngine";
@@ -128,8 +135,12 @@ export function Studio() {
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [editorFocus, setEditorFocus] = useState(0);
   const [toast, setToast] = useState<ToastData | null>(null);
-  /** the wall-length editor at a dimension label */
+  /** the length editor at a dimension label (the room's wall, the kitchen run on it, the island) */
   const [dimEdit, setDimEdit] = useState<DimTargetState | null>(null);
+  /** the "+" whose add picker is open */
+  const [gapOpen, setGapOpen] = useState<string | null>(null);
+  /** the finishes popover of a clicked wall / the floor */
+  const [surface, setSurface] = useState<SurfaceTarget | null>(null);
   const [runTab, setRunTab] = useState<RunId>("a");
   /** the config before a shape change put edited elements back to the planner's (ShapeStep offers it back) */
   const [layoutUndo, setLayoutUndo] = useState<KitchenConfig | null>(null);
@@ -162,6 +173,14 @@ export function Studio() {
   const toastSeq = useRef(0);
   /** what had focus when the wall-length editor opened (its label), to go back to on Escape */
   const dimOpener = useRef<HTMLElement | null>(null);
+  const surfaceSeq = useRef(0);
+  /**
+   * the 3D view was pressed while something was selected or open (the press closes that): the click that follows is
+   * not a wall / floor pick
+   */
+  const busyPress = useRef(false);
+  /** an overlay of the 3D view is open (dimension editor, add picker) — read at the moment of a press */
+  const overlayRef = useRef(false);
   /** the latest handlers for listeners registered once */
   const keys = useRef<{ remove: () => void; undo: (() => void) | null }>({ remove: () => {}, undo: null });
 
@@ -178,6 +197,7 @@ export function Studio() {
   useEffect(() => {
     selRef.current = selSlot ? selSlot.id : null;
     slotsRef.current = plan.slots;
+    overlayRef.current = Boolean(dimEdit || gapOpen);
   });
 
   /* ---------------------------------------------------------------- engine */
@@ -209,16 +229,32 @@ export function Studio() {
     shownId.current = m.id;
   }, []);
 
-  /** a dimension label in 3D was clicked: the wall-length editor opens there */
-  const handleWallLabel = useCallback((wall: DimTarget, rect: ScreenRect) => {
+  /** a dimension label in 3D was clicked: the length editor opens there */
+  const handleDimLabel = useCallback((target: DimLabelTarget, rect: ScreenRect) => {
     markEditHintSeen();
     setHintsGone(true);
     const a = document.activeElement;
     dimOpener.current = a instanceof HTMLElement && a !== document.body ? a : null;
-    setDimEdit({ wall, rect, n: performance.now() });
+    setGapOpen(null);
+    setSurface(null);
+    setDimEdit({ target, rect, n: performance.now() });
   }, []);
 
-  const { apiRef, status } = useStudioEngine(containerRef, { config: cfg, mood, onSelect: handleSelect, onWallLabel: handleWallLabel });
+  /** a wall or the floor was clicked (nothing selected or open before the press): its finishes open there */
+  const handleSurface = useCallback((hit: SurfaceHit) => {
+    if (busyPress.current) return;
+    surfaceSeq.current += 1;
+    setSurface({ hit, n: surfaceSeq.current });
+    setAnnounce(hit.surface === "wall" && hit.wall ? `Zid ${hit.wall.toUpperCase()}: odaberite boju ili oblogu.` : "Pod: odaberite pod.");
+  }, []);
+
+  const { apiRef, status } = useStudioEngine(containerRef, {
+    config: cfg,
+    mood,
+    onSelect: handleSelect,
+    onDimLabel: handleDimLabel,
+    onSurfaceClick: handleSurface,
+  });
   const readyRef = useRef(false);
   useEffect(() => {
     readyRef.current = status === "ready";
@@ -362,6 +398,8 @@ export function Studio() {
       setHintsGone(true);
       // what the engine reports from now on is their click, not an edit settling
       follow.current = null;
+      // a press that closes a selection or an overlay is not also a wall / floor pick
+      busyPress.current = Boolean(selRef.current || overlayRef.current);
     };
     const onWheel = () => setHintsGone(true);
     // with an element selected: Delete removes it, Tab goes straight to its toolbar (past the wall labels)
@@ -480,7 +518,8 @@ export function Studio() {
       if (cfg.layout === layout) return;
       const used = wallsFor(layout);
       const win = cfg.window && !used.includes(cfg.window.wall) ? { ...cfg.window, wall: "a" as const } : cfg.window;
-      // edited runs and corners belong to the old shape's walls
+      // edited runs, corners and the tall columns' places belong to the old shape's walls; where the kitchen stands on
+      // the room's walls (extents) is a room measure and stays (sanitizeConfig applies the new shape's corner rules)
       const next = fitToPlanner(resetAll({ ...cfg, layout, window: win }));
       // the last shape that had edited elements can be brought back from the "Oblik" step
       setLayoutUndo(isEdited(cfg) ? cfg : layoutUndo);
@@ -488,6 +527,8 @@ export function Studio() {
       setUndoStack([]);
       setRunTab("a");
       setDimEdit(null);
+      setGapOpen(null);
+      setSurface(null);
       closeEditor();
     },
     [cfg, layoutUndo, closeEditor],
@@ -582,9 +623,9 @@ export function Studio() {
     }
   }, [undoStack, cfg, editorOpen, showToast]);
 
-  /** a run back to the planner: a wall (base, wall units and, on wall A, the corners), the island or the tall column */
+  /** a run back to the planner: a wall (base, wall units and, on wall A, the corners), the island or a tall column */
   const resetRunTo = useCallback(
-    (run: RunId | "tall") => {
+    (run: RunRef) => {
       let r: EditResult = resetRun(cfg, run);
       if (run === "a" && r.cfg.corners) {
         const c = { ...r.cfg };
@@ -593,7 +634,11 @@ export function Studio() {
       }
       // keep the editor on whatever now stands at the same place
       const keep = selId && planKitchen(r.cfg).slots.some((x) => x.id === selId) ? selId : null;
-      const label = run === "tall" ? "Visoki stup" : run === "isl" ? "Otok" : runName(run);
+      if (typeof run === "string" && run.startsWith("tall:")) {
+        applyEdit(r, { select: keep, toast: "Visoki stup je uklonjen." });
+        return;
+      }
+      const label = run === "tall" ? "Visoki stup" : run === "isl" ? islandWord(cfg.layout) : runName(run as WallId);
       applyEdit(r, { select: keep, toast: `${label}: vraćen zadani raspored.` });
     },
     [cfg, selId, applyEdit],
@@ -631,7 +676,8 @@ export function Studio() {
   const stepEdit = useCallback(
     (r: EditResult, opts: StepEditOptions = {}): boolean => {
       const keep = selId && planKitchen(fitToPlanner(r.cfg)).slots.some((x) => x.id === selId) ? selId : null;
-      return applyEdit(r, { select: keep, quiet: true, say: opts.say, coalesce: opts.coalesce });
+      // notify: the result's note goes into a toast with "Poništi" (the step has no place for it next to its controls)
+      return applyEdit(r, { select: keep, quiet: !opts.notify, say: opts.say, coalesce: opts.coalesce });
     },
     [selId, applyEdit],
   );
@@ -645,26 +691,55 @@ export function Studio() {
     if (back?.isConnected) back.focus({ preventScroll: true });
   }, []);
 
-  const applyWall = useCallback(
-    (wall: DimTarget, cm: number) => {
-      const cur = wall === "isl" ? cfg.island : cfg.walls[wall];
-      const r = setWallLength(cfg, wall, cm);
+  /** the length editor's result: the room's wall (setWallLength / setRoomWall), the kitchen run (setKitchenExtent), the island */
+  const applyDim = useCallback(
+    (r: EditResult, say: string, same: boolean) => {
       if (!r.ok) {
         refuse(r.warning ?? "Ta duljina ovdje nije moguća.");
         return;
       }
       setDimEdit(null);
       dimOpener.current = null;
-      if (r.value === cur && !r.warning) {
+      if (same) {
         focusCanvas();
         return;
       }
       const keep = selId && planKitchen(r.cfg).slots.some((x) => x.id === selId) ? selId : null;
-      applyEdit(r, { select: keep, toast: `${wall === "isl" ? "Otok" : `Zid ${wall.toUpperCase()}`}: ${r.value} cm.` });
+      applyEdit(r, { select: keep, toast: say });
       // the labels are built anew with the kitchen: focus waits in the 3D view
       focusCanvas();
     },
-    [cfg, selId, refuse, applyEdit, focusCanvas],
+    [selId, refuse, applyEdit, focusCanvas],
+  );
+
+  /* ---------------------------------------------------------------- "+" places and room surfaces */
+
+  const insertAtGapDone = useCallback(
+    (r: EditResult, say: string) => {
+      if (!r.ok) {
+        refuse(r.warning ?? "Ovdje nema mjesta za taj element.");
+        return;
+      }
+      setGapOpen(null);
+      openedFrom.current = "canvas";
+      // the new element is selected: its toolbar takes over (the engine follows it once it has the new kitchen)
+      applyEdit(r, { toast: say });
+    },
+    [refuse, applyEdit],
+  );
+
+  const surfaceEdit = useCallback(
+    (r: EditResult, say: string, coalesce: string) => {
+      applyEdit(r, { select: null, quiet: true, say, coalesce });
+    },
+    [applyEdit],
+  );
+  const closeSurface = useCallback(
+    (refocus: boolean) => {
+      setSurface(null);
+      if (refocus) focusCanvas();
+    },
+    [focusCanvas],
   );
 
   /* ---------------------------------------------------------------- steps */
@@ -673,6 +748,8 @@ export function Studio() {
     const n = clamp(i, 0, LAST_STEP);
     if (!desktop) setSheetOpen(true);
     if (selId) closeEditor();
+    setGapOpen(null);
+    setSurface(null);
     if (n === step) return;
     setDir(n > step ? 1 : -1);
     setStep(n);
@@ -824,7 +901,7 @@ export function Studio() {
       onNavigate={(id) => openElement(id, { editor: true })}
       onHover={hoverElement}
       onDemo={() => apiRef.current?.demo(selSlot.id)}
-      onResetRun={(sl) => resetRunTo(sl.zone === "tall" ? "tall" : sl.run)}
+      onResetRun={(sl) => resetRunTo(sl.zone === "tall" ? resetTarget(sl).run : sl.run)}
       onUndo={undoStack.length ? undo : null}
       onClose={() => closeEditor(true)}
     />
@@ -847,8 +924,12 @@ export function Studio() {
   const overlays = live && uiShown && !failed;
   // the element toolbar: over the element (desktop) / docked above the sheet (phone, not while the editor fills it)
   const toolbarOn = Boolean(overlays && selInfo);
-  const toolbarHidden = !desktop && (editorOpen || summaryOpen || Boolean(dimEdit));
+  const toolbarHidden = !desktop && (editorOpen || summaryOpen || Boolean(dimEdit) || Boolean(gapOpen));
+  // "+" markers while editing: the "Elementi" step, or an element selected (not behind the phone's editor or the summary)
+  const gapsOn = Boolean(overlays && (stepId === "elementi" || selSlot || gapOpen) && !dimEdit && !summaryOpen && !(editorOpen && !desktop));
   const panelLeft = viewport.w - PANEL_GAP - PANEL_W;
+  // walls whose kitchen run takes the whole wall (phone: their floor label is left out, the room label says it)
+  const fullKitchens = fullKitchenWalls(plan).join(" ");
   const canDemo = Boolean(selSlot && moduleDef(selSlot.zone, selSlot.type)?.demo !== false);
 
   return (
@@ -870,7 +951,7 @@ export function Studio() {
         />
 
         {/* the 3D view */}
-        <div ref={containerRef} className="absolute inset-0 z-0 bg-[#131315]" />
+        <div ref={containerRef} className={`absolute inset-0 z-0 bg-[#131315] ${s.stage}`} data-kfull={desktop ? undefined : fullKitchens || undefined} />
 
         {failed && <NoWebGL desktop={desktop} />}
 
@@ -899,7 +980,7 @@ export function Studio() {
                 exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.5 } }}
               >
                 <Hint icon={<CursorIcon className="h-4 w-4" />} accent>
-                  {desktop ? "Kliknite element ili kotu za izmjenu" : "Dodirnite element ili kotu za izmjenu"}
+                  {desktop ? "Kliknite element, kotu, zid ili pod za izmjenu" : "Dodirnite element, kotu, zid ili pod za izmjenu"}
                 </Hint>
               </motion.div>
             )}
@@ -911,8 +992,40 @@ export function Studio() {
           <SelectionLeader apiRef={apiRef} live={live} slotId={selSlot.id} panelLeft={panelLeft} />
         )}
 
-        {/* on the kitchen itself: the selected element's toolbar and the wall-length editor (both fade out when done) */}
+        {/* on the kitchen itself: "+" at every empty place, the selected element's toolbar, the length editor and the
+            finishes of a clicked wall / the floor (they fade out when done) */}
         <AnimatePresence>
+          {gapsOn && (
+            <motion.div
+              key="gaps"
+              className={`pointer-events-none absolute inset-0 ${gapOpen ? "z-[27]" : "z-[22]"}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { duration: reduce ? 0 : 0.35, ease: EASE } }}
+              exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.2, ease: EASE } }}
+            >
+              <GapLayer
+                apiRef={apiRef}
+                live={live}
+                cfg={cfg}
+                plan={plan}
+                docked={!desktop}
+                insetsRef={insetsRef}
+                openId={gapOpen}
+                onOpen={setGapOpen}
+                onInsert={insertAtGapDone}
+              />
+            </motion.div>
+          )}
+          {overlays && surface && (
+            <motion.div
+              key={`surface-${surface.n}`}
+              className="pointer-events-none absolute inset-0 z-[26] [&>*]:pointer-events-auto"
+              initial={false}
+              exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.2, ease: EASE } }}
+            >
+              <SurfacePicker cfg={cfg} target={surface} docked={!desktop} insetsRef={insetsRef} onEdit={surfaceEdit} onClose={closeSurface} />
+            </motion.div>
+          )}
           {toolbarOn && selInfo && (
             <motion.div
               key="toolbar"
@@ -952,10 +1065,11 @@ export function Studio() {
                 apiRef={apiRef}
                 live={live}
                 cfg={cfg}
+                plan={plan}
                 target={dimEdit}
                 docked={!desktop}
                 insetsRef={insetsRef}
-                onApply={applyWall}
+                onApply={applyDim}
                 onCancel={cancelDim}
               />
             </motion.div>

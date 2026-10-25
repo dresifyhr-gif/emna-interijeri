@@ -783,21 +783,25 @@ function ToolButton({
   );
 }
 
-/** types that fit next to the element, each with every width that fits there (the usual one marked) */
-function AddList({
+/** types that fit next to the element (or into a "+" place), each with every width that fits there (the usual one marked) */
+export function AddList({
   items,
   zone,
   docked,
   onPick,
+  rowOffset = 0,
 }: {
   items: TypeChoice[];
   zone: string;
   docked: boolean;
   onPick: (t: TypeChoice, w: number) => void;
+  /** a second list in the same picker continues the arrow-key rows (overlay.moveFocus) */
+  rowOffset?: number;
 }) {
   return (
     <ul className="space-y-0.5">
-      {items.map((t, r) => {
+      {items.map((t, i) => {
+        const r = i + rowOffset;
         const widths = t.fitting?.length ? t.fitting : t.width !== null ? [t.width] : [];
         const usual = t.width ?? widths[0];
         const many = widths.length > 1;

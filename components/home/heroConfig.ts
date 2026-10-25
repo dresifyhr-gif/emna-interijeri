@@ -50,11 +50,14 @@ const LAYOUT_NAME: Record<KitchenConfig["layout"], string> = {
   L: "L-kuhinja",
   U: "U-kuhinja",
   otok: "Kuhinja s otokom",
+  poluotok: "Kuhinja s poluotokom",
+  G: "G-kuhinja",
 };
 
 /** short technical readout of what the hero shows, e.g. "Kuhinja s otokom · zid 420 cm · otok 240 cm" */
 export function heroReadout(cfg: KitchenConfig = HERO_CONFIG): string {
   const parts = [LAYOUT_NAME[cfg.layout], `zid ${cfg.walls.a} cm`];
   if (cfg.layout === "otok") parts.push(`otok ${cfg.island} cm`);
+  else if (cfg.layout === "poluotok" || cfg.layout === "G") parts.push(`poluotok ${cfg.island} cm`);
   return parts.join(" · ");
 }

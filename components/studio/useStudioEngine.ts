@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { DimTarget, KitchenConfig, ModuleInfo, Mood, ScreenRect, StudioEngineApi } from "@/lib/studio/types";
+import type { DimLabelTarget, KitchenConfig, ModuleInfo, Mood, ScreenRect, StudioEngineApi, SurfaceHit } from "@/lib/studio/types";
 
 export type EngineStatus = "loading" | "ready" | "failed";
 
@@ -11,7 +11,8 @@ export type EngineStatus = "loading" | "ready" | "failed";
  *
  * - `config` / `mood` changes are pushed with setConfig / setMood (the engine diffs and animates).
  * - The engine constructor throws when WebGL isn't available → status "failed"; the UI keeps working without 3D.
- * - `onWallLabel` makes the wall / island dimension labels in 3D clickable (the wall-length editor).
+ * - `onDimLabel` makes every dimension label in 3D clickable — the room's walls and the kitchen runs / island (the
+ *   length editor); `onSurfaceClick` makes the room's walls and floor clickable (their finish).
  * - Overlays read where things are on screen through api.subscribe (components/studio/overlay.ts useEngineView).
  */
 export function useStudioEngine(
@@ -20,20 +21,22 @@ export function useStudioEngine(
     config,
     mood,
     onSelect,
-    onWallLabel,
+    onDimLabel,
+    onSurfaceClick,
   }: {
     config: KitchenConfig;
     mood: Mood;
     onSelect: (m: ModuleInfo | null) => void;
-    onWallLabel?: (wall: DimTarget, rect: ScreenRect) => void;
+    onDimLabel?: (target: DimLabelTarget, rect: ScreenRect) => void;
+    onSurfaceClick?: (hit: SurfaceHit) => void;
   },
 ) {
   const apiRef = useRef<StudioEngineApi | null>(null);
   const [status, setStatus] = useState<EngineStatus>("loading");
-  const latest = useRef({ config, mood, onSelect, onWallLabel });
+  const latest = useRef({ config, mood, onSelect, onDimLabel, onSurfaceClick });
 
   useEffect(() => {
-    latest.current = { config, mood, onSelect, onWallLabel };
+    latest.current = { config, mood, onSelect, onDimLabel, onSurfaceClick };
   });
 
   useEffect(() => {
@@ -50,7 +53,8 @@ export function useStudioEngine(
             config: latest.current.config,
             mood: latest.current.mood,
             onSelect: (m) => latest.current.onSelect(m),
-            onWallLabel: (wall, rect) => latest.current.onWallLabel?.(wall, rect),
+            onDimLabel: (target, rect) => latest.current.onDimLabel?.(target, rect),
+            onSurfaceClick: (hit) => latest.current.onSurfaceClick?.(hit),
             onReady: () => {
               if (!cancelled) setStatus("ready");
             },

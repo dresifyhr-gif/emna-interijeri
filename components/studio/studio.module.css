@@ -575,11 +575,269 @@
   display: none;
 }
 
+.dim[data-wide]:not([data-docked]) {
+  width: min(330px, calc(100vw - 16px));
+}
+
+/* ---------------------------------------------------------------- the engine's dimension labels in the studio */
+
+/*
+ * The engine draws two kinds of label (lib/studio/engine/labels.ts): the room's wall above the wall units, and the
+ * kitchen run on the floor in front of the cabinets (.emna-studio-dim--run; the island's label is a kitchen one too).
+ * Room = thin and grey, kitchen = the accent — so the room and the kitchen read as two different measures.
+ */
+.stage :global(.emna-studio-dim) {
+  color: rgba(242, 239, 233, 0.66);
+  border-color: rgba(242, 239, 233, 0.16);
+  background: rgba(8, 8, 9, 0.5);
+  font-weight: 400;
+  padding: 5px 10px;
+}
+.stage :global(.emna-studio-dim) :global(b) {
+  font-weight: 600;
+  color: rgba(242, 239, 233, 0.82);
+}
+.stage :global(.emna-studio-dim) :global(.emna-studio-pen) {
+  color: rgba(242, 239, 233, 0.6);
+}
+.stage :global(.emna-studio-dim[role="button"]:hover) {
+  border-color: rgba(242, 239, 233, 0.45);
+  background: rgba(8, 8, 9, 0.78);
+  box-shadow: 0 0 0 3px rgba(242, 239, 233, 0.08);
+}
+.stage :global(.emna-studio-dim[role="button"]:focus-visible) {
+  border-color: rgba(242, 239, 233, 0.8);
+  box-shadow:
+    0 0 0 2px #0b0b0c,
+    0 0 0 4px rgba(242, 239, 233, 0.6);
+}
+.stage :global(.emna-studio-dim.emna-studio-dim--run),
+.stage :global(.emna-studio-dim[aria-label*="otoka"]) {
+  color: #c9b99a;
+  border-style: solid;
+  border-color: rgba(201, 185, 154, 0.62);
+  background: rgba(8, 8, 9, 0.74);
+  font-weight: 500;
+}
+.stage :global(.emna-studio-dim.emna-studio-dim--run) :global(b),
+.stage :global(.emna-studio-dim[aria-label*="otoka"]) :global(b) {
+  color: #c9b99a;
+  font-weight: 700;
+}
+.stage :global(.emna-studio-dim.emna-studio-dim--run) :global(.emna-studio-pen),
+.stage :global(.emna-studio-dim[aria-label*="otoka"]) :global(.emna-studio-pen) {
+  color: #c9b99a;
+}
+.stage :global(.emna-studio-dim.emna-studio-dim--run[role="button"]:hover),
+.stage :global(.emna-studio-dim[aria-label*="otoka"][role="button"]:hover) {
+  border-color: rgba(201, 185, 154, 0.95);
+  box-shadow: 0 0 0 3px rgba(201, 185, 154, 0.16);
+}
+.stage :global(.emna-studio-dim.emna-studio-dim--run[role="button"]:focus-visible),
+.stage :global(.emna-studio-dim[aria-label*="otoka"][role="button"]:focus-visible) {
+  border-color: #c9b99a;
+  box-shadow:
+    0 0 0 2px #0b0b0c,
+    0 0 0 4px rgba(201, 185, 154, 0.8);
+}
+
+/*
+ * phone: a kitchen run that takes its whole wall says the same as the room label above it, and the floor labels of an
+ * L / U kitchen crowd each other — those are left out (<Studio> lists the walls in data-kfull); a kitchen shorter than
+ * its wall keeps its label
+ */
+.stage[data-kfull~="a"] :global(.emna-studio-dim.emna-studio-dim--run[aria-label*="uz zid A,"]),
+.stage[data-kfull~="b"] :global(.emna-studio-dim.emna-studio-dim--run[aria-label*="uz zid B,"]),
+.stage[data-kfull~="c"] :global(.emna-studio-dim.emna-studio-dim--run[aria-label*="uz zid C,"]) {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- "+" markers at the empty places */
+
+.gapLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+/* positioned per frame from ViewInfo (transform written by GapLayer); the hit area is larger than the dot */
+.gap {
+  position: absolute;
+  left: -20px;
+  top: -20px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  pointer-events: none;
+  outline: none;
+  will-change: transform;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.gap[data-on] {
+  pointer-events: auto;
+}
+.gap[data-docked] {
+  left: -24px;
+  top: -24px;
+  width: 48px;
+  height: 48px;
+}
+.gapDot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(201, 185, 154, 0.6);
+  background: rgba(17, 17, 19, 0.72);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #c9b99a;
+  box-shadow:
+    0 8px 22px -8px rgba(0, 0, 0, 0.8),
+    0 0 0 4px rgba(201, 185, 154, 0.08);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.gap[data-docked] .gapDot {
+  width: 34px;
+  height: 34px;
+}
+.gap[data-on] .gapDot {
+  opacity: 1;
+  transform: none;
+}
+@media (hover: hover) {
+  .gap:hover .gapDot {
+    background: #c9b99a;
+    color: #0b0b0c;
+    box-shadow:
+      0 8px 22px -8px rgba(0, 0, 0, 0.8),
+      0 0 0 6px rgba(201, 185, 154, 0.16);
+  }
+}
+.gap:focus-visible .gapDot,
+.gap[data-open] .gapDot {
+  background: #c9b99a;
+  color: #0b0b0c;
+  box-shadow:
+    0 0 0 2px #0b0b0c,
+    0 0 0 4px rgba(201, 185, 154, 0.75);
+}
+.gapTip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% - 2px);
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(11, 11, 12, 0.92);
+  border: 1px solid rgba(201, 185, 154, 0.3);
+  color: #f2efe9;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transform: translate(-50%, 3px);
+  pointer-events: none;
+  transition:
+    opacity 0.2s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.gap[data-on]:hover .gapTip,
+.gap[data-on]:focus-visible .gapTip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.gap[data-open] .gapTip {
+  opacity: 0;
+}
+@media (hover: none) {
+  .gapTip {
+    display: none;
+  }
+}
+
+/* the add picker at a "+" (desktop: anchored to it — the transform is written per frame —, phone: docked above the sheet) */
+.gapPop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: min(352px, calc(100vw - 16px));
+  pointer-events: auto;
+  will-change: transform;
+}
+.gapPop[data-docked] {
+  left: 8px;
+  right: 8px;
+  top: auto;
+  bottom: calc(var(--studio-inset-bottom, 0px) + 10px);
+  width: auto;
+  will-change: auto;
+}
+/* the card itself (it animates in; its box is the one positioned) */
+.gapCard {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  background: rgba(17, 17, 19, 0.92);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.95);
+  animation: popInDown 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.gapPop[data-side="up"] .gapCard,
+.gapPop[data-docked] .gapCard {
+  animation-name: popIn;
+}
+.gapPop[data-docked] .gapCard {
+  max-height: calc(100vh - var(--studio-inset-bottom, 0px) - var(--studio-inset-top, 56px) - 28px);
+}
+
+/* ---------------------------------------------------------------- the finishes of a clicked wall / the floor */
+
+.surf {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 26;
+  width: min(300px, calc(100vw - 16px));
+}
+.surf[data-docked] {
+  left: 8px;
+  right: 8px;
+  top: auto;
+  bottom: calc(var(--studio-inset-bottom, 0px) + 10px);
+  width: auto;
+}
+.surf .dimCard {
+  animation-name: popIn;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .loadbar,
   .tbPop,
-  .dimCard {
+  .dimCard,
+  .gapCard {
     animation: none;
+  }
+  .gapDot,
+  .gapTip {
+    transition: none;
   }
   .tb,
   .tb[data-docked],

@@ -11,7 +11,7 @@ import { isEdited } from "@/lib/studio/edit";
 import type { PlanSlot, RunId } from "@/lib/studio/plan";
 import { Notes, Segmented, SectionLabel, ToggleRow } from "../controls";
 import { ChevronRight, CursorIcon, ModuleGlyph, ResetIcon } from "../icons";
-import { ROW_NAME, rowSlots, runName, sideHint, type RowZone } from "../meta";
+import { islandWord, rowName, rowSlots, runName, sideHint, type RowZone } from "../meta";
 import { RunElevation } from "../RunElevation";
 import type { StepProps } from "./types";
 
@@ -45,13 +45,15 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
       ? isEdited(cfg, "isl")
       : isEdited(cfg, run) || isEdited(cfg, `${run}:u`) || (run === "a" && Boolean(cfg.corners && Object.keys(cfg.corners).length));
   const len = run === "isl" ? Math.round(plan.island?.length ?? cfg.island) : cfg.walls[run];
+  const runPlan = run === "isl" ? null : plan.runs.find((r) => r.wall === run);
+  const kitchenLen = runPlan ? Math.round(runPlan.kitchen.to - runPlan.kitchen.from) : len;
 
   return (
     <div>
       {runs.length > 1 && (
         <Segmented
           label="Zid"
-          options={runs.map((r) => ({ id: r, label: r === "isl" ? "Otok" : `Zid ${r.toUpperCase()}`, aria: runName(r) }))}
+          options={runs.map((r) => ({ id: r, label: r === "isl" ? islandWord(cfg.layout) : `Zid ${r.toUpperCase()}`, aria: runName(r, cfg.layout) }))}
           value={run}
           onChange={onRunTab}
           size="sm"
@@ -70,11 +72,11 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
           className={`block w-full ${compact ? "h-[112px]" : "h-[132px]"}`}
         />
         <figcaption className="mt-2 flex items-baseline justify-between gap-3 text-[10.5px] tracking-[0.04em] text-mut">
-          <span className="font-medium uppercase tracking-[0.2em] text-fg/70">{runName(run)}</span>
-          <span className="tabular-nums">{len} cm</span>
+          <span className="font-medium uppercase tracking-[0.2em] text-fg/70">{runName(run, cfg.layout)}</span>
+          <span className="tabular-nums">{kitchenLen < len ? `zid ${len} cm · kuhinja ${kitchenLen} cm` : `${len} cm`}</span>
         </figcaption>
       </figure>
-      <p className="mt-2 text-[11px] leading-snug text-mut">{sideHint(run)}</p>
+      <p className="mt-2 text-[11px] leading-snug text-mut">{sideHint(run, cfg.layout)}</p>
 
       {rows.map((z) => {
         const list = rowSlots(plan.slots, run, z);
@@ -83,7 +85,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
         return (
           <div key={z} className="mt-6">
             <div className="flex items-center justify-between gap-3">
-              <SectionLabel id={labelId}>{ROW_NAME[z]}</SectionLabel>
+              <SectionLabel id={labelId}>{rowName(z, cfg.layout)}</SectionLabel>
               {z === "tall" && isEdited(cfg, "tall") && (
                 <button
                   type="button"
@@ -117,7 +119,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
           className="mt-5 inline-flex min-h-10 items-center gap-2 text-[12.5px] font-medium text-mut transition-colors duration-300 hover:text-fg"
         >
           <ResetIcon className="h-4 w-4" />
-          {run === "isl" ? "Vrati zadano za otok" : `Vrati zadano za zid ${run.toUpperCase()}`}
+          {run === "isl" ? `Vrati zadano za ${islandWord(cfg.layout).toLowerCase()}` : `Vrati zadano za zid ${run.toUpperCase()}`}
         </button>
       )}
 
@@ -136,7 +138,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
                     onClick={() => onRunTab(tallWall)}
                     className="text-fg underline decoration-white/30 underline-offset-4 transition-colors hover:decoration-accent"
                   >
-                    Stoji uz {tallWall === "isl" ? "otok" : `zid ${tallWall.toUpperCase()}`}
+                    Stoji uz {tallWall === "isl" ? islandWord(cfg.layout).toLowerCase() : `zid ${tallWall.toUpperCase()}`}
                   </button>
                   .
                 </>
@@ -152,7 +154,7 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
         <CursorIcon className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[12.5px] leading-relaxed text-fg/80">
           {engine
-            ? "Kliknite element u 3D prikazu: iznad njega su brze radnje — dodaj lijevo ili desno, širina, zamijeni, ukloni. Klik na kotu (npr. 290 cm) mijenja duljinu zida."
+            ? "Kliknite element u 3D prikazu: iznad njega su brze radnje — dodaj lijevo ili desno, širina, zamijeni, ukloni. Znak + na slobodnim mjestima dodaje novi element, a na kraju kuhinje i visoki stup (npr. dvokrilni hladnjak). Klik na kotu mijenja duljinu zida ili kuhinje."
             : "Odaberite element na popisu: promjene se odmah vide u rasporedu i okvirnoj cijeni."}
         </p>
       </div>

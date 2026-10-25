@@ -2,7 +2,7 @@
 
 /**
  * "Ploča i detalji": the worktop library, then the details as collapsed rows (progressive disclosure) —
- * handles with their finish, sink and tap, appliance fronts, plinth, LED and the room around the kitchen.
+ * handles with their finish, sink and tap, appliance fronts, plinth and LED (the room around the kitchen is in "Boje").
  */
 import { useState, type ReactNode } from "react";
 import {
@@ -13,18 +13,16 @@ import {
   handleColorDef,
   handleDef,
   moduleDef,
-  roomFloorDef,
-  roomWallDef,
   topDef,
 } from "@/lib/studio/catalog";
-import type { FinishSpec, HandleStyle, RoomSpec } from "@/lib/studio/types";
+import type { FinishSpec, HandleStyle } from "@/lib/studio/types";
 import { ChoiceChips, Disclosure, RadioGrid, SectionLabel, Switch } from "../controls";
 import { CheckIcon, HandleGlyph, MoonIcon, SunIcon } from "../icons";
 import { MaterialLibrary } from "../MaterialLibrary";
 import { stepIndex } from "../meta";
 import type { StepProps } from "./types";
 
-type Section = "rucke" | "sudoper" | "aparati" | "postolje" | "led" | "prostor";
+type Section = "rucke" | "sudoper" | "aparati" | "postolje" | "led";
 
 const OVENS = new Set(["ploca-pecnica", "pecnica-donja", "pecnica", "pecnica-mikro", "mikrovalna"]);
 
@@ -55,8 +53,6 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood }: StepProps) {
 
   const f: FinishSpec = cfg.finish ?? {};
   const setFinish = (patch: FinishSpec) => update({ finish: { ...f, ...patch } });
-  const room: RoomSpec = cfg.room ?? {};
-  const setRoom = (patch: RoomSpec) => update({ room: { ...room, ...patch } });
 
   const handle = handleDef(cfg.handles) ?? catalog.handles[0];
   const hcId = f.handleColor ?? defaultHandleColor(cfg.handles);
@@ -70,8 +66,6 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood }: StepProps) {
   const appl = finishDef("appliances", f.appliances ?? FINISH_DEFAULTS.appliances);
   const plinth = finishDef("plinths", f.plinth ?? FINISH_DEFAULTS.plinth);
   const led = finishDef("leds", f.led ?? FINISH_DEFAULTS.led);
-  const wall = roomWallDef(room.wall ?? FINISH_DEFAULTS.wall);
-  const floor = roomFloorDef(room.floor ?? FINISH_DEFAULTS.floor);
 
   const goElements = (
     <button
@@ -102,7 +96,11 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood }: StepProps) {
       />
       <p className="mt-4 text-[12.5px] leading-relaxed text-mut">
         Ploča prati sve donje elemente, a između nje i gornjih elemenata ide obloga od istog materijala
-        {cfg.layout === "otok" ? "; na otoku se s obje strane spušta do poda." : "."}
+        {cfg.layout === "otok" || cfg.layout === "poluotok" || cfg.layout === "G"
+          ? cfg.islandSpec?.waterfall === false
+            ? `; ${cfg.layout === "otok" ? "otok" : "poluotok"} ima bočne ploče u boji fronti.`
+            : `; na ${cfg.layout === "otok" ? "otoku" : "poluotoku"} se na slobodnim krajevima spušta do poda.`
+          : "."}
       </p>
 
       {/* ---------------------------------------------------------------- details */}
@@ -258,30 +256,6 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood }: StepProps) {
               </button>
             </>
           )}
-        </Disclosure>
-
-        <Disclosure
-          title="Zid i pod"
-          value={`${wall?.name ?? ""} · ${floor?.name.toLowerCase() ?? ""}`}
-          icon={<Dot swatch={wall?.swatch} />}
-          open={open === "prostor"}
-          onToggle={() => toggle("prostor")}
-        >
-          <p className="mb-1 text-[12px] leading-relaxed text-mut">Samo za dojam u 3D prikazu — ne utječe na cijenu.</p>
-          <Label id="studio-wall-label">Zid</Label>
-          <ChoiceChips
-            labelledBy="studio-wall-label"
-            options={catalog.room.walls}
-            value={room.wall ?? FINISH_DEFAULTS.wall}
-            onChange={(id) => setRoom({ wall: id })}
-          />
-          <Label id="studio-floor-label">Pod</Label>
-          <ChoiceChips
-            labelledBy="studio-floor-label"
-            options={catalog.room.floors}
-            value={room.floor ?? FINISH_DEFAULTS.floor}
-            onChange={(id) => setRoom({ floor: id })}
-          />
         </Disclosure>
       </div>
     </div>

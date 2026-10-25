@@ -16,7 +16,7 @@ import {
   roomWallDef,
   topDef,
 } from "./catalog";
-import { frontFor, planKitchen, type KitchenPlan, type ListId, type SlotZone } from "./plan";
+import { defaultAnchor, frontFor, isPeninsula, isTallList, kitchenRange, parseRunEnd, planKitchen, tallListEnd, type KitchenPlan, type ListId, type SlotZone } from "./plan";
 import { backsplashArea } from "./price";
 import type { FrontZone, KitchenConfig, Layout, WallId } from "./types";
 
@@ -25,6 +25,8 @@ const LAYOUT_NAME: Record<Layout, string> = {
   L: "kuhinja u obliku slova L",
   U: "kuhinja u obliku slova U",
   otok: "ravna kuhinja s otokom",
+  poluotok: "kuhinja s poluotokom",
+  G: "kuhinja u obliku slova G (L s poluotokom)",
 };
 
 const WALL_NAME: Record<WallId, string> = { a: "A", b: "B", c: "C" };
@@ -42,14 +44,22 @@ const ZONE_FRONT_LABEL: Record<FrontZone, string> = {
  * "isl-1" → "Otok · 2. slijeva". Counted left → right, standing in the room facing that wall
  * (the island from the wall-A side). Unknown ids come back as "Element <id>".
  */
-export function slotName(id: string): string {
+export function slotName(id: string, layout?: Layout): string {
   const m = /^([abc])-(base|upper)-(\d+)$/.exec(id);
   if (m) return `Zid ${m[1].toUpperCase()} · ${Number(m[3]) + 1}. ${m[2] === "base" ? "donji" : "gornji"} slijeva`;
   const t = /^tall-(\d+)$/.exec(id);
   if (t) return `Visoki stup · ${Number(t[1]) + 1}. slijeva`;
+  // a KitchenConfig.tallRuns column: "tall-bl-0" = wall B, left end
+  const te = /^tall-([abc])([lr])-(\d+)$/.exec(id);
+  if (te) return `Visoki stup uz zid ${te[1].toUpperCase()} (${te[2] === "l" ? "lijevi" : "desni"} kraj) · ${Number(te[3]) + 1}. slijeva`;
   const i = /^isl-(\d+)$/.exec(id);
-  if (i) return `Otok · ${Number(i[1]) + 1}. slijeva`;
+  if (i) return `${layout && isPeninsula(layout) ? "Poluotok" : "Otok"} · ${Number(i[1]) + 1}. slijeva`;
   return `Element ${id}`;
+}
+
+/** "Otok" / "Poluotok" — what the "isl" run is in this layout */
+export function islandName(layout: Layout): string {
+  return isPeninsula(layout) ? "Poluotok" : "Otok";
 }
 
 export interface CompositionItem {
@@ -80,9 +90,17 @@ export interface CompositionRow {
   items: CompositionItem[];
 }
 
-function rowLabel(list: ListId): string {
-  if (list === "tall") return "Visoki stup";
-  if (list === "isl") return "Otok";
+/** "Visoki stup uz zid B (lijevi kraj)" for a KitchenConfig.tallRuns column */
+function tallLabel(list: ListId): string {
+  const end = tallListEnd(list);
+  if (!end) return "Visoki stup";
+  const { wall, side } = parseRunEnd(end);
+  return `Visoki stup uz zid ${wall.toUpperCase()} (${side === "left" ? "lijevi" : "desni"} kraj)`;
+}
+
+function rowLabel(list: ListId, layout: Layout): string {
+  if (isTallList(list)) return tallLabel(list);
+  if (list === "isl") return islandName(layout);
   return `Zid ${list[0].toUpperCase()} · ${list.endsWith(":u") ? "gornji" : "donji"} elementi`;
 }
 
@@ -91,17 +109,17 @@ export function composition(cfg: KitchenConfig, plan: KitchenPlan = planKitchen(
   const c = plan.cfg;
   const rows: CompositionRow[] = [];
   for (const l of plan.lists) {
-    const run = l.id === "tall" || l.id === "isl" ? null : (l.id[0] as WallId);
+    const run = isTallList(l.id) || l.id === "isl" ? null : (l.id[0] as WallId);
     const zone: SlotZone = l.zone;
     const slots = plan.slots
-      .filter((s) => (l.id === "tall" ? s.zone === "tall" : l.id === "isl" ? s.zone === "island" : s.run === run && s.zone === zone))
+      .filter((s) => (isTallList(l.id) ? s.zone === "tall" && s.list?.id === l.id : l.id === "isl" ? s.zone === "island" : s.run === run && s.zone === zone))
       .sort((p, q) => p.x - q.x);
     if (!slots.length) continue;
     const edited = l.explicit || slots.some((s) => s.cornerId && c.corners?.[s.cornerId]);
     rows.push({
       list: l.id,
       zone,
-      label: rowLabel(l.id),
+      label: rowLabel(l.id, c.layout),
       edited,
       front: frontFor(c, zone),
       items: slots.map((s) => {
@@ -124,6 +142,93 @@ export function composition(cfg: KitchenConfig, plan: KitchenPlan = planKitchen(
   return rows;
 }
 
+/** "1 barska stolica", "3 barske stolice", "5 barskih stolica" / "2 stolice" */
+function seatsWord(n: number, bar: boolean): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const few = m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14);
+  const one = m10 === 1 && m100 !== 11;
+  if (bar) return `${n} ${one ? "barska stolica" : few ? "barske stolice" : "barskih stolica"}`;
+  return `${n} ${one ? "stolica" : few ? "stolice" : "stolica"}`;
+}
+
+/**
+ * The island / peninsula in words (summary, admin): length and place, body, ends, what it holds, seating, bar / table
+ * and the ceiling hood. The island of an older link keeps its one line exactly as before (unless the customer put a hob
+ * on it: it then has the ceiling hood, and the lines say so).
+ */
+export function islandSummary(plan: KitchenPlan): string[] {
+  const I = plan.island;
+  if (!I) return [];
+  const c = plan.cfg;
+  if (!c.islandSpec && I.kind === "otok" && !I.hood) return [`Otok: ${c.island} cm, s pločom koja se spušta do poda i mjestom za sjedenje`];
+  const name = islandName(c.layout);
+  const on = I.kind === "poluotok" ? "poluotoku" : "otoku";
+  const r = Math.round;
+  const lines: string[] = [];
+  const where = I.side ? `, uz ${I.side === "left" ? "lijevi" : "desni"} kraj zida A` : "";
+  const body = I.backRow ? `, dubok ${I.depth} cm (straga ormarići ${I.backRow.depth} cm s otvaranjem na dodir)` : "";
+  const ends = I.waterfalls.length
+    ? I.waterfalls.length > 1
+      ? "ploča se s obje strane spušta do poda"
+      : "ploča se na slobodnom kraju spušta do poda"
+    : "bočne ploče u boji fronte";
+  lines.push(`${name}: ${c.island} cm${where}${body}, ${ends}`);
+  const isF = (t: string, f: "sink" | "hob" | "dishwasher") => moduleDef("base", t)?.feature === f;
+  const isl = plan.slots.filter((s) => s.zone === "island");
+  const holds = [isl.some((s) => isF(s.type, "hob")) ? "ploča za kuhanje" : null, isl.some((s) => isF(s.type, "sink")) ? "sudoper" : null].filter(Boolean);
+  if (holds.length) lines.push(`Na ${on}: ${holds.join(" i ")}${isl.some((s) => isF(s.type, "dishwasher")) ? ", perilica posuđa" : ""}`);
+  const b = I.bar;
+  if (b) {
+    const top = topDef(b.top)?.name ?? b.top;
+    const what = b.kind === "raised" ? "Šank: povišeni," : "Spušteni stol:";
+    lines.push(`${what} ${r(b.height)} cm od poda, dubina ${r(b.depth)} cm, dužina ${r(b.to - b.from)} cm, ploča: ${top}`);
+  }
+  if (I.seats.length) {
+    const at = b
+      ? b.kind === "raised"
+        ? "uz šank"
+        : "uz stol"
+      : I.seatSide === "back"
+        ? `straga, prepust ${I.overhang} cm`
+        : `na ${I.seatSide === "left" ? "lijevom" : "desnom"} kraju, prepust ${I.overhang} cm`;
+    lines.push(`Sjedenje: ${seatsWord(I.seats.length, I.seats[0].kind === "stool")} ${at} (stolice nisu uključene u cijenu)`);
+  } else if (!I.seatSide) lines.push("Sjedenje: bez prepusta za sjedenje");
+  if (I.hood) {
+    const h = I.hood;
+    lines.push(
+      `Napa: otočna, stropna, ${r(h.width)} × ${r(h.depth)} cm, donji rub ${r(h.bottom)} cm od poda (${r(h.above)} cm iznad radne ploče), iznad ploče na ${on} — napa nije uračunata u cijenu`,
+    );
+  } else if (c.islandSpec?.hood === false && isl.some((s) => isF(s.type, "hob"))) {
+    lines.push(`Napa: bez nape iznad ${on === "otoku" ? "otoka" : "poluotoka"} (ploča s ugrađenim odsisom)`);
+  }
+  return lines;
+}
+
+/**
+ * ", kuhinja 300 cm od kuta sa zidom A" — where the kitchen stands on a room wall when it does not take the whole wall
+ * (KitchenConfig.extents); "" for a kitchen along the whole wall (every older link)
+ */
+export function kitchenOnWall(plan: KitchenPlan, w: WallId): string {
+  const c = plan.cfg;
+  if (!c.extents?.[w]) return "";
+  const k = kitchenRange(c, w);
+  const L = c.walls[w];
+  const len = Math.round(k.to - k.from);
+  const corner: Record<WallId, { left: string | null; right: string | null }> = { a: { left: c.layout === "ravna" || c.layout === "otok" || c.layout === "poluotok" ? null : "B", right: c.layout === "U" ? "C" : null }, b: { left: null, right: "A" }, c: { left: "A", right: null } };
+  const anchor = c.extents[w]?.anchor ?? defaultAnchor(w);
+  const off = Math.round(anchor === "left" ? k.from : L - k.to);
+  const other = corner[w][anchor];
+  const where = other
+    ? off === 0
+      ? `od kuta sa zidom ${other}`
+      : `${off} cm od kuta sa zidom ${other}`
+    : off === 0
+      ? `od ${anchor === "left" ? "lijevog" : "desnog"} kraja zida`
+      : `${off} cm od ${anchor === "left" ? "lijevog" : "desnog"} kraja zida`;
+  return `, kuhinja ${len} cm (${where})`;
+}
+
 export function summarize(cfg: KitchenConfig): string[] {
   const plan = planKitchen(cfg);
   const c = plan.cfg;
@@ -131,7 +236,7 @@ export function summarize(cfg: KitchenConfig): string[] {
 
   lines.push(`Oblik: ${LAYOUT_NAME[c.layout]}`);
   for (const w of plan.walls) {
-    lines.push(`Zid ${WALL_NAME[w]} (${WALL_HINT[w]}): ${c.walls[w]} cm`);
+    lines.push(`Zid ${WALL_NAME[w]} (${WALL_HINT[w]}): ${c.walls[w]} cm${kitchenOnWall(plan, w)}`);
   }
   lines.push(`Visina stropa: ${c.ceiling} cm`);
   // heights other than the standard ones (KitchenConfig.heights), as the plan fitted them under the ceiling
@@ -160,7 +265,8 @@ export function summarize(cfg: KitchenConfig): string[] {
   const zonesPresent = new Set(plan.slots.map((s) => s.zone));
   for (const z of ["base", "upper", "tall", "island"] as FrontZone[]) {
     const f = c.zoneFronts?.[z];
-    if (f && zonesPresent.has(z)) lines.push(`${ZONE_FRONT_LABEL[z]}: ${frontDef(f)?.name ?? f}`);
+    const label = z === "island" && isPeninsula(c.layout) ? "Fronte poluotoka" : ZONE_FRONT_LABEL[z];
+    if (f && zonesPresent.has(z)) lines.push(`${label}: ${frontDef(f)?.name ?? f}`);
   }
 
   const handle = handleDef(c.handles);
@@ -191,31 +297,39 @@ export function summarize(cfg: KitchenConfig): string[] {
   }
   if (c.finish?.plinth) lines.push(`Postolje: ${(finishDef("plinths", c.finish.plinth)?.name ?? c.finish.plinth).toLowerCase()}`);
 
-  const tall = plan.slots.filter((s) => s.zone === "tall");
+  const tallNames = (list: ListId) =>
+    plan.slots.filter((s) => s.zone === "tall" && s.list?.id === list).map((s) => `${moduleDef("tall", s.type)?.name.toLowerCase() ?? s.type} ${Math.round(s.width)} cm`);
+  const tall = tallNames("tall");
   if (tall.length) {
-    const names = tall.map((s) => `${moduleDef("tall", s.type)?.name.toLowerCase() ?? s.type} ${Math.round(s.width)} cm`);
-    lines.push(`Visoki stup: da (${names.join(", ")})`);
+    lines.push(`Visoki stup: da (${tall.join(", ")})`);
   } else {
     lines.push(c.tall ? "Visoki stup: ne stane uz ove mjere" : "Visoki stup: ne");
+  }
+  // more tall columns at other run ends (KitchenConfig.tallRuns)
+  for (const l of plan.lists) {
+    if (!tallListEnd(l.id)) continue;
+    const names = tallNames(l.id);
+    if (names.length) lines.push(`${tallLabel(l.id)}: ${names.join(", ")}`);
   }
 
   const led = finishDef("leds", c.finish?.led ?? FINISH_DEFAULTS.led)?.name.toLowerCase();
   lines.push(`LED rasvjeta: ${c.led ? `da (${led}, ispod gornjih elemenata, u postolju i nišama)` : "ne"}`);
-  if (plan.island) lines.push(`Otok: ${c.island} cm, s pločom koja se spušta do poda i mjestom za sjedenje`);
+  lines.push(...islandSummary(plan));
 
   // every run, left → right (edited ones marked) — the owner quotes from this
   for (const row of composition(c, plan)) {
-    if (row.list === "tall") continue;
+    if (isTallList(row.list)) continue;
     const items = row.items.map((it) => `${it.spacer ? it.name.toLowerCase() : it.name} ${it.width}`).join(" · ");
     lines.push(`${row.label}${row.edited ? " (uređeno)" : ""}: ${items}`);
   }
 
-  if (c.room?.wall || c.room?.floor) {
+  if (c.room?.wall || c.room?.floor || c.room?.walls) {
     const parts = [
       c.room.wall ? `zid ${roomWallDef(c.room.wall)?.name.toLowerCase()}` : null,
+      ...plan.walls.map((w) => (c.room?.walls?.[w] ? `zid ${WALL_NAME[w]} ${roomWallDef(c.room.walls[w])?.name.toLowerCase()}` : null)),
       c.room.floor ? `pod ${roomFloorDef(c.room.floor)?.name.toLowerCase()}` : null,
     ].filter(Boolean);
-    lines.push(`Prostor u prikazu (samo za dojam): ${parts.join(", ")}`);
+    if (parts.length) lines.push(`Prostor u prikazu (samo za dojam): ${parts.join(", ")}`);
   }
 
   for (const w of plan.warnings) lines.push(`Napomena: ${w}`);

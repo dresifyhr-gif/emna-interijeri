@@ -10,7 +10,7 @@
  */
 
 import * as THREE from "three";
-import { DIM, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId, type RunPlan } from "../plan";
+import { DIM, type IslandPlan, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId, type RunPlan } from "../plan";
 import type { FrontZone, HandleStyle, WallId } from "../types";
 import { BASE_FACE, D, UPPER_FACE, cm, heightsOf } from "./dims";
 import { boxes, disposeGeometries, mesh, type BoxSpec, type GeoCache } from "./geo";
@@ -31,11 +31,18 @@ export interface RunRT {
   wall: THREE.Group | null;
   /** counter centre (m, run-local) for door hinge decisions */
   center: number;
+  /**
+   * wall runs: the backsplash, the plinth LED, the contact shadow and the bare-floor marks — rebuilt with the worktop
+   * when an element edit changes where the cabinets end (syncRunSurfaces)
+   */
+  surfaces?: { backsplash: THREE.Group | null; plinthLed: THREE.Group | null; shadow: THREE.Group | null; floor: THREE.Group | null };
 }
 
 export interface WallRT {
   id: WallId;
   group: THREE.Group;
+  /** the wall itself (room surface: userData.surface = { surface: "wall", wall }) */
+  mesh: THREE.Mesh;
 }
 
 export interface KitchenRT {
@@ -58,8 +65,16 @@ export interface KitchenRT {
   /** LED strips under the wall units, per wall (rebuilt when the wall units change) */
   underLeds: Map<RunId, THREE.Group[]>;
   islandBack: THREE.Mesh | null;
+  /**
+   * island / peninsula meshes built once with the kitchen (back panel, end panels, outer row, bar upstand): they stay in
+   * frontPieces / carcassPieces / plinthPieces when the fillers are rebuilt (rebuildPieces, replacePieces)
+   */
+  islandParts: { front: THREE.Mesh[]; carcass: THREE.Mesh[]; plinth: THREE.Mesh[] };
+  /** the ceiling hood above the island hob (null = none); rebuilt by syncIslandHood when an edit moves the hob */
+  islandHood: THREE.Group | null;
   walls: WallRT[];
-  labels: (DimLabel & { wall: WallId | "isl" })[];
+  /** room labels (one per wall), the island / peninsula, then the kitchen-run labels (one per wall, on the floor) */
+  labels: (DimLabel & { wall: WallId | "isl"; kind: "room" | "kitchen" })[];
   leds: LedZone[];
   windowLight: WindowLight | null;
   timeline: Timeline;
@@ -83,6 +98,8 @@ export interface KitchenEnv {
   plinth: string;
   labels: boolean;
   tempo: "cinematic" | "quick";
+  /** the material of each room wall (KitchenConfig.room); absent = mats.wall for every wall */
+  wallMat?: (wall: WallId) => THREE.Material;
 }
 
 /** what building one module / piece needs from the environment */
@@ -98,9 +115,17 @@ export function plinthMat(env: Pick<KitchenEnv, "mats" | "fronts" | "plinth">, z
   return env.mats.plinth;
 }
 
-const tallSideOf = (plan: KitchenPlan, run: RunId): "left" | "right" => {
-  const r = plan.runs.find((x) => x.wall === run);
-  return r?.tall && r.tall.from < 1 ? "left" : "right";
+/**
+ * the side a tall unit's doors hinge on: towards the outer end of its column (the column at the run's left end: left) —
+ * at a room wall too: the door opens back against the wall and leaves the worktop beside the column free (the
+ * neighbouring run keeps DIM.cornerClear from that corner, room for the open door)
+ */
+const tallSideOf = (plan: KitchenPlan, slot: PlanSlot): "left" | "right" => {
+  const r = plan.runs.find((x) => x.wall === slot.run);
+  if (!r) return "right";
+  const t = r.talls.find((x) => slot.x >= x.from - 0.5 && slot.x < x.to) ?? r.tall;
+  if (!t) return "right";
+  return t.from - r.kitchen.from < r.kitchen.to - t.to ? "left" : "right";
 };
 
 /** context for building one module of the current kitchen */
@@ -122,7 +147,7 @@ export function moduleCtx(env: ModuleEnv, plan: KitchenPlan, run: RunRT | undefi
     // h.tallSplit and the cornice are drawn by modules.ts buildHeightExtras)
     ut: slot.zone === "tall" ? (h.tallSplit ?? h.tallTop) - h.lift : h.ut,
     hinge: mid < centre ? "left" : "right",
-    tallHinge: tallSideOf(plan, slot.run),
+    tallHinge: tallSideOf(plan, slot),
     h,
   };
 }
@@ -183,19 +208,70 @@ function slabWithHoles(
   return list;
 }
 
-function stool(mats: Materials, geos: GeoCache): THREE.Group {
+/** a stool with its seat centre `seatY` m above the floor (0.66 = counter stool at a 90 cm worktop, ~0.8 = bar stool) */
+function stool(mats: Materials, geos: GeoCache, seatY = 0.66): THREE.Group {
   const g = new THREE.Group();
   const seat = mesh(geos.get("stool:seat", () => new THREE.CylinderGeometry(0.19, 0.18, 0.045, 48)), mats.oak);
-  seat.position.y = 0.66;
-  const leg = mesh(geos.get("stool:leg", () => new THREE.CylinderGeometry(0.018, 0.018, 0.64, 16)), mats.black);
-  leg.position.y = 0.32;
+  seat.position.y = seatY;
+  const legH = seatY - 0.02;
+  const key = Math.abs(legH - 0.64) < 1e-6 ? "stool:leg" : `stool:leg:${legH.toFixed(3)}`;
+  const leg = mesh(geos.get(key, () => new THREE.CylinderGeometry(0.018, 0.018, legH, 16)), mats.black);
+  leg.position.y = legH / 2;
   const ring = mesh(geos.get("stool:ring", () => new THREE.TorusGeometry(0.14, 0.008, 10, 48)), mats.black);
   ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.27;
+  // the footrest stays ~39 cm below the seat (bar stools get theirs higher up)
+  ring.position.y = seatY - 0.39;
   const foot = mesh(geos.get("stool:foot", () => new THREE.CylinderGeometry(0.2, 0.21, 0.012, 48)), mats.black);
   foot.position.y = 0.006;
   g.add(seat, leg, ring, foot);
   return g;
+}
+
+/** a chair for the lowered table, facing +z (the table) in the island's run frame; seat centre `seatY` m above the floor */
+function chair(mats: Materials, geos: GeoCache, seatY = 0.46): THREE.Group {
+  const g = new THREE.Group();
+  const y0 = seatY - 0.018;
+  const key = `chair:${seatY.toFixed(3)}`;
+  // the backrest sits between the two back legs, a little thinner than them (no shared faces: no z-fighting)
+  const wood = mesh(
+    geos.get(`${key}:wood`, () =>
+      boxes([
+        [-0.21, y0, -0.2, 0.21, y0 + 0.036, 0.21],
+        [-0.165, y0 + 0.17, -0.232, 0.165, y0 + 0.42, -0.218],
+      ]),
+    ),
+    mats.oak,
+  );
+  const legs: BoxSpec[] = [];
+  for (const lx of [-0.185, 0.165]) for (const lz of [-0.205, 0.17]) legs.push([lx, 0, lz, lx + 0.02, y0, lz + 0.02]);
+  // the two back legs carry the backrest
+  legs.push([-0.185, y0, -0.235, -0.165, y0 + 0.42, -0.215], [0.165, y0, -0.235, 0.185, y0 + 0.42, -0.215]);
+  const frame = mesh(geos.get(`${key}:legs`, () => boxes(legs)), mats.black);
+  g.add(wood, frame);
+  return g;
+}
+
+/** the island's main worktop boxes (plan.island.slab, metres) with the sink cut-outs of the pieces they lie in */
+export function islandSlab(I: IslandPlan, y0: number, y1: number, holes: { x0: number; x1: number; z0: number; z1: number }[]): BoxSpec[] {
+  const out: BoxSpec[] = [];
+  for (const r of I.slab) {
+    const z0 = cm(r.z0);
+    const z1 = cm(r.z1);
+    const inside = holes.filter((h) => h.z0 >= z0 - 1e-6 && h.z1 <= z1 + 1e-6);
+    out.push(...slabWithHoles(cm(r.from), cm(r.to), y0, y1, z0, z1, inside));
+  }
+  return out;
+}
+
+/** footprint of the island's worktop, bar and table in its run frame (metres) */
+function islandExtent(I: IslandPlan): { x0: number; x1: number; z0: number } {
+  const xs = I.slab.flatMap((r) => [r.from, r.to]);
+  let z0 = Math.min(...I.slab.map((r) => r.z0));
+  if (I.bar) {
+    xs.push(I.bar.from, I.bar.to);
+    z0 = Math.min(z0, I.bar.z0);
+  }
+  return { x0: cm(Math.min(...xs)), x1: cm(Math.max(...xs)), z0: cm(z0) };
 }
 
 // ---------------------------------------------------------------- build
@@ -228,6 +304,8 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     pieces: [],
     underLeds: new Map(),
     islandBack: null,
+    islandParts: { front: [], carcass: [], plinth: [] },
+    islandHood: null,
     walls: [],
     labels: [],
     leds: [],
@@ -267,13 +345,18 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   }
   let islandGroup: THREE.Group | null = null;
   if (plan.island) {
+    // the island / peninsula run frame (plan.ts IslandPlan.frame): the island turned to face wall A, a peninsula
+    // standing out from one end of it
     const g = new THREE.Group();
-    const L = cm(plan.island.length);
-    g.position.set(cm(plan.island.centerX) + L / 2, 0, cm(plan.island.backZ));
-    g.rotation.y = Math.PI;
+    const I = plan.island;
+    const L = cm(I.length);
+    if (I.kind === "otok") g.position.set(cm(I.centerX) + L / 2, 0, cm(I.backZ));
+    else g.position.set(cm(I.frame.x), 0, cm(I.frame.z));
+    g.rotation.y = I.frame.rot;
     root.add(g);
     islandGroup = g;
-    K.runs.set("isl", { id: "isl", group: g, length: L, worktop: null, worktopFrom: 0, worktopTo: L, wall: null, center: L / 2 });
+    const center = I.kind === "otok" ? L / 2 : cm((I.body.from + I.body.to) / 2);
+    K.runs.set("isl", { id: "isl", group: g, length: L, worktop: null, worktopFrom: 0, worktopTo: L, wall: null, center });
   }
 
   // ---- walls (+ window)
@@ -332,11 +415,12 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     } else {
       segs.push([x0, 0, -T, x1, ceil, 0]);
     }
-    const wall = mesh(boxes(segs), mats.wall, true, true);
+    const wall = mesh(boxes(segs), env.wallMat ? env.wallMat(r.wall) : mats.wall, true, true);
+    wall.userData.surface = { surface: "wall", wall: r.wall };
     wg.add(wall);
     run.group.add(wg);
     run.wall = wg;
-    K.walls.push({ id: r.wall, group: wg });
+    K.walls.push({ id: r.wall, group: wg, mesh: wall });
     tl.add(wg, "growY", wi * 0.1 * s, 1.1 * k);
   });
 
@@ -421,37 +505,16 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     else tl.add(g, "extrude", pieceTime(p), 0.8 * k);
   }
 
-  // ---- worktops + backsplash
+  // ---- worktops + backsplash (they end with the base cabinets: plan.ts RunPlan.worktop)
   const tTop = tBaseEnd + 0.5 * k;
   let wtIndex = 0;
   for (const r of plan.runs) {
-    const run = K.runs.get(r.wall)!;
-    if (!r.worktop) continue;
-    const from = cm(r.worktop.from);
-    const to = cm(r.worktop.to);
-    const g = new THREE.Group();
-    g.position.x = from;
-    const holes = [...K.modules.values()]
-      .filter((m) => m.slot.run === r.wall && m.hole)
-      .map((m) => ({ x0: m.hole!.x0 - from, x1: m.hole!.x1 - from, z0: m.hole!.z0, z1: m.hole!.z1 }));
-    const wt = mesh(boxes(slabWithHoles(0, to - from, TOP_Y, WORK_Y, 0, D.worktopDepth, holes), [from, 0, 0]), top);
-    g.add(wt);
-    K.tops.push(wt);
-    run.group.add(g);
-    run.worktop = g;
+    const g = worktopGroup(K, r, top);
+    if (!g) continue;
     tl.add(g, "growX", tTop + wtIndex * 0.15 * s, 1.0 * k);
-
     // backsplash: exactly the pieces the plan lists (and price.ts prices): worktop to wall units, around the window
-    const bs: BoxSpec[] = r.backsplash.map((p) => [cm(p.from), WORK_Y, 0, cm(p.to), cm(p.top), D.backsplashT]);
-    if (bs.length) {
-      const bg = new THREE.Group();
-      bg.position.y = WORK_Y;
-      const me = mesh(boxes(bs.map((b) => [b[0], b[1] - WORK_Y, b[2], b[3], b[4] - WORK_Y, b[5]] as BoxSpec), [0, WORK_Y, 0]), top);
-      bg.add(me);
-      K.tops.push(me);
-      run.group.add(bg);
-      tl.add(bg, "growY", tTop + 0.45 * k + wtIndex * 0.15 * s, 0.9 * k);
-    }
+    const bg = backsplashGroup(K, r, top);
+    if (bg) tl.add(bg, "growY", tTop + 0.45 * k + wtIndex * 0.15 * s, 0.9 * k);
     wtIndex++;
   }
 
@@ -488,32 +551,17 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   const tLed = tUpEnd - 0.2 * k;
   const ledMat = mats.led;
   for (const r of plan.runs) {
-    const run = K.runs.get(r.wall)!;
     for (const g of underLeds(K, r, ub, mats)) tl.add(g, "growX", tLed, 0.6 * k);
-    if (r.counter) {
-      const x0 = cm(r.counter.from) + 0.02;
-      const x1 = cm(r.counter.to) - 0.02;
-      if (x1 - x0 > 0.2) {
-        const g = new THREE.Group();
-        g.position.x = x0;
-        const z = BASE_FACE - D.plinthRecess;
-        const strip = mesh(boxes([[0, 0.004, z + 0.001, x1 - x0, 0.009, z + 0.007]]), ledMat, false, false);
-        g.add(strip);
-        run.group.add(g);
-        K.leds.push({ mesh: strip, length: x1 - x0, kind: "plinth" });
-        tl.add(g, "growX", tLed + 0.2 * k, 0.6 * k);
-      }
-    }
+    const g = plinthLedGroup(K, r, mats);
+    if (g) tl.add(g, "growX", tLed + 0.2 * k, 0.6 * k);
   }
   for (const m of K.modules.values()) for (const z of m.leds) K.leds.push(z);
 
-  // ---- island
+  // ---- island / peninsula: exactly the pieces plan.island lists (price.ts prices them)
   let tEnd = tUpEnd;
   if (plan.island && islandGroup) {
     const g = islandGroup;
-    const L = cm(plan.island.length);
-    const wf = cm(DIM.islandWaterfall);
-    const ov = cm(DIM.islandOverhang);
+    const I = plan.island;
     const tI = tIsland;
     islList.forEach((m, i) => {
       const t = tI + i * stagger;
@@ -522,25 +570,31 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
       K.order.push(m.slot.id);
     });
     const tI2 = tI + islList.length * stagger;
+    const islandFront = mats.front(env.fronts.island);
     // back panel on the seating side
     const back = new THREE.Group();
-    const bp = mesh(boxes([[wf, 0, -D.frontT, L - wf, TOP_Y, 0]]), mats.front(env.fronts.island));
-    bp.userData.fz = "island";
-    back.add(bp);
-    K.frontPieces.push(bp);
-    K.islandBack = bp;
+    if (I.backPanel) {
+      const bp = mesh(boxes([[cm(I.backPanel.from), 0, -cm(DIM.islandBackT), cm(I.backPanel.to), TOP_Y, 0]]), islandFront);
+      bp.userData.fz = "island";
+      back.add(bp);
+      K.frontPieces.push(bp);
+      K.islandParts.front.push(bp);
+      K.islandBack = bp;
+    }
     g.add(back);
     tl.add(back, "extrude", tI + 0.1, 0.9 * k);
     // waterfall sides + slab
     const holes = islList.filter((m) => m.hole).map((m) => m.hole!);
-    const sides = new THREE.Group();
-    const sm = mesh(boxes([[0, 0, -ov, wf, TOP_Y, D.worktopDepth], [L - wf, 0, -ov, L, TOP_Y, D.worktopDepth]]), top);
-    sides.add(sm);
-    K.tops.push(sm);
-    g.add(sides);
-    tl.add(sides, "growY", tI2 + 0.15 * k, 0.9 * k);
+    if (I.waterfalls.length) {
+      const sides = new THREE.Group();
+      const sm = mesh(boxes(I.waterfalls.map((r) => [cm(r.from), 0, cm(r.z0), cm(r.to), TOP_Y, cm(r.z1)] as BoxSpec)), top);
+      sides.add(sm);
+      K.tops.push(sm);
+      g.add(sides);
+      tl.add(sides, "growY", tI2 + 0.15 * k, 0.9 * k);
+    }
     const slab = new THREE.Group();
-    const sl = mesh(boxes(slabWithHoles(0, L, TOP_Y, WORK_Y, -ov, D.worktopDepth, holes)), top);
+    const sl = mesh(boxes(islandSlab(I, TOP_Y, WORK_Y, holes)), top);
     slab.add(sl);
     K.tops.push(sl);
     g.add(slab);
@@ -549,59 +603,94 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     run.worktop = slab;
     // plinth LED
     const lg = new THREE.Group();
-    lg.position.x = wf + 0.02;
+    lg.position.x = cm(I.body.from) + 0.02;
     const z = BASE_FACE - D.plinthRecess;
-    const strip = mesh(boxes([[0, 0.004, z + 0.001, L - 2 * wf - 0.04, 0.009, z + 0.007]]), ledMat, false, false);
+    const ledLen = cm(I.body.to - I.body.from) - 0.04;
+    const strip = mesh(boxes([[0, 0.004, z + 0.001, ledLen, 0.009, z + 0.007]]), ledMat, false, false);
     lg.add(strip);
     g.add(lg);
-    K.leds.push({ mesh: strip, length: L - 2 * wf - 0.04, kind: "plinth" });
+    K.leds.push({ mesh: strip, length: ledLen, kind: "plinth" });
     tl.add(lg, "growX", tI2 + 0.9 * k, 0.6 * k);
-    // stools
-    [0.28, 0.72].forEach((f, i) => {
-      const st = stool(mats, env.geos);
-      st.position.set(L * f, 0, -ov - 0.1);
-      g.add(st);
-      tl.add(st, "slideZ", tI2 + 1.1 * k + i * 0.15 * s, 0.9 * k, -0.7, E.out);
-      const sh = contactShadow(L * f - 0.12, -ov - 0.22, L * f + 0.12, -ov + 0.02, 0.12, mats.shadow);
+    // stools / chairs
+    I.seats.forEach((st, i) => {
+      const x = cm(st.x);
+      const sz = cm(st.z);
+      const seat = st.kind === "chair" ? chair(mats, env.geos, cm(st.seat)) : stool(mats, env.geos, cm(st.seat));
+      seat.position.set(x, 0, sz);
+      g.add(seat);
+      // seats slide in from the outer side (−z in the island's run frame); at an end they just appear
+      const endSeat = st.x < 0 || st.x > I.length;
+      if (endSeat) tl.add(seat, "pop", tI2 + 1.1 * k + i * 0.15 * s, 0.7 * k, 0, E.out);
+      else tl.add(seat, "slideZ", tI2 + 1.1 * k + i * 0.15 * s, 0.9 * k, -0.7, E.out);
+      const r = st.kind === "chair" ? 0.25 : 0.12;
+      const sh = contactShadow(x - r, sz - r, x + r, sz + r, 0.12, mats.shadow);
       g.add(sh);
       tl.add(sh, "pop", tI2 + 1.2 * k + i * 0.15 * s, 0.7 * k);
     });
-    const ish = contactShadow(0, -ov, L, BASE_FACE, 0.16, mats.shadow);
+    const ext = islandExtent(I);
+    const ish = contactShadow(ext.x0, ext.z0, ext.x1, BASE_FACE, 0.16, mats.shadow);
     g.add(ish);
     tl.add(ish, "growX", tI, islList.length * stagger + 0.8 * k);
     tEnd = Math.max(tEnd, tI2 + 1.9 * k);
+    // what older islands never had (built only when the config asks for it)
+    const tX = tI2 + 0.3 * k;
+    for (const g2 of buildIslandExtras(K, env, I)) {
+      g.add(g2.obj);
+      tl.add(g2.obj, g2.track, tX + g2.delay * k, 0.9 * k, g2.track === "drop" ? 0.35 : 0, E.out);
+    }
+    const hood = buildIslandHood(env, plan);
+    if (hood) {
+      g.add(hood);
+      K.islandHood = hood;
+      tl.add(hood, "drop", tI2 + 0.9 * k, 1.0 * k, 0.5);
+      tEnd = Math.max(tEnd, tI2 + 1.9 * k);
+    }
   }
 
-  // ---- contact shadows under wall runs
+  // ---- contact shadows under wall runs; the studio marks bare floor an edited run leaves free (plan RunPlan.free)
   for (const r of plan.runs) {
-    const run = K.runs.get(r.wall)!;
-    const ranges = [r.counter, r.tall].filter((x): x is { from: number; to: number } => Boolean(x));
-    if (!ranges.length) continue;
-    const from = Math.min(...ranges.map((x) => x.from));
-    const to = Math.max(...ranges.map((x) => x.to));
-    const sh = contactShadow(cm(from), 0, cm(to), BASE_FACE, 0.14, mats.shadow);
-    const g = new THREE.Group();
-    g.add(sh);
-    run.group.add(g);
-    tl.add(g, "growX", tBase0, Math.max(0.6, baseList.length * stagger + 0.8 * k));
+    const g = runShadowGroup(K, r, mats);
+    if (g) tl.add(g, "growX", tBase0, Math.max(0.6, baseList.length * stagger + 0.8 * k));
+    if (env.labels) {
+      const f = floorMarks(K, r, mats);
+      if (f) tl.add(f, "pop", tUpEnd, 0.6 * k);
+    }
   }
 
-  // ---- labels
+  // ---- labels: the room's walls (above the wall units), the island, then the kitchen runs (on the floor in front)
   const labelY = Math.max(ut + 0.02, Math.min(ut + 0.2, ceil - 0.05));
   if (env.labels) {
     for (const r of plan.runs) {
       const run = K.runs.get(r.wall)!;
       const d = dimLine(doc, run.group, 0, run.length, labelY, 0.42, r.wall.toUpperCase(), r.length, mats.dim);
-      K.labels.push({ ...d, wall: r.wall });
+      K.labels.push({ ...d, wall: r.wall, kind: "room" });
       tl.add(d.group, "growX", tEnd + 0.1, 0.8 * k);
       tl.add(d.obj, "label", tEnd + 0.6 * k, 0.5 * k, 0, E.lin, d.el);
     }
     if (plan.island && islandGroup) {
-      const L = cm(plan.island.length);
-      const d = dimLine(doc, islandGroup, 0, L, WORK_Y + 0.06, -cm(DIM.islandOverhang) - 0.04, "Otok", plan.island.length, mats.dim);
-      K.labels.push({ ...d, wall: "isl" });
+      const I = plan.island;
+      const L = cm(I.length);
+      // along the outer edge of the worktop (or of a raised bar, above it)
+      const ext = islandExtent(I);
+      const ly = I.bar?.kind === "raised" ? cm(I.bar.height) + 0.06 : WORK_Y + 0.06;
+      const name = I.kind === "poluotok" ? "Poluotok" : "Otok";
+      const d = dimLine(doc, islandGroup, 0, L, ly, ext.z0 - 0.04, name, I.length, mats.dim);
+      K.labels.push({ ...d, wall: "isl", kind: "kitchen" });
       tl.add(d.group, "growX", tEnd + 0.2, 0.8 * k);
       tl.add(d.obj, "label", tEnd + 0.7 * k, 0.5 * k, 0, E.lin, d.el);
+    }
+    // the kitchen run on each wall: on the floor, in front of the plinth (its own length — the room's wall is above)
+    for (const r of plan.runs) {
+      const run = K.runs.get(r.wall)!;
+      // B / C: the label sits a little towards the open end, away from the corner where A's label is
+      const k0 = cm(r.kitchen.from);
+      const k1 = cm(r.kitchen.to);
+      const d = dimLine(doc, run.group, k0, k1, 0.012, BASE_FACE + 0.16, `Kuhinja ${r.wall.toUpperCase()}`, r.kitchen.to - r.kitchen.from, mats.dim);
+      if (r.wall !== "a") d.obj.position.x = (k1 - k0) * (r.wall === "b" ? 0.3 : 0.7);
+      d.el.classList.add("emna-studio-dim--run");
+      K.labels.push({ ...d, wall: r.wall, kind: "kitchen" });
+      tl.add(d.group, "growX", tEnd + 0.25, 0.8 * k);
+      tl.add(d.obj, "label", tEnd + 0.75 * k, 0.5 * k, 0, E.lin, d.el);
     }
   }
 
@@ -618,7 +707,15 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     const run = K.runs.get(r.wall)!;
     addLocal(run.group, 0, run.length, 0, Math.min(ceil, ut + 0.12), 0, 0.62);
   }
-  if (plan.island && islandGroup) addLocal(islandGroup, 0, cm(plan.island.length), 0, WORK_Y, -cm(DIM.islandOverhang) - 0.35, 0.64);
+  if (plan.island && islandGroup) {
+    const I = plan.island;
+    const ext = islandExtent(I);
+    // the seats too: 35 cm beyond the outer edge, and beyond an end people sit at
+    const endL = I.seats.some((st) => st.x < 0) ? 0.35 : 0;
+    const endR = I.seats.some((st) => st.x > I.length) ? 0.35 : 0;
+    const y1 = Math.max(WORK_Y, I.bar ? cm(I.bar.height) : 0);
+    addLocal(islandGroup, ext.x0 - endL, ext.x1 + endR, 0, y1, ext.z0 - 0.35, 0.64);
+  }
   K.box = box;
   const roomBox = box.clone();
   for (const w of wallExt) {
@@ -635,6 +732,158 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   }
 
   return K;
+}
+
+// ---------------------------------------------------------------- per-run surfaces (rebuilt by syncRunSurfaces)
+
+const surfacesOf = (run: RunRT) => (run.surfaces ??= { backsplash: null, plinthLed: null, shadow: null, floor: null });
+
+/** the worktop of a wall run with its sink cut-outs, into the run's group (null without a worktop) */
+function worktopGroup(K: KitchenRT, r: RunPlan, top: THREE.Material): THREE.Group | null {
+  const run = K.runs.get(r.wall);
+  if (!run || !r.worktop) return null;
+  const { topY: TOP_Y, workY: WORK_Y } = heightsOf(K.plan);
+  const from = cm(r.worktop.from);
+  const to = cm(r.worktop.to);
+  const g = new THREE.Group();
+  g.position.x = from;
+  const holes = [...K.modules.values()]
+    .filter((m) => m.slot.run === r.wall && m.hole)
+    .map((m) => ({ x0: m.hole!.x0 - from, x1: m.hole!.x1 - from, z0: m.hole!.z0, z1: m.hole!.z1 }));
+  const wt = mesh(boxes(slabWithHoles(0, to - from, TOP_Y, WORK_Y, 0, D.worktopDepth, holes), [from, 0, 0]), top);
+  g.add(wt);
+  K.tops.push(wt);
+  run.group.add(g);
+  run.worktop = g;
+  run.worktopFrom = from;
+  run.worktopTo = to;
+  return g;
+}
+
+/** the backsplash pieces of a wall run (plan RunPlan.backsplash) */
+function backsplashGroup(K: KitchenRT, r: RunPlan, top: THREE.Material): THREE.Group | null {
+  const run = K.runs.get(r.wall);
+  if (!run || !r.backsplash.length) return null;
+  const { workY: WORK_Y } = heightsOf(K.plan);
+  const bs: BoxSpec[] = r.backsplash.map((p) => [cm(p.from), WORK_Y, 0, cm(p.to), cm(p.top), D.backsplashT]);
+  const bg = new THREE.Group();
+  bg.position.y = WORK_Y;
+  const me = mesh(boxes(bs.map((b) => [b[0], b[1] - WORK_Y, b[2], b[3], b[4] - WORK_Y, b[5]] as BoxSpec), [0, WORK_Y, 0]), top);
+  bg.add(me);
+  K.tops.push(me);
+  run.group.add(bg);
+  surfacesOf(run).backsplash = bg;
+  return bg;
+}
+
+/** the LED strip in the plinth along the base cabinets (plan RunPlan.counter) */
+function plinthLedGroup(K: KitchenRT, r: RunPlan, mats: Materials): THREE.Group | null {
+  const run = K.runs.get(r.wall);
+  if (!run || !r.counter) return null;
+  const x0 = cm(r.counter.from) + 0.02;
+  const x1 = cm(r.counter.to) - 0.02;
+  if (x1 - x0 <= 0.2) return null;
+  const g = new THREE.Group();
+  g.position.x = x0;
+  const z = BASE_FACE - D.plinthRecess;
+  const strip = mesh(boxes([[0, 0.004, z + 0.001, x1 - x0, 0.009, z + 0.007]]), mats.led, false, false);
+  g.add(strip);
+  run.group.add(g);
+  K.leds.push({ mesh: strip, length: x1 - x0, kind: "plinth" });
+  surfacesOf(run).plinthLed = g;
+  return g;
+}
+
+/** the soft contact shadow under a wall run's base cabinets and tall columns */
+function runShadowGroup(K: KitchenRT, r: RunPlan, mats: Materials): THREE.Group | null {
+  const run = K.runs.get(r.wall);
+  if (!run) return null;
+  const ranges = [r.counter, ...(r.talls ?? (r.tall ? [r.tall] : []))].filter((x): x is { from: number; to: number } => Boolean(x));
+  if (!ranges.length) return null;
+  const from = Math.min(...ranges.map((x) => x.from));
+  const to = Math.max(...ranges.map((x) => x.to));
+  const sh = contactShadow(cm(from), 0, cm(to), BASE_FACE, 0.14, mats.shadow);
+  const g = new THREE.Group();
+  g.add(sh);
+  run.group.add(g);
+  surfacesOf(run).shadow = g;
+  return g;
+}
+
+/** studio: a dashed accent outline on the bare floor an edited run leaves free at its open end (RunPlan.free) */
+function floorMarks(K: KitchenRT, r: RunPlan, mats: Materials): THREE.Group | null {
+  const run = K.runs.get(r.wall);
+  if (!run || !r.free?.length) return null;
+  const list: BoxSpec[] = [];
+  const t = 0.012;
+  const y0 = 0.0012;
+  const y1 = 0.0028;
+  const z0 = 0.04;
+  const z1 = BASE_FACE - 0.02;
+  for (const f of r.free) {
+    const x0 = cm(f.from) + 0.03;
+    const x1 = cm(f.to) - 0.03;
+    if (x1 - x0 < 0.1) continue;
+    // dashes along the front edge and the wall, solid short ends
+    const n = Math.max(1, Math.round((x1 - x0) / 0.14));
+    const step = (x1 - x0) / n;
+    for (let i = 0; i < n; i++) {
+      const a = x0 + i * step + step * 0.2;
+      const b = a + step * 0.6;
+      list.push([a, y0, z1 - t, b, y1, z1], [a, y0, z0, b, y1, z0 + t]);
+    }
+    list.push([x0, y0, z0, x0 + t, y1, z1], [x1 - t, y0, z0, x1, y1, z1]);
+  }
+  if (!list.length) return null;
+  const g = new THREE.Group();
+  g.add(mesh(boxes(list), mats.dim, false, false));
+  run.group.add(g);
+  surfacesOf(run).floor = g;
+  return g;
+}
+
+/**
+ * An element edit changed where a wall run's cabinets end (worktop, backsplash, plinth, tall columns, bare floor —
+ * plan.ts lets the worktop end with the cabinets): rebuild those surfaces in place, without animation. Call after
+ * K.modules holds the new modules (sink cut-outs) and before K.plan = plan. Returns whether anything changed (the
+ * caller marks the frame dirty, so the frozen shadow maps re-render).
+ */
+export function syncRunSurfaces(K: KitchenRT, mats: Materials, plan: KitchenPlan, top: THREE.Material, marks: boolean): boolean {
+  let changed = false;
+  const old = K.plan;
+  K.plan = plan;
+  const drop = (g: THREE.Group | null) => {
+    if (!g) return;
+    const gone = new Set<THREE.Object3D>();
+    g.traverse((o) => gone.add(o));
+    K.tops = K.tops.filter((m) => !gone.has(m));
+    K.leds = K.leds.filter((z) => !gone.has(z.mesh));
+    disposeGeometries(g);
+    g.parent?.remove(g);
+  };
+  for (const r of plan.runs) {
+    const o = old.runs.find((x) => x.wall === r.wall);
+    const run = K.runs.get(r.wall);
+    if (!o || !run) continue;
+    const key = (x: RunPlan) => JSON.stringify([x.worktop, x.backsplash, x.counter, x.talls ?? x.tall, x.free ?? []]);
+    if (key(o) === key(r)) continue;
+    changed = true;
+    const sf = surfacesOf(run);
+    drop(run.worktop);
+    run.worktop = null;
+    drop(sf.backsplash);
+    drop(sf.plinthLed);
+    drop(sf.shadow);
+    drop(sf.floor);
+    run.surfaces = { backsplash: null, plinthLed: null, shadow: null, floor: null };
+    worktopGroup(K, r, top);
+    backsplashGroup(K, r, top);
+    plinthLedGroup(K, r, mats);
+    runShadowGroup(K, r, mats);
+    if (marks) floorMarks(K, r, mats);
+  }
+  if (!changed) K.plan = old;
+  return changed;
 }
 
 /** area lights wanted by the LED strips, most important first (world space) */
@@ -756,9 +1005,9 @@ function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPl
 
 /** re-dress every filler / end panel for a new handle style (keeps groups, so assembly tracks stay valid) */
 export function rebuildPieces(K: KitchenRT, env: ModuleEnv): void {
-  K.frontPieces = K.islandBack ? [K.islandBack] : [];
-  K.carcassPieces = [];
-  K.plinthPieces = [];
+  K.frontPieces = [...K.islandParts.front];
+  K.carcassPieces = [...K.islandParts.carcass];
+  K.plinthPieces = [...K.islandParts.plinth];
   for (const { p, g } of K.pieces) {
     for (const c of [...g.children]) {
       disposeGeometries(c);
@@ -825,10 +1074,8 @@ export function rebuildWorktop(K: KitchenRT, runId: RunId, top: THREE.Material):
   const mods = [...K.modules.values()].filter((m) => m.slot.run === runId && m.hole);
   const { topY: TOP_Y, workY: WORK_Y } = heightsOf(K.plan);
   let me: THREE.Mesh;
-  if (runId === "isl") {
-    const L = run.length;
-    const ov = cm(DIM.islandOverhang);
-    me = mesh(boxes(slabWithHoles(0, L, TOP_Y, WORK_Y, -ov, D.worktopDepth, mods.map((m) => m.hole!))), top);
+  if (runId === "isl" && K.plan.island) {
+    me = mesh(boxes(islandSlab(K.plan.island, TOP_Y, WORK_Y, mods.map((m) => m.hole!))), top);
   } else {
     const from = run.worktopFrom;
     const to = run.worktopTo;
@@ -837,6 +1084,166 @@ export function rebuildWorktop(K: KitchenRT, runId: RunId, top: THREE.Material):
   }
   g.add(me);
   K.tops.push(me);
+}
+
+// ---------------------------------------------------------------- island / peninsula extras
+
+/** one part of the island the assembly timeline animates */
+interface IslandPart {
+  obj: THREE.Group;
+  track: "extrude" | "drop" | "pop";
+  /** start, relative to the island's other extras (multiples of the tempo) */
+  delay: number;
+}
+
+/**
+ * What an island had never had before KitchenConfig.islandSpec (each only when plan.island lists it): front-coloured end
+ * panels, the row of push-to-open cabinets on the outer side of a deeper body, the raised bar (upstand, top, brackets)
+ * or the lowered table (top, two legs). Front / carcass / plinth meshes join K.islandParts (material changes reach
+ * them), a top in the kitchen's worktop material joins K.tops.
+ */
+function buildIslandExtras(K: KitchenRT, env: KitchenEnv, I: IslandPlan): IslandPart[] {
+  const { mats } = env;
+  const H = heightsOf(K.plan);
+  const TOP_Y = H.topY;
+  const out: IslandPart[] = [];
+  const front = mats.front(env.fronts.island);
+  const asFront = (me: THREE.Mesh) => {
+    me.userData.fz = "island";
+    K.frontPieces.push(me);
+    K.islandParts.front.push(me);
+    return me;
+  };
+  if (I.endPanels.length) {
+    const g = new THREE.Group();
+    g.add(asFront(mesh(boxes(I.endPanels.map((r) => [cm(r.from), 0, cm(r.z0), cm(r.to), TOP_Y, Math.min(cm(r.z1), BASE_FACE)] as BoxSpec)), front)));
+    out.push({ obj: g, track: "extrude", delay: 0 });
+  }
+  if (I.backRow) {
+    const r = I.backRow;
+    const g = new THREE.Group();
+    const bd = cm(r.depth);
+    const T = D.board;
+    const y0 = H.plinth;
+    const zb = -0.004;
+    const zc = -bd + D.frontT + D.frontOff;
+    const carc: BoxSpec[] = [];
+    const doors: BoxSpec[] = [];
+    let x = cm(r.from);
+    for (const w0 of r.doors) {
+      const w = cm(w0);
+      const x0 = x + 0.001;
+      const x1 = x + w - 0.001;
+      carc.push(
+        [x0, y0, zc, x0 + T, TOP_Y, zb],
+        [x1 - T, y0, zc, x1, TOP_Y, zb],
+        [x0 + T, y0, zc, x1 - T, y0 + T, zb],
+        [x0 + T, TOP_Y - T, zc, x1 - T, TOP_Y, zb],
+        [x0 + T, (y0 + TOP_Y) / 2, zc + 0.02, x1 - T, (y0 + TOP_Y) / 2 + T, zb - 0.01],
+        [x0 + T, y0 + T, zb - D.back, x1 - T, TOP_Y - T, zb],
+      );
+      // push-to-open (TIP-ON): plain fronts, 3 mm reveals, no grip
+      doors.push([x + D.gap, y0 + D.gap, -bd, x + w - D.gap, TOP_Y - D.gap, -bd + D.frontT]);
+      x += w;
+    }
+    const cm1 = mesh(boxes(carc), mats.carcass(env.fronts.island));
+    cm1.userData.fz = "island";
+    K.carcassPieces.push(cm1);
+    K.islandParts.carcass.push(cm1);
+    g.add(cm1, asFront(mesh(boxes(doors), front)));
+    const pl = mesh(boxes([[cm(r.from) + 0.001, 0, -bd + D.plinthRecess, cm(r.to) - 0.001, H.plinth - 0.002, -0.03]]), plinthMat(env, "island"));
+    pl.userData.fz = "island";
+    K.plinthPieces.push(pl);
+    K.islandParts.plinth.push(pl);
+    g.add(pl);
+    out.push({ obj: g, track: "extrude", delay: 0.1 });
+  }
+  const b = I.bar;
+  if (b) {
+    const g = new THREE.Group();
+    // the top: in the kitchen's worktop (follows it, K.tops) unless the bar has its own (IslandSpec.bar.top)
+    const own = K.plan.cfg.islandSpec?.bar?.top;
+    const topMat = own ? mats.top(own) : mats.top(env.topId);
+    const tops: THREE.Mesh[] = [];
+    const x0 = cm(b.from);
+    const x1 = cm(b.to);
+    const yTop = cm(b.height);
+    if (b.kind === "raised" && b.upstand) {
+      const u = b.upstand;
+      const yu = cm(u.y1);
+      g.add(asFront(mesh(boxes([[x0, cm(u.y0), cm(u.z0), x1, yu, cm(u.z1)]]), front)));
+      tops.push(mesh(boxes([[x0, yu, cm(b.z0), x1, yTop, cm(b.z1)]]), topMat));
+      const br: BoxSpec[] = b.brackets.map((bx) => [cm(bx) - 0.004, yu - 0.12, cm(b.z0) + 0.05, cm(bx) + 0.004, yu, cm(u.z0)]);
+      if (br.length) g.add(mesh(boxes(br), mats.black));
+    } else {
+      const yb = yTop - D.worktopT;
+      tops.push(mesh(boxes([[x0, yb, cm(b.z0), x1, yTop, cm(b.z1)], ...b.legs.map((l) => [cm(l.from), 0, cm(b.z0), cm(l.to), yb, cm(b.z1)] as BoxSpec)]), topMat));
+    }
+    for (const t of tops) {
+      g.add(t);
+      if (!own) K.tops.push(t);
+    }
+    out.push({ obj: g, track: b.kind === "raised" ? "drop" : "extrude", delay: 0.45 });
+  }
+  return out;
+}
+
+/** the ceiling hood above the island hob (plan.island.hood), in the island's run frame; null without one */
+export function buildIslandHood(env: Pick<KitchenEnv, "mats">, plan: KitchenPlan): THREE.Group | null {
+  const h = plan.island?.hood;
+  if (!h) return null;
+  const { mats } = env;
+  const g = new THREE.Group();
+  const x = cm(h.x);
+  const z = cm(h.z);
+  const w = cm(h.width) / 2;
+  const d = cm(h.depth) / 2;
+  const y0 = cm(h.bottom);
+  const y1 = cm(h.top);
+  const cw = cm(h.chimney.width) / 2;
+  const cd = cm(h.chimney.depth) / 2;
+  // canopy and chimney cover in the appliance finish (black glass / inox), grease filter, two lights underneath
+  g.add(
+    mesh(
+      boxes([
+        [x - w, y0, z - d, x + w, y1, z + d],
+        [x - cw, y1, z - cd, x + cw, cm(h.ceiling), z + cd],
+      ]),
+      mats.appliance,
+    ),
+  );
+  g.add(mesh(boxes([[x - w + 0.03, y0 - 0.002, z - d + 0.03, x + w - 0.03, y0, z + d - 0.03]]), mats.brushed, false, true));
+  g.add(
+    mesh(
+      boxes([
+        [x - w / 2 - 0.02, y0 - 0.003, z - 0.02, x - w / 2 + 0.02, y0 - 0.002, z + 0.02],
+        [x + w / 2 - 0.02, y0 - 0.003, z - 0.02, x + w / 2 + 0.02, y0 - 0.002, z + 0.02],
+      ]),
+      mats.ovenLight,
+      false,
+      false,
+    ),
+  );
+  return g;
+}
+
+/** the island hob moved (an element edit): the hood follows — rebuilt in place (no animation) */
+export function syncIslandHood(K: KitchenRT, env: Pick<KitchenEnv, "mats">, plan: KitchenPlan): boolean {
+  const before = JSON.stringify(K.plan.island?.hood ?? null);
+  const after = JSON.stringify(plan.island?.hood ?? null);
+  if (before === after) return false;
+  if (K.islandHood) {
+    disposeGeometries(K.islandHood);
+    K.islandHood.parent?.remove(K.islandHood);
+    K.islandHood = null;
+  }
+  const g = K.runs.get("isl")?.group;
+  const hood = g ? buildIslandHood(env, plan) : null;
+  if (g && hood) {
+    g.add(hood);
+    K.islandHood = hood;
+  }
+  return true;
 }
 
 export function disposeKitchen(K: KitchenRT): void {

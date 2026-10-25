@@ -28,8 +28,9 @@ export function StudioCall() {
         />
         <Reveal delay={0.2}>
           <p className="mx-auto mt-8 max-w-xl text-base leading-relaxed text-fg/70 sm:text-lg">
-            Upišite mjere svojih zidova, odaberite oblik i složite elemente, zatim boje fronti, radnu ploču i detalje.
-            Okvirnu cijenu vidite odmah, a upit nam šaljete s mjerama i slikom svoje kuhinje.
+            Upišite mjere prostorije i koliki dio zidova zauzima kuhinja, odaberite oblik — i s otokom, poluotokom ili
+            šankom — pa složite elemente, boje fronti, radnu ploču i detalje. Okvirnu cijenu vidite odmah, a upit nam
+            šaljete s mjerama i slikom svoje kuhinje.
           </p>
         </Reveal>
         <Reveal delay={0.3} className="mt-11 flex justify-center">

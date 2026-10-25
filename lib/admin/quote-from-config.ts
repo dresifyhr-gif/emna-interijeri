@@ -8,7 +8,8 @@
  * breakdown), one line per wall and zone ("Donji elementi – zid A (380 cm)" with every cabinet in the
  * details, each zone in its own front for two-tone kitchens, empty space left out as price.ts does; kitchens
  * "do stropa" add their top cabinets and the cornice strip), then mechanisms, worktop, backsplash, handles, finishes (handle colour, sink and tap, plinth), LED,
- * island and installation.
+ * island / peninsula (its slab, outer row of cabinets, end panels, bar or lowered table, ceiling hood mounting —
+ * price.ts islandCost) and installation.
  *
  * Every category total comes from price.ts `breakdown()`, so the quote adds up to what the studio
  * showed the customer even when the catalogue rates change; the per-metre rates are only used to
@@ -32,8 +33,8 @@ import {
   topDef,
   type MaterialDef,
 } from "@/lib/studio/catalog";
-import { DIM, frontFor, hasTopBox, planKitchen, sanitizeConfig, type PlanSlot } from "@/lib/studio/plan";
-import { TOP_BOX_HARDWARE, backsplashArea, breakdown, estimate, heightScale } from "@/lib/studio/price";
+import { DIM, frontFor, hasTopBox, isPeninsula, kitchenRange, parseRunEnd, planKitchen, sanitizeConfig, tallListEnd, type PlanSlot } from "@/lib/studio/plan";
+import { TOP_BOX_HARDWARE, backsplashArea, breakdown, estimate, heightScale, islandCost } from "@/lib/studio/price";
 import { summarize } from "@/lib/studio/summary";
 import type { FrontZone, KitchenConfig, Layout } from "@/lib/studio/types";
 
@@ -71,6 +72,8 @@ const LAYOUT_TITLE: Record<Layout, string> = {
   L: "kuhinja u obliku slova L",
   U: "kuhinja u obliku slova U",
   otok: "kuhinja s otokom",
+  poluotok: "kuhinja s poluotokom",
+  G: "kuhinja u obliku slova G",
 };
 
 const APPLIANCES_NOTE =
@@ -176,14 +179,35 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   const walls = Array.isArray(plan.walls) ? plan.walls : [];
   for (const wall of walls) {
     const length = c.walls?.[wall];
-    const label = `zid ${String(wall).toUpperCase()}${finite(length) ? ` (${cmFmt.format(length)} cm)` : ""}`;
+    // a kitchen shorter than its wall (KitchenConfig.extents): the run's length, then the wall's
+    const k = c.extents?.[wall] ? kitchenRange(c, wall) : null;
+    const size = k
+      ? ` (kuhinja ${cmFmt.format(k.to - k.from)} cm, zid ${cmFmt.format(length)} cm)`
+      : finite(length)
+        ? ` (${cmFmt.format(length)} cm)`
+        : "";
+    const label = `zid ${String(wall).toUpperCase()}${size}`;
     for (const zone of ["base", "upper"] as const) {
       const slots = plan.slots.filter((s) => s.run === wall && s.zone === zone);
       addGroup(`${zone === "base" ? "Donji" : "Gornji"} elementi – ${label}`, slots, zone, ZONE_WEIGHT[zone] * hs[zone]);
     }
   }
-  addGroup("Visoki elementi", plan.slots.filter((s) => s.zone === "tall"), "tall", ZONE_WEIGHT.tall * hs.tall);
-  addGroup("Otok – elementi", plan.slots.filter((s) => s.zone === "island"), "island", ZONE_WEIGHT.island);
+  addGroup("Visoki elementi", plan.slots.filter((s) => s.zone === "tall" && s.list?.id === "tall"), "tall", ZONE_WEIGHT.tall * hs.tall);
+  // more tall columns at other run ends (KitchenConfig.tallRuns): a line each
+  for (const l of plan.lists) {
+    const end = tallListEnd(l.id);
+    if (!end) continue;
+    const { wall, side } = parseRunEnd(end);
+    addGroup(
+      `Visoki elementi – zid ${wall.toUpperCase()}, ${side === "left" ? "lijevi" : "desni"} kraj`,
+      plan.slots.filter((s) => s.zone === "tall" && s.list?.id === l.id),
+      "tall",
+      ZONE_WEIGHT.tall * hs.tall,
+    );
+  }
+  const islandWord = isPeninsula(c.layout) ? "Poluotok" : "Otok";
+  addGroup(`${islandWord} – elementi`, plan.slots.filter((s) => s.zone === "island"), "island", ZONE_WEIGHT.island);
+  const ic = islandCost(plan);
   // "do stropa": the top cabinets (nadgradni ormarići) on the wall units and above a split tall column, as price.ts counts them
   const topUpper = hs.top > 0 ? cabinetsOnly.filter((s) => s.zone === "upper" && hasTopBox(s.type)) : [];
   const topTall = hp.tallSplit !== null ? cabinetsOnly.filter((s) => s.zone === "tall") : [];
@@ -227,13 +251,37 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     });
   }
   const grossSum = groups.reduce((sum, g) => sum + g.gross, 0);
-  if (b.cabinets > 0 && !(grossSum > 0)) throw new Error("cabinets without metres");
+  // the island's outer row of cabinets and its end panels are in b.cabinets too: their own lines, the rest split as above
+  const islandCabinets = (ic?.backRow ?? 0) + (ic?.endPanels ?? 0);
+  const cabinetsRest = b.cabinets - islandCabinets;
+  if (cabinetsRest > 0 && !(grossSum > 0)) throw new Error("cabinets without metres");
   for (const g of groups) {
     const qty = round2(g.metres);
     if (!(qty > 0)) continue;
     // the group's share of b.cabinets (the same sum, so the scale is 1 up to rounding)
-    const share = (b.cabinets * g.gross) / grossSum;
+    const share = (cabinetsRest * g.gross) / grossSum;
     lines.push({ description: g.description, details: g.details, qty, unit: "m", grossUnit: rate(share, qty, g.catalogueRate || null) });
+  }
+  const I = plan.island;
+  if (ic && I?.backRow && ic.backRow > 0.5) {
+    const qty = round2(cmToM(I.backRow.to - I.backRow.from));
+    if (!(qty > 0)) throw new Error("back row without metres");
+    lines.push({
+      description: `${islandWord} – stražnji ormarići`,
+      details: `${I.backRow.doors.length} vrata s otvaranjem na dodir (TIP-ON), dubina ${cmFmt.format(I.backRow.depth)} cm, s vanjske strane · fronta: ${frontOf("island").name}`,
+      qty,
+      unit: "m",
+      grossUnit: ic.backRow / qty,
+    });
+  }
+  if (ic && I && ic.endPanels > 0.5) {
+    lines.push({
+      description: `${islandWord} – bočne ploče`,
+      details: `u boji fronte (${frontOf("island").name}), od poda do radne ploče`,
+      qty: I.endPanels.length,
+      unit: "kom",
+      grossUnit: ic.endPanels / I.endPanels.length,
+    });
   }
 
   /* ---------------- mechanisms: one line per module type with a surcharge */
@@ -253,11 +301,13 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   /* ---------------- worktop (walls by the metre, island slab as one piece) */
   const wallTopM = plan.runs.reduce((sum, r) => sum + (r.worktop ? cmToM(r.worktop.to - r.worktop.from) : 0), 0);
   let islandSlab = 0;
+  // the bar / table top has its own line (it may be in another material)
+  const barTop = ic?.barTop ?? 0;
   if (b.worktop > 0) {
     const wallQty = round2(wallTopM);
     if (plan.island && wallQty > 0) {
-      const wallPart = Math.min(b.worktop, top.pricePerMeter * wallTopM);
-      islandSlab = b.worktop - wallPart;
+      const wallPart = Math.min(b.worktop - barTop, top.pricePerMeter * wallTopM);
+      islandSlab = b.worktop - barTop - wallPart;
       lines.push({
         description: `Radna ploča – ${top.name}`,
         details: `dubina ${cmFmt.format(DIM.worktopDepth)} cm, uz zidove`,
@@ -266,7 +316,7 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
         grossUnit: rate(wallPart, wallQty, top.pricePerMeter),
       });
     } else if (plan.island) {
-      islandSlab = b.worktop;
+      islandSlab = b.worktop - barTop;
     } else if (wallQty > 0) {
       lines.push({
         description: `Radna ploča – ${top.name}`,
@@ -281,12 +331,36 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   }
   if (islandSlab > 0.5) {
     const len = plan.island?.length;
+    const isl = plan.island;
+    // the island of an older link keeps its wording; otherwise what the slab really is
+    const details =
+      !c.islandSpec && isl?.kind !== "poluotok"
+      ? `${finite(len) ? `${cmFmt.format(len)} cm, ` : ""}s bočnim stranicama do poda`
+      : [
+          finite(len) ? `${cmFmt.format(len)} cm` : null,
+          isl ? `dubina ${cmFmt.format(DIM.worktopDepth - Math.min(...isl.slab.map((r) => r.z0)))} cm` : null,
+          isl?.waterfalls.length ? (isl.waterfalls.length > 1 ? "s bočnim stranicama do poda" : "s bočnom stranicom do poda na slobodnom kraju") : null,
+          isl?.overhang ? `prepust za sjedenje ${cmFmt.format(isl.overhang)} cm` : null,
+        ]
+          .filter(Boolean)
+          .join(", ");
     lines.push({
-      description: `Ploča otoka – ${top.name}`,
-      details: `${finite(len) ? `${cmFmt.format(len)} cm, ` : ""}s bočnim stranicama do poda`,
+      description: `Ploča ${isPeninsula(c.layout) ? "poluotoka" : "otoka"} – ${top.name}`,
+      details,
       qty: 1,
       unit: "kompl.",
       grossUnit: islandSlab,
+    });
+  }
+  const bar = plan.island?.bar;
+  if (bar && barTop > 0.5) {
+    const bt = topDef(bar.top) ?? top;
+    lines.push({
+      description: `${bar.kind === "raised" ? "Ploča šanka" : "Ploča spuštenog stola"} – ${bt.name}`,
+      details: `${cmFmt.format(bar.to - bar.from)} × ${cmFmt.format(bar.depth)} cm, na ${cmFmt.format(bar.height)} cm od poda${bar.kind === "table" ? ", s dvije noge u istom materijalu" : ""}`,
+      qty: 1,
+      unit: "kompl.",
+      grossUnit: barTop,
     });
   }
 
@@ -374,15 +448,56 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     }
   }
 
-  /* ---------------- island extras */
+  /* ---------------- island extras (b.island = fixed + bar / table fitting + ceiling hood mounting) */
   if (b.island > 0.5) {
-    lines.push({
-      description: "Otok – stražnja ploča i prepust za sjedenje",
-      details: "obloga stražnje strane otoka i prepust radne ploče za barske stolice",
-      qty: 1,
-      unit: "paušal",
-      grossUnit: b.island,
-    });
+    const isl = plan.island;
+    const fixed = ic ? ic.fixed : b.island;
+    if (!isl || (!c.islandSpec && isl.kind === "otok")) {
+      lines.push({
+        description: "Otok – stražnja ploča i prepust za sjedenje",
+        details: "obloga stražnje strane otoka i prepust radne ploče za barske stolice",
+        qty: 1,
+        unit: "paušal",
+        grossUnit: fixed,
+      });
+    } else {
+      const of = isPeninsula(c.layout) ? "poluotoka" : "otoka";
+      const parts = [
+        isl.backPanel ? `obloga stražnje strane ${of}` : `zatvaranje stražnjih ormarića ${of}`,
+        isl.overhang > 0 ? "prepust radne ploče za barske stolice" : null,
+        isl.waterfalls.length ? "bočne stranice od radne ploče" : null,
+        isl.functions.sink || isl.functions.hob ? "izrezi i priprema za ugradnju u radnu ploču" : null,
+      ].filter(Boolean);
+      lines.push({ description: `${islandWord} – izrada i montaža`, details: parts.join(", "), qty: 1, unit: "paušal", grossUnit: fixed });
+    }
+    if (ic && isl?.bar && ic.barBuild > 0.5) {
+      lines.push(
+        isl.bar.kind === "raised"
+          ? {
+              description: "Šank – nadogradnja i nosači",
+              details: `nadogradnja u boji fronte na radnoj ploči, ${isl.bar.brackets.length} ${isl.bar.brackets.length >= 5 ? "čeličnih" : "čelična"} nosača ispod ploče šanka, montaža`,
+              qty: 1,
+              unit: "paušal",
+              grossUnit: ic.barBuild,
+            }
+          : {
+              description: "Spušteni stol – montaža",
+              details: `pričvršćivanje uz ${isPeninsula(c.layout) ? "poluotok" : "otok"} i noge stola`,
+              qty: 1,
+              unit: "paušal",
+              grossUnit: ic.barBuild,
+            },
+      );
+    }
+    if (ic && isl?.hood && ic.hood > 0.5) {
+      lines.push({
+        description: "Montaža otočne nape (stropna)",
+        details: `pričvršćenje na strop, maska dimnjaka do stropa, odvod — napa nije uključena · donji rub ${cmFmt.format(isl.hood.bottom)} cm od poda`,
+        qty: 1,
+        unit: "paušal",
+        grossUnit: ic.hood,
+      });
+    }
   }
 
   /* ---------------- delivery + installation */

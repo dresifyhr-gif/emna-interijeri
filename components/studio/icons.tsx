@@ -57,6 +57,21 @@ export function LayoutIcon({ layout, ...rest }: P & { layout: Layout }) {
           <path d="M16 38.5h.01M24 38.5h.01M32 38.5h.01" {...line} strokeWidth={2.2} />
         </>
       )}
+      {layout === "poluotok" && (
+        <>
+          <path d="M3 7.5h38" {...wall} />
+          <path d="M3 13.5v22" {...wall} strokeDasharray="1.5 3" />
+          <path d="M5 8.5h34v29h-7.5V15.5H5Z" {...cab} />
+          <path d="M43.5 21h.01M43.5 29h.01" {...line} strokeWidth={2.2} />
+        </>
+      )}
+      {layout === "G" && (
+        <>
+          <path d="M5.5 43V7.5H41" {...wall} />
+          <path d="M6.5 8.5H39v28h-7.5V15.5H13.5V41h-7Z" {...cab} />
+          <path d="M43.5 20.5h.01M43.5 28.5h.01" {...line} strokeWidth={2.2} />
+        </>
+      )}
     </Svg>
   );
 }
@@ -250,6 +265,64 @@ export function ModuleGlyph({ type, zone, ...rest }: P & { type: string; zone: s
       );
       break;
 
+    // L-shaped / diagonal corner units (seen from above, the corner top left)
+    case "base:kutni-l":
+    case "upper:kutni-l":
+      body = (
+        <>
+          <path d="M5.5 6.5h20v9h-11v11h-9Z" {...line} />
+          <path d="M14.5 15.5l3.2 3.2M14.5 15.5l-3.2 3.2" {...soft} />
+          <path d="M18 15.5h7.5M14.5 19v7.5" {...dash} />
+        </>
+      );
+      break;
+    case "base:kutni-l-karusel":
+      body = (
+        <>
+          <path d="M5.5 6.5h20v9h-11v11h-9Z" {...line} />
+          <circle cx="11" cy="12" r="4" {...soft} />
+          <path d="M11 8v8M7 12h8" {...soft} />
+        </>
+      );
+      break;
+    case "base:kutni-ladice":
+      body = (
+        <>
+          <path d="M5.5 6.5h20v9h-11v11h-9Z" {...line} />
+          <path d="M8.5 23V9.5H23M11.5 23V12.5H23" {...soft} />
+          <path d="M18.5 19.5l4 4m0-3.2v3.2h-3.2" {...soft} />
+        </>
+      );
+      break;
+    case "base:kutni-dijagonalni":
+    case "upper:kutni-dijagonalni":
+      body = (
+        <>
+          <path d="M5.5 6.5h20v9l-11 11h-9Z" {...line} />
+          <path d="M23 16.5l-7.5 7.5" {...dash} />
+          <path d="M17.5 19.5l1.6 1.6" {...line} />
+        </>
+      );
+      break;
+    case "upper:kutni-dijagonalni-staklo":
+      body = (
+        <>
+          <path d="M5.5 6.5h20v9l-11 11h-9Z" {...line} />
+          <path d="M9 10h11M9 14.5h9.5M9 19h5" {...soft} />
+          <path d="M21.5 12.5l2-2M18 19l3-3" {...soft} />
+        </>
+      );
+      break;
+    case "upper:kutna-polica":
+      body = (
+        <>
+          <path d="M5.5 6.5h20v9h-11v11h-9Z" {...dash} />
+          <path d="M8.5 23V9.5H23" {...line} />
+          <path d="M11.5 23V12.5H23" {...soft} />
+        </>
+      );
+      break;
+
     // ---------------------------------------------------------------- wall units
     case "upper:vrata":
       body = (
@@ -350,6 +423,19 @@ export function ModuleGlyph({ type, zone, ...rest }: P & { type: string; zone: s
           {tallBox}
           <path d="M10 18.5h12" {...line} />
           <path d="M19.5 7v4M19.5 21v4" {...line} />
+        </>
+      );
+      break;
+    case "tall:hladnjak-sbs":
+    case "tall:hladnjak-sbs-vrata":
+      body = (
+        <>
+          <rect x="5.5" y="3.5" width="21" height="25" rx="1" {...line} />
+          <path d="M5.5 9h21" {...line} />
+          {type === "hladnjak-sbs-vrata" ? <path d="M16 3.5V9" {...soft} /> : <path d="M13 6.2h6" {...soft} />}
+          <path d="M8 9v19.5M24 9v19.5" {...dash} />
+          <path d="M16 10.5v18" {...line} />
+          <path d="M14.4 15v7M17.6 15v7" {...line} />
         </>
       );
       break;
@@ -674,6 +760,46 @@ export const LayersIcon = (p: P) => (
   <Svg {...p}>
     <rect x="4.5" y="4.5" width="15" height="6.5" rx="1" {...line} />
     <rect x="4.5" y="13" width="15" height="6.5" rx="1" {...line} strokeOpacity={0.6} />
+  </Svg>
+);
+
+/** a counter stool (seating) */
+export const StoolIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M7 6.5h10" {...line} />
+    <path d="M9 6.5l-2.5 14M15 6.5l2.5 14M8 14h8" {...line} />
+  </Svg>
+);
+/** a raised bar top on its upstand (šank) */
+export const BarIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M3.5 13.5h11v7h-11ZM14.5 9h6.5M14.5 9v4.5" {...line} />
+    <path d="M17.5 9v11.5" {...line} strokeOpacity={0.45} />
+  </Svg>
+);
+/** a ceiling hood with its chimney */
+export const HoodIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 3v6M10 3v6h4" {...line} />
+    <path d="M7.5 13l2.5-4h4l2.5 4Z" {...line} />
+    <path d="M9 17c.8-1 .8-2 0-3M12 18c.8-1 .8-2 0-3M15 17c.8-1 .8-2 0-3" {...line} strokeOpacity={0.45} />
+  </Svg>
+);
+/** the island's body from above, with the cabinets on one side */
+export const IslandIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="3.5" y="7.5" width="17" height="9" rx="0.8" {...line} />
+    <path d="M3.5 12h17" {...line} strokeOpacity={0.45} />
+    <path d="M7 14.5h.01M12 14.5h.01M17 14.5h.01" {...line} strokeWidth={2} />
+  </Svg>
+);
+/** a paint swatch fan (room surfaces) */
+export const PaletteIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="4" y="4.5" width="6.5" height="15" rx="1" {...line} />
+    <path d="M10.5 8.2l4.3-2.5 3.3 5.6-7.6 4.4" {...line} />
+    <path d="M10.5 14.5h8.5v5h-8.5" {...line} />
+    <path d="M7.25 16.5h.01" {...line} strokeWidth={2} />
   </Svg>
 );
 

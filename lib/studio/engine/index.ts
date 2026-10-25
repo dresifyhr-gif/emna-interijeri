@@ -17,12 +17,13 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { FINISH_DEFAULTS } from "../catalog";
-import { frontFor, geometryKey, planKitchen, sanitizeConfig, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId } from "../plan";
+import { frontFor, geometryKey, kitchenRange, planGaps, planKitchen, sanitizeConfig, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId } from "../plan";
 import {
   DEFAULT_CONFIG,
   type CreateStudioEngine,
   type DimTarget,
   type FrontZone,
+  type GapView,
   type HandleStyle,
   type KitchenConfig,
   type Layout,
@@ -32,6 +33,7 @@ import {
   type StudioEngineApi,
   type StudioEngineOptions,
   type ViewInfo,
+  type WallId,
 } from "../types";
 import { applyViewOffset, fitBox, viewDir, type Region } from "./camera";
 import { BASE_FACE, UPPER_FACE, WORK_Y } from "./dims";
@@ -46,6 +48,8 @@ import {
   rebuildWorktop,
   removeUnderLeds,
   replacePieces,
+  syncIslandHood,
+  syncRunSurfaces,
   underLeds,
   type KitchenRT,
   type ModuleEnv,
@@ -92,13 +96,25 @@ const PASS_ALL = 1e6;
 /** hero: preset (material pair) changes need the orbit this far past a boundary, and this long apart */
 const PRESET_HYSTERESIS = 0.02;
 const PRESET_MIN_GAP = 0.35;
+/** a click on the floor counts this far (m) beyond the kitchen and its walls (K.room), not out at the horizon */
+const FLOOR_REACH = 3;
 
 const VIEW: Record<Layout, { az: number; el: number; orbit: [number, number]; limit: [number, number] }> = {
   ravna: { az: 0.34, el: 0.2, orbit: [0.55, -0.5], limit: [-1.25, 1.25] },
   L: { az: 0.5, el: 0.21, orbit: [0.82, 0.12], limit: [-1.1, 1.3] },
   U: { az: 0.1, el: 0.3, orbit: [0.28, -0.28], limit: [-0.75, 0.75] },
   otok: { az: 0.45, el: 0.3, orbit: [0.6, -0.45], limit: [-2.4, 2.4] },
+  // the peninsula at the right end of wall A, its fronts facing left: seen from the front left (mirrored for a left one)
+  poluotok: { az: -0.42, el: 0.32, orbit: [-0.62, 0.3], limit: [-1.6, 1.25] },
+  G: { az: -0.12, el: 0.34, orbit: [-0.42, 0.22], limit: [-1.1, 0.95] },
 };
+
+/** the camera framing of a config (a peninsula at the left end of wall A mirrors the right one's) */
+function viewOf(cfg: KitchenConfig): (typeof VIEW)[Layout] {
+  const v = VIEW[cfg.layout];
+  if (cfg.layout !== "poluotok" || cfg.islandSpec?.side !== "left") return v;
+  return { az: -v.az, el: v.el, orbit: [-v.orbit[0], -v.orbit[1]], limit: [-v.limit[1], -v.limit[0]] };
+}
 
 // ---------------------------------------------------------------- tone mapping helpers
 
@@ -176,9 +192,13 @@ class Engine {
     finish: string;
     plinth: string;
     wall: string;
+    /** JSON of the finish each wall wears (KitchenConfig.room.walls) */
+    walls: string;
     floor: string;
   };
   private readonly geos = new GeoCache();
+  /** the room surface under the pointer (studio with onSurfaceClick): its accent rim */
+  private surfaceHover: THREE.Mesh | null = null;
   /** materials whose programs exist (boot compile, precompile) — the studio compiles new ones before showing them */
   private readonly compiled = new WeakSet<THREE.Material>();
   /** a material change waiting for its shaders (latest wins) */
@@ -437,6 +457,7 @@ class Engine {
       finish: JSON.stringify(look),
       plinth: look.plinth,
       wall: this.cfg.room?.wall ?? FINISH_DEFAULTS.wall,
+      walls: JSON.stringify(this.cfg.room?.walls ?? {}),
       floor: this.cfg.room?.floor ?? FINISH_DEFAULTS.floor,
     };
     this.mats.setFinish(look);
@@ -574,9 +595,20 @@ class Engine {
         topId: this.applied.top,
         labels: this.mode === "studio",
         tempo,
+        wallMat: (w) => this.wallMatFor(cfg, w),
       },
       plan,
     );
+  }
+
+  /**
+   * the material of a room wall: the shared `wall` (its colour glides on a change) for the room's main paint, its own
+   * material for a textured finish or a wall painted unlike the others (KitchenConfig.room.walls)
+   */
+  private wallMatFor(cfg: KitchenConfig, w: WallId): THREE.Material {
+    const all = cfg.room?.wall ?? FINISH_DEFAULTS.wall;
+    const id = cfg.room?.walls?.[w] ?? all;
+    return id === all && !this.mats.wallTextured(id) ? this.mats.wall : this.mats.wallMat(id);
   }
 
   /** what building a module / filler needs: the materials the scene shows right now */
@@ -846,7 +878,7 @@ class Engine {
   }
 
   private view() {
-    return VIEW[this.kitchen?.plan.cfg.layout ?? this.cfg.layout];
+    return viewOf(this.kitchen?.plan.cfg ?? this.cfg);
   }
 
   /** fit distance for the current kitchen at (az, el); the hero frames the whole set incl. walls */
@@ -1249,6 +1281,7 @@ class Engine {
     for (const z of ZONES) if (fronts[z] !== this.applied.fronts[z]) want.push(this.mats.front(fronts[z]), this.mats.carcass(fronts[z]));
     if (cfg.top !== this.applied.top) want.push(this.prepTop(this.mats.top(cfg.top)));
     if (floorId !== this.applied.floor) want.push(this.mats.floorMat(floorId));
+    for (const w of ["a", "b", "c"] as WallId[]) want.push(this.wallMatFor(cfg, w));
     const pend = this.pendingFronts;
     const hc = handlesChanged || Boolean(pend?.handlesChanged);
     const skip = [...(pend?.skip ?? []), ...fresh];
@@ -1362,8 +1395,13 @@ class Engine {
     }
     if (floor !== this.applied.floor) {
       this.applied.floor = floor;
-      this.floor.material = this.mats.floorMat(floor);
+      this.assign(this.floor, this.mats.floorMat(floor));
     }
+    // each wall: the shared paint, or its own material (a textured finish, a wall painted unlike the others)
+    const walls = JSON.stringify(cfg.room?.walls ?? {});
+    this.applied.walls = walls;
+    const K = this.kitchen;
+    if (K) for (const w of K.walls) this.assign(w.mesh, this.wallMatFor(cfg, w.id));
     this.dirty = true;
   }
 
@@ -1372,7 +1410,10 @@ class Engine {
     if (!K) return;
     for (const l of K.labels) {
       if (l.wall === "isl") l.setText(cfg.island);
-      else l.setText(cfg.walls[l.wall]);
+      else if (l.kind === "kitchen") {
+        const k = kitchenRange(cfg, l.wall);
+        l.setText(k.to - k.from);
+      } else l.setText(cfg.walls[l.wall]);
     }
     this.dirty = true;
   }
@@ -1413,6 +1454,9 @@ class Engine {
       this.opts.onSelect?.(null);
     }
     this.hoverId = null;
+    // the hovered wall goes with the old kitchen; the floor stays and loses its rim
+    if (this.surfaceHover === this.floor) this.hoverSurface(null);
+    this.surfaceHover = null;
     // a rebuild shows the whole config at once: materials waiting for their shaders come along
     this.matToken++;
     this.pendingFronts = null;
@@ -1578,6 +1622,10 @@ class Engine {
     this.listHoverId = listHovered && taken.has(listHovered) ? listHovered.slot.id : null;
 
     K.modules = next;
+    // the ceiling hood follows the island hob (an edit moved or removed it)
+    if (syncIslandHood(K, { mats: this.mats }, plan)) this.dirty = true;
+    // the worktop, backsplash and plinth end with the cabinets: an edit that changes where they end rebuilds them
+    if (syncRunSurfaces(K, this.mats, plan, this.mats.top(this.applied.top), this.mode === "studio")) this.dirty = true;
     K.plan = plan;
     K.order = [...plan.slots]
       .sort((p, q) => zoneRank(p) - zoneRank(q))
@@ -1971,11 +2019,22 @@ class Engine {
   }
 
   private pick(x: number, y: number): ModuleRT | null {
+    return this.hitTest(x, y).module;
+  }
+
+  /**
+   * What is under a screen point: the nearest visible cabinet, or (with onSurfaceClick) the wall / floor when nothing
+   * else is in the way. Anything else hit first (a worktop, a filler, the hood) hides what is behind it.
+   */
+  private hitTest(x: number, y: number): { module: ModuleRT | null; surface: { mesh: THREE.Mesh; surface: "wall" | "floor"; wall?: WallId } | null } {
+    const none = { module: null, surface: null };
     const K = this.kitchen;
-    if (!K || this.play) return null;
+    if (!K || this.play) return none;
     const { w, h } = this.size;
     this.raycaster.setFromCamera(new THREE.Vector2((x / w) * 2 - 1, -(y / h) * 2 + 1), this.camera);
-    const hits = this.raycaster.intersectObjects(this.rayTargets, false);
+    const surfaces = Boolean(this.opts.onSurfaceClick) && this.mode === "studio";
+    const targets = surfaces ? [...this.rayTargets, this.floor] : this.rayTargets;
+    const hits = this.raycaster.intersectObjects(targets, false);
     for (const hit of hits) {
       let o: THREE.Object3D | null = hit.object;
       let visible = true;
@@ -1988,21 +2047,71 @@ class Engine {
       }
       if (!visible) continue;
       const id = hit.object.userData.mid as string | undefined;
-      return id ? (K.modules.get(id) ?? null) : null;
+      if (id) return { module: K.modules.get(id) ?? null, surface: null };
+      const sf = (hit.object === this.floor ? { surface: "floor" } : hit.object.userData.surface) as { surface: "wall" | "floor"; wall?: WallId } | undefined;
+      // the floor counts only in the room: not behind its walls (a ray over a wall top meets the floor plane far behind
+      // it) and not out at the horizon
+      if (sf?.surface === "floor" && !this.floorInRoom(K, hit.point)) return none;
+      if (surfaces && sf) return { module: null, surface: { mesh: hit.object as THREE.Mesh, ...sf } };
+      return none;
     }
-    return null;
+    return none;
+  }
+
+  /** a floor point (world) inside the room: in front of its walls, at most FLOOR_REACH m beyond the kitchen and its walls */
+  private floorInRoom(K: KitchenRT, p: THREE.Vector3): boolean {
+    const q = K.root.worldToLocal(p.clone());
+    const walls = K.plan.walls;
+    const A = K.plan.cfg.walls.a / 100;
+    if (q.z < 0) return false;
+    if (walls.includes("b") && q.x < 0) return false;
+    if (walls.includes("c") && q.x > A) return false;
+    const r = K.room;
+    return p.x >= r.min.x - FLOOR_REACH && p.x <= r.max.x + FLOOR_REACH && p.z >= r.min.z - FLOOR_REACH && p.z <= r.max.z + FLOOR_REACH;
+  }
+
+  /** the faint accent rim on the room surface under the pointer (null = none) */
+  private hoverSurface(me: THREE.Mesh | null): void {
+    const prev = this.surfaceHover;
+    if (prev === me) return;
+    if (prev && prev.userData.hl) {
+      prev.material = prev.userData.baseMat as THREE.Material;
+      prev.userData.hl = false;
+    }
+    this.surfaceHover = me;
+    if (me && !me.userData.hl) {
+      const mat = me.material as THREE.Material;
+      const hl = this.mats.highlight(mat);
+      if (hl !== mat) {
+        me.userData.baseMat = mat;
+        me.material = hl;
+        me.userData.hl = true;
+        const u = this.mats.hl.value;
+        const target = ACCENT.clone().multiplyScalar(0.55);
+        this.tweens.cancel("hl");
+        const from = u.clone();
+        this.tweens.add(0.25, 0, (e) => u.copy(from).lerp(target, e), { tag: "hl" });
+      }
+    }
+    this.dirty = true;
   }
 
   private updateHover(): void {
-    const m = this.pointer.inside && !this.down ? this.pick(this.pointer.x, this.pointer.y) : null;
+    const hit = this.pointer.inside && !this.down ? this.hitTest(this.pointer.x, this.pointer.y) : { module: null, surface: null };
+    const m = hit.module;
+    // walls get the rim; the floor only the pointer (tinting the whole floor plane is far too strong at a low angle)
+    this.hoverSurface(m || hit.surface?.surface !== "wall" ? null : hit.surface.mesh);
     const id = m?.slot.id ?? null;
-    if (id === this.hoverId) return;
+    if (id === this.hoverId) {
+      this.renderer.domElement.dataset.hover = m || hit.surface ? "on" : "off";
+      return;
+    }
     const K = this.kitchen;
     const prev = this.hoverId ? K?.modules.get(this.hoverId) : undefined;
     this.hoverId = id;
     if (prev && prev.slot.id !== this.selectedId && prev.slot.id !== this.listHoverId) this.highlight(prev, false);
     if (m) this.highlight(m, true);
-    this.renderer.domElement.dataset.hover = m ? "on" : "off";
+    this.renderer.domElement.dataset.hover = m || hit.surface ? "on" : "off";
     this.dirty = true;
   }
 
@@ -2059,13 +2168,24 @@ class Engine {
   /** wall / island labels become buttons when the host wants to edit lengths (opts.onWallLabel) */
   private wireLabels(K: KitchenRT): void {
     const cb = this.opts.onWallLabel;
-    if (this.mode !== "studio" || !cb) return;
+    const dim = this.opts.onDimLabel;
+    if (this.mode !== "studio" || (!cb && !dim)) return;
     for (const l of K.labels) {
       const wall: DimTarget = l.wall;
-      const aria = (cm: number) => (wall === "isl" ? `Promijeni duljinu otoka, ${Math.round(cm)} cm` : `Promijeni duljinu zida ${wall.toUpperCase()}, ${Math.round(cm)} cm`);
+      const kind = l.kind;
+      // without onDimLabel the kitchen-run labels stay plain text (onWallLabel only knows the walls and the island)
+      if (!dim && kind === "kitchen" && wall !== "isl") continue;
+      const isl = K.plan.island?.kind === "poluotok" ? "poluotoka" : "otoka";
+      const aria = (cm: number) =>
+        wall === "isl"
+          ? `Promijeni duljinu ${isl}, ${Math.round(cm)} cm`
+          : kind === "kitchen"
+            ? `Promijeni duljinu kuhinje uz zid ${wall.toUpperCase()}, ${Math.round(cm)} cm`
+            : `Promijeni duljinu zida ${wall.toUpperCase()}, ${Math.round(cm)} cm`;
       makeEditable(l, aria, (el) => {
         if (this.disposed || this.kitchen !== K) return;
-        cb(wall, this.rectOf(el));
+        if (dim) dim({ kind, wall }, this.rectOf(el));
+        else cb?.(wall, this.rectOf(el));
       });
     }
   }
@@ -2199,12 +2319,38 @@ class Engine {
       const faded = Number(l.el.style.opacity || "1") < 0.5;
       view.walls.push({
         wall: l.wall,
+        kind: l.kind,
         length_cm: Number(l.el.dataset.cm ?? 0),
         label: p ?? { x: 0, y: 0 },
         visible: Boolean(p) && !faded && this.shown(l.obj) && l.el.style.display !== "none" && onScreen(p?.x ?? -1, p?.y ?? -1),
       });
     }
+    if (this.mode === "studio") view.gaps = this.computeGaps(K, onScreen);
     return view;
+  }
+
+  /** the "+" places of the shown plan (plan.ts planGaps, memoised per plan) projected to the screen */
+  private computeGaps(K: KitchenRT, onScreen: (x: number, y: number) => boolean): GapView[] {
+    const out: GapView[] = [];
+    if (this.play) return out;
+    for (const g of planGaps(K.plan)) {
+      const run = K.runs.get(g.run);
+      if (!run) continue;
+      const p = this.toScreen(run.group.localToWorld(this.tmpC.set(g.at.x / 100, g.at.y / 100, g.at.z / 100)));
+      out.push({
+        id: g.id,
+        kind: g.kind,
+        run: g.run,
+        zone: g.zone,
+        ...(g.side ? { side: g.side } : {}),
+        offset_cm: Math.round(g.from * 10) / 10,
+        width_cm: Math.round((g.to - g.from) * 10) / 10,
+        maxWidth_cm: g.maxWidth,
+        anchor: p ? { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 } : { x: 0, y: 0 },
+        visible: Boolean(p) && onScreen(p?.x ?? -1, p?.y ?? -1),
+      });
+    }
+    return out;
   }
 
   /** ViewInfo to the listeners when anything in it changed (after a rendered frame, or for a new listener) */
@@ -2218,7 +2364,8 @@ class Engine {
       v.size.w,
       v.size.h,
       s ? [s.id, r(s.rect.x), r(s.rect.y), r(s.rect.w), r(s.rect.h), s.tag ? [r(s.tag.x), r(s.tag.y)] : 0, s.visible] : 0,
-      v.walls.map((x) => [x.wall, x.length_cm, r(x.label.x), r(x.label.y), x.visible]),
+      v.walls.map((x) => [x.wall, x.kind, x.length_cm, r(x.label.x), r(x.label.y), x.visible]),
+      (v.gaps ?? []).map((g) => [g.id, g.maxWidth_cm, r(g.anchor.x), r(g.anchor.y), g.visible]),
     ]);
     if (key === this.viewKey) return;
     this.viewKey = key;
@@ -2248,10 +2395,12 @@ class Engine {
 
   private click(x: number, y: number): void {
     if (this.play || !this.kitchen) return;
-    const m = this.pick(x, y);
+    const hit = this.hitTest(x, y);
+    const m = hit.module;
     this.select(m);
     this.opts.onSelect?.(m ? this.info(m) : null);
     if (m) void playDemo(this.tweens, m, { reduced: this.reduced });
+    else if (hit.surface) this.opts.onSurfaceClick?.({ surface: hit.surface.surface, ...(hit.surface.wall ? { wall: hit.surface.wall } : {}), screen: { x: Math.round(x), y: Math.round(y) } });
   }
 
   private info(m: ModuleRT): ModuleInfo {

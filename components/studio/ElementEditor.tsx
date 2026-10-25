@@ -22,13 +22,15 @@ import {
   insertBefore,
   moveLeft,
   moveRight,
+  moveTall,
   remove,
   slotEditInfo,
+  tallPlaces,
   type EditResult,
   type SlotEditInfo,
   type TypeChoice,
 } from "@/lib/studio/edit";
-import { planKitchen, type KitchenPlan, type PlanSlot } from "@/lib/studio/plan";
+import { isTallList, parseRunEnd, planKitchen, type KitchenPlan, type PlanSlot, type TallListId } from "@/lib/studio/plan";
 import type { KitchenConfig } from "@/lib/studio/types";
 import { gridIndex } from "./controls";
 import {
@@ -45,7 +47,8 @@ import {
   TrashIcon,
   UndoIcon,
 } from "./icons";
-import { EASE, isFlipped, noRoomText, rowSlots, runName, sideHint, slotPlace } from "./meta";
+import { ChipRadio } from "./controls";
+import { EASE, isFlipped, islandOf, noRoomText, rowSlots, runName, sideHint, slotPlace, wallEndName } from "./meta";
 import { PriceBlock } from "./Price";
 import { RunElevation } from "./RunElevation";
 import s from "./studio.module.css";
@@ -223,8 +226,23 @@ export function ElementEditor({
     refuse(/početku niza|kraju niza/.test(w) || !w ? `Element je već skroz ${sd === "left" ? "lijevo" : "desno"}.` : w);
   };
 
+  /** a column of its own (KitchenConfig.tallRuns): resetting it removes it */
+  const tallList = slot.zone === "tall" && slot.list && isTallList(slot.list.id) ? (slot.list.id as "tall" | TallListId) : null;
+  const ownColumn = tallList !== null && tallList !== "tall";
   const resetLabel =
-    slot.zone === "tall" ? "Vrati zadani visoki stup" : slot.zone === "island" ? "Vrati zadano za otok" : "Vrati zadano za ovaj zid";
+    slot.zone === "tall"
+      ? ownColumn
+        ? "Ukloni ovaj visoki stup"
+        : "Vrati zadani visoki stup"
+      : slot.zone === "island"
+        ? `Vrati zadano za ${islandOf(cfg.layout) === "otoka" ? "otok" : "poluotok"}`
+        : "Vrati zadano za ovaj zid";
+  // where the column can stand: every free end of a wall's kitchen run (moveTall)
+  const places = tallList ? tallPlaces(cfg, tallList) : [];
+  const placeName = (end: (typeof places)[number]["end"]) => {
+    const { wall, side } = parseRunEnd(end);
+    return `Zid ${wall.toUpperCase()}, ${side === "left" ? "lijevo" : "desno"}`;
+  };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
@@ -241,7 +259,7 @@ export function ElementEditor({
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <p className="eyebrow truncate text-accent">
-            {slotPlace(slot)}
+            {slotPlace(slot, cfg.layout)}
             {idx >= 0 && row.length > 1 && (
               <span className="tabular-nums text-mut">
                 {" "}
@@ -285,7 +303,7 @@ export function ElementEditor({
           className={`block w-full ${desktop ? "h-[92px]" : "h-[58px]"}`}
         />
       </div>
-      <p className="mt-1.5 text-[10.5px] leading-snug text-mut/90">{sideHint(slot.run)}</p>
+      <p className="mt-1.5 text-[10.5px] leading-snug text-mut/90">{sideHint(slot.run, cfg.layout)}</p>
     </div>
   );
 
@@ -398,6 +416,32 @@ export function ElementEditor({
     </Section>
   );
 
+  const placeSection =
+    tallList && places.length > 1 ? (
+      <Section title="Gdje stoji stup" id={`${titleId}-place`}>
+        <ChipRadio
+          labelledBy={`${titleId}-place`}
+          options={places.map((p) => {
+            const { wall, side } = parseRunEnd(p.end);
+            return {
+              value: p.end,
+              label: placeName(p.end),
+              disabled: !p.fits,
+              why: "Tamo ne stane bez izostavljanja drugih elemenata.",
+              aria: `Zid ${wall.toUpperCase()}, ${wallEndName(cfg.layout, wall, side)}${p.fits ? "" : ", ne stane"}`,
+            };
+          })}
+          value={places.find((p) => p.current)?.end ?? null}
+          onChange={(end) => {
+            const { wall, side } = parseRunEnd(end);
+            onEdit(moveTall(cfg, tallList, end), { say: `Visoki stup je sada uz zid ${wall.toUpperCase()}, ${side === "left" ? "lijevi" : "desni"} kraj.` });
+          }}
+          cols={2}
+        />
+        <p className="mt-2 text-[11.5px] leading-snug text-mut">Na bilo kojem slobodnom kraju kuhinje (ne u kutu). Lijevo i desno: gledano prema zidu.</p>
+      </Section>
+    ) : null;
+
   const extras = (
     <>
       {(engine && def?.demo !== false) || info.edited ? (
@@ -499,7 +543,7 @@ export function ElementEditor({
   return (
     <div role="dialog" aria-labelledby={titleId} aria-describedby={`${titleId}-hint`} className="flex h-full min-h-0 flex-col" onKeyDown={onKeyDown}>
       <p id={`${titleId}-hint`} className="sr-only">
-        {runName(slot.run)}. Izmjene se odmah vide u 3D prikazu i u cijeni. Escape zatvara uređivanje.
+        {runName(slot.run, cfg.layout)}. Izmjene se odmah vide u 3D prikazu i u cijeni. Escape zatvara uređivanje.
       </p>
       {header}
       <div
@@ -511,6 +555,7 @@ export function ElementEditor({
             {typeTiles}
             {widthChips}
             {actions}
+            {placeSection}
             {extras}
           </>
         )}

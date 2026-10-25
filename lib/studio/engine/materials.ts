@@ -24,13 +24,17 @@ import {
 } from "../catalog";
 import type { FinishSpec, HandleStyle } from "../types";
 import {
+  brickTexture,
   brushedTexture,
+  chevronTexture,
   concreteTexture,
   contactShadowTexture,
+  herringboneTexture,
   hobTexture,
   marbleTexture,
   plankTexture,
   stoneTexture,
+  terrazzoTexture,
   tileTexture,
   woodTexture,
   type TexOpts,
@@ -82,6 +86,7 @@ export class Materials {
   private fronts = new Map<string, Mat>();
   private tops = new Map<string, Mat>();
   private floors = new Map<string, Mat>();
+  private wallMats = new Map<string, Mat>();
   private carcasses = new Map<string, THREE.MeshStandardMaterial>();
   private textures: THREE.Texture[] = [];
   private highlights = new Map<THREE.Material, THREE.Material>();
@@ -276,8 +281,14 @@ export class Materials {
           r.kind === "planks"
             ? plankTexture(key, r.tones, opts)
             : r.kind === "tiles"
-              ? tileTexture(key, r.tones, r.grout ?? "#888888", opts)
-              : concreteTexture(key, r.tones, opts);
+              ? tileTexture(key, r.tones, r.grout ?? "#888888", opts, r.grid)
+              : r.kind === "herringbone"
+                ? herringboneTexture(key, r.tones, opts)
+                : r.kind === "chevron"
+                  ? chevronTexture(key, r.tones, opts)
+                  : r.kind === "terrazzo"
+                    ? terrazzoTexture(key, r.tones, opts)
+                    : concreteTexture(key, r.tones, opts);
         // the floor plane is 90 m wide with 0..1 UVs: one repeat per `tile` metres
         const rep = 90 / (r.tile ?? 1);
         t.repeat.set(rep, rep);
@@ -295,6 +306,42 @@ export class Materials {
   wallColor(id: string | undefined): { color: THREE.Color; roughness: number } {
     const def = roomWallDef(id) ?? catalog.room.walls[0];
     return { color: new THREE.Color(def.color), roughness: def.roughness };
+  }
+
+  /** a room wall finish has a texture (brick, micro-cement, tiles) and needs its own material (wallMat) */
+  wallTextured(id: string | undefined): boolean {
+    return Boolean((roomWallDef(id) ?? catalog.room.walls[0]).render);
+  }
+
+  /**
+   * A room wall finish as a material of its own (cached per finish): a textured wall, or one wall painted unlike the
+   * others (every wall in the room's main paint shares `wall`, whose colour glides). Wall UVs are in metres
+   * (geo.ts projectUV), so a texture repeats every `tile` metres.
+   */
+  wallMat(id: string | undefined): Mat {
+    const def = roomWallDef(id) ?? catalog.room.walls[0];
+    let m = this.wallMats.get(def.id);
+    if (!m) {
+      const p: THREE.MeshStandardMaterialParameters = { color: new THREE.Color(def.color), roughness: def.roughness };
+      const r = def.render;
+      if (r) {
+        const key = `wall:${def.id}`;
+        const opts = { ...this.tex, size: Math.min(1024, this.tex.size) };
+        const t =
+          r.kind === "brick"
+            ? brickTexture(key, r.tones, r.grout ?? "#c8c0b4", opts)
+            : r.kind === "tiles"
+              ? tileTexture(key, r.tones, r.grout ?? "#bbbbbb", opts, [4, 8], true, { cloud: 0.05, grout: 1 / 260, bevel: true })
+              : concreteTexture(key, r.tones, opts);
+        t.repeat.set(1 / r.tile, 1 / r.tile);
+        this.textures.push(t);
+        p.map = t;
+        p.color = new THREE.Color("#ffffff");
+      }
+      m = std(p);
+      this.wallMats.set(def.id, m);
+    }
+    return m;
   }
 
   private build(def: MaterialDef, use: "front" | "top"): Mat {
@@ -408,6 +455,7 @@ export class Materials {
     for (const m of this.fronts.values()) all.add(m);
     for (const m of this.tops.values()) all.add(m);
     for (const m of this.floors.values()) all.add(m);
+    for (const m of this.wallMats.values()) all.add(m);
     for (const m of this.carcasses.values()) all.add(m);
     for (const m of this.highlights.values()) all.add(m);
     for (const v of Object.values(this)) if (v instanceof THREE.Material) all.add(v);
@@ -416,6 +464,7 @@ export class Materials {
     this.fronts.clear();
     this.tops.clear();
     this.floors.clear();
+    this.wallMats.clear();
     this.carcasses.clear();
     this.highlights.clear();
     this.textures = [];

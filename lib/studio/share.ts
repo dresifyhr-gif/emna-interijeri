@@ -17,6 +17,18 @@
  *     zw zf               room: wall colour, floor
  *     h                   heights (KitchenConfig.heights): mode n / s / c (standard / do-stropa / custom), then
  *                         u<wall-unit height> t<tall column top> (custom) and p<worktop> (not 90): "s", "sp95", "cu90t240"
+ *     o                   island / peninsula (KitchenConfig.islandSpec without its bar), letter + number tokens, only
+ *                         what differs from the defaults: f1 / f2 / f3 hob / sink / both on it · l peninsula at the left end ·
+ *                         d<body depth> · s1 / s2 seats at the left / right end · p<overhang> · n<stools> · w0 no waterfall ·
+ *                         h0 no hood above the island hob (downdraft) · a<hood above the worktop>: "o-f1p30n3", "o-ld90w0"
+ *     s                   bar (islandSpec.bar): r (raised) / t (table), then h<height> d<depth> l<length>: "s-r", "s-rh115d40l180"
+ *     st                  the bar's own top (catalog.tops id): "st-hrast"
+ *     ea / eb / ec        where the kitchen stands on wall A / B / C (KitchenConfig.extents), letter + number tokens:
+ *                         l<length> o<offset> and x (offset from the other end than the wall's corner end): "eb-l300",
+ *                         "eb-o64", "ea-xl240"
+ *     tp                  where the tall column stands (tallAt): wall + l / r, "tp-bl"
+ *     tal tar tbl tbr tcl tcr   more tall columns at that run end (tallRuns, same list format as `t`): "tbl-rs96"
+ *     zwa zwb zwc         room: the finish of one wall (room.walls)
  *
  * v1 (still decoded):
  *   1.L.380.220.220.260.antracit.mramor.bez.1.240.1.0.0 — the 14th field holds positional element edits
@@ -28,8 +40,22 @@
  */
 
 import { moduleByCode, moduleDef, type ModuleZone } from "./catalog";
-import { sanitizeConfig } from "./plan";
-import { DEFAULT_CONFIG, type BaseRunId, type CabinetSpec, type CornerId, type FrontZone, type HeightSpec, type KitchenConfig, type WallId } from "./types";
+import { RUN_ENDS, defaultAnchor, sanitizeConfig } from "./plan";
+import {
+  DEFAULT_CONFIG,
+  type BarSpec,
+  type BaseRunId,
+  type CabinetSpec,
+  type CornerId,
+  type FrontZone,
+  type HeightSpec,
+  type IslandFunctions,
+  type IslandSpec,
+  type KitchenConfig,
+  type KitchenExtent,
+  type RunEnd,
+  type WallId,
+} from "./types";
 
 export { sanitizeConfig };
 
@@ -83,6 +109,31 @@ const FRONT_KEYS: [string, FrontZone][] = [
   ["ft", "tall"],
   ["fi", "island"],
 ];
+const WALL_IDS: WallId[] = ["a", "b", "c"];
+/** "b-left" ↔ "bl" (tp-bl, tbl-…) */
+const endCode = (e: RunEnd) => `${e[0]}${e.includes("left") ? "l" : "r"}`;
+const endOf = (code: string): RunEnd | undefined => RUN_ENDS.find((e) => endCode(e) === code);
+
+function encodeExtent(w: WallId, e: KitchenExtent): string {
+  let out = "";
+  if (e.anchor && e.anchor !== defaultAnchor(w)) out += "x";
+  if (e.offset !== undefined) out += `o${Math.round(e.offset)}`;
+  if (e.length !== undefined) out += `l${Math.round(e.length)}`;
+  return out;
+}
+
+function decodeExtent(w: WallId, s: string): Record<string, unknown> | null {
+  const t = tokens(s);
+  if (!t) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of t) {
+    if (k === "x" && !v) out.anchor = defaultAnchor(w) === "left" ? "right" : "left";
+    else if (k === "o" && v) out.offset = Number(v);
+    else if (k === "l" && v) out.length = Number(v);
+  }
+  return out;
+}
+
 const FINISH_KEYS: [string, "handleColor" | "sink" | "tap" | "appliances" | "plinth" | "led"][] = [
   ["hc", "handleColor"],
   ["si", "sink"],
@@ -157,8 +208,93 @@ export function encodeConfig(input: KitchenConfig): string {
   }
   if (c.room?.wall && SAFE_ID.test(c.room.wall)) parts.push(`zw-${c.room.wall}`);
   if (c.room?.floor && SAFE_ID.test(c.room.floor)) parts.push(`zf-${c.room.floor}`);
+  for (const w of WALL_IDS) {
+    const f = c.room?.walls?.[w];
+    if (f && SAFE_ID.test(f)) parts.push(`zw${w}-${f}`);
+  }
+  for (const w of WALL_IDS) {
+    const e = c.extents?.[w];
+    const enc = e ? encodeExtent(w, e) : "";
+    if (enc) parts.push(`e${w}-${enc}`);
+  }
+  if (c.tallAt) parts.push(`tp-${endCode(c.tallAt)}`);
+  for (const e of RUN_ENDS) {
+    const l = c.tallRuns?.[e];
+    if (l?.length) parts.push(`t${endCode(e)}-${encodeList(l, "tall")}`);
+  }
   if (c.heights) parts.push(`h-${encodeHeights(c.heights)}`);
+  if (c.islandSpec) {
+    const o = encodeIsland(c.islandSpec);
+    if (o) parts.push(`o-${o}`);
+    const b = c.islandSpec.bar;
+    if (b) {
+      parts.push(`s-${encodeBar(b)}`);
+      if (b.top && SAFE_ID.test(b.top)) parts.push(`st-${b.top}`);
+    }
+  }
   return parts.join(".");
+}
+
+const FUNCTION_CODE: Record<Exclude<IslandFunctions, "none">, string> = { hob: "1", sink: "2", both: "3" };
+
+/** islandSpec without its bar as tokens (sanitized input: only non-default fields are present) */
+function encodeIsland(o: IslandSpec): string {
+  let out = "";
+  if (o.functions && o.functions !== "none") out += `f${FUNCTION_CODE[o.functions]}`;
+  if (o.side === "left") out += "l";
+  if (o.depth !== undefined) out += `d${Math.round(o.depth)}`;
+  if (o.seatSide === "left") out += "s1";
+  else if (o.seatSide === "right") out += "s2";
+  if (o.overhang !== undefined) out += `p${Math.round(o.overhang)}`;
+  if (o.stools !== undefined) out += `n${Math.round(o.stools)}`;
+  if (o.waterfall === false) out += "w0";
+  if (o.hood !== undefined) out += `h${o.hood ? 1 : 0}`;
+  if (o.hoodAbove !== undefined) out += `a${Math.round(o.hoodAbove)}`;
+  return out;
+}
+
+function encodeBar(b: BarSpec): string {
+  let out = b.kind === "table" ? "t" : "r";
+  if (b.height !== undefined) out += `h${Math.round(b.height)}`;
+  if (b.depth !== undefined) out += `d${Math.round(b.depth)}`;
+  if (b.length !== undefined) out += `l${Math.round(b.length)}`;
+  return out;
+}
+
+/** letter + number tokens ("f1d90w0" → [["f","1"],["d","90"],["w","0"]]); null when the string is not made of them */
+function tokens(s: string): [string, string][] | null {
+  if (!/^(?:[a-z]\d{0,3})+$/.test(s)) return null;
+  return [...s.matchAll(/([a-z])(\d{0,3})/g)].map((m) => [m[1], m[2]]);
+}
+
+function decodeIsland(s: string, into: Record<string, unknown>): void {
+  const t = tokens(s);
+  if (!t) return;
+  for (const [k, v] of t) {
+    const n = Number(v);
+    if (k === "f") into.functions = (Object.keys(FUNCTION_CODE) as (keyof typeof FUNCTION_CODE)[]).find((f) => FUNCTION_CODE[f] === v);
+    else if (k === "l") into.side = "left";
+    else if (k === "d" && v) into.depth = n;
+    else if (k === "s") into.seatSide = v === "1" ? "left" : v === "2" ? "right" : undefined;
+    else if (k === "p" && v) into.overhang = n;
+    else if (k === "n" && v) into.stools = n;
+    else if (k === "w" && v === "0") into.waterfall = false;
+    else if (k === "h" && v) into.hood = v === "1";
+    else if (k === "a" && v) into.hoodAbove = n;
+  }
+}
+
+function decodeBar(s: string): Record<string, unknown> | null {
+  const t = tokens(s);
+  if (!t || !t.length || (t[0][0] !== "r" && t[0][0] !== "t") || t[0][1]) return null;
+  const out: Record<string, unknown> = { kind: t[0][0] === "t" ? "table" : "raised" };
+  for (const [k, v] of t.slice(1)) {
+    if (!v) continue;
+    if (k === "h") out.height = Number(v);
+    else if (k === "d") out.depth = Number(v);
+    else if (k === "l") out.length = Number(v);
+  }
+  return out;
 }
 
 const HEIGHT_MODE: Record<HeightSpec["mode"], string> = { standard: "n", "do-stropa": "s", custom: "c" };
@@ -256,6 +392,12 @@ export function decodeConfig(s: string): KitchenConfig | null {
     const zoneFronts: Partial<Record<FrontZone, string>> = {};
     const finish: Record<string, string> = {};
     const room: Record<string, string> = {};
+    const island: Record<string, unknown> = {};
+    let bar: Record<string, unknown> | null = null;
+    let barTop: string | null = null;
+    const extents: Record<string, unknown> = {};
+    const tallRuns: Record<string, CabinetSpec[]> = {};
+    const roomWalls: Record<string, string> = {};
     for (const field of p.slice(13)) {
       const k = field.indexOf("-");
       if (k <= 0) continue;
@@ -273,6 +415,24 @@ export function decodeConfig(s: string): KitchenConfig | null {
       }
       if (key === "t") {
         cfg.tallRun = decodeList(val, "tall");
+        continue;
+      }
+      // tallRuns columns: "tbl-…" (t + wall + l / r)
+      const te = /^t([abc][lr])$/.exec(key);
+      if (te) {
+        const end = endOf(te[1]);
+        if (end) tallRuns[end] = decodeList(val, "tall");
+        continue;
+      }
+      const ex = /^e([abc])$/.exec(key);
+      if (ex) {
+        const e = decodeExtent(ex[1] as WallId, val);
+        if (e) extents[ex[1]] = e;
+        continue;
+      }
+      if (key === "tp") {
+        const end = endOf(val);
+        if (end) cfg.tallAt = end;
         continue;
       }
       const co = CORNER_KEYS.find(([x]) => x === key);
@@ -294,17 +454,26 @@ export function decodeConfig(s: string): KitchenConfig | null {
       }
       if (key === "zw") room.wall = val;
       else if (key === "zf") room.floor = val;
+      else if (/^zw[abc]$/.test(key)) roomWalls[key[2]] = val;
       else if (key === "h") {
         const h = decodeHeights(val);
         if (h) cfg.heights = h;
-      }
+      } else if (key === "o") decodeIsland(val, island);
+      else if (key === "s") bar = decodeBar(val);
+      else if (key === "st") barTop = val;
     }
+    if (bar && barTop) bar.top = barTop;
+    if (bar) island.bar = bar;
+    if (Object.keys(island).length) cfg.islandSpec = island;
     if (Object.keys(runs).length) cfg.runs = runs;
     if (Object.keys(upperRuns).length) cfg.upperRuns = upperRuns;
     if (Object.keys(corners).length) cfg.corners = corners;
     if (Object.keys(zoneFronts).length) cfg.zoneFronts = zoneFronts;
     if (Object.keys(finish).length) cfg.finish = finish;
+    if (Object.keys(roomWalls).length) (room as Record<string, unknown>).walls = roomWalls;
     if (Object.keys(room).length) cfg.room = room;
+    if (Object.keys(extents).length) cfg.extents = extents;
+    if (Object.keys(tallRuns).length) cfg.tallRuns = tallRuns;
     return sanitizeConfig(cfg);
   }
 
@@ -320,11 +489,11 @@ export function decodeConfig(s: string): KitchenConfig | null {
   }
 }
 
-const LAYOUT_BY_NAME: Record<string, KitchenConfig["layout"]> = { ravna: "ravna", l: "L", u: "U", otok: "otok" };
+const LAYOUT_BY_NAME: Record<string, KitchenConfig["layout"]> = { ravna: "ravna", l: "L", u: "U", otok: "otok", poluotok: "poluotok", g: "G" };
 
 /**
  * Initial studio config from the URL: `?k=` (shared kitchen) wins, otherwise
- * `?oblik=` (ravna | L | U | otok) preselects the shape and `?front=` / `?top=`
+ * `?oblik=` (ravna | L | U | otok | poluotok | G) preselects the shape and `?front=` / `?top=`
  * a material, on top of DEFAULT_CONFIG. Unknown values fall back to defaults.
  */
 export function configFromQuery(q: {

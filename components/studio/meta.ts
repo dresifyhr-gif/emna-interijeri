@@ -2,7 +2,7 @@
  * Static copy and small helpers for the studio UI.
  * Materials, prices and module types come from lib/studio/catalog.ts — this file only holds UI wording.
  */
-import type { ListId, PlanSlot, RunId } from "@/lib/studio/plan";
+import { isPeninsula, stoolsWord, wallsFor, type ListId, type PlanGap, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import type { FrontZone, Layout, WallId } from "@/lib/studio/types";
 
 /** the site-wide premium ease, as a framer-motion bezier */
@@ -27,7 +27,7 @@ export const STEPS: StepDef[] = [
     id: "zidovi",
     short: "Zidovi",
     title: "Zidovi",
-    lead: "Upišite duljinu svakog zida i visinu stropa u centimetrima, pa odaberite visinu kuhinje. Točne mjere uzimamo na izmjeri.",
+    lead: "Prvo mjere prostorije — zidovi, prozor, strop — a zatim koliki dio svakog zida zauzima kuhinja. Točne mjere uzimamo na izmjeri.",
   },
   {
     id: "elementi",
@@ -55,9 +55,50 @@ export const LAYOUTS: { id: Layout; name: string; desc: string }[] = [
   { id: "L", name: "Kutna L", desc: "Dva zida pod kutom" },
   { id: "U", name: "U oblik", desc: "Tri zida" },
   { id: "otok", name: "S otokom", desc: "Zid i samostojeći otok" },
+  { id: "poluotok", name: "S poluotokom", desc: "Zid i poluotok uz jedan kraj" },
+  { id: "G", name: "G oblik", desc: "Kutna L zatvorena poluotokom" },
 ];
 
 export const WALL_HINT: Record<WallId, string> = { a: "stražnji", b: "lijevi", c: "desni" };
+
+/** "Otok" / "Poluotok" — the island run's name in this layout */
+export const islandWord = (layout?: Layout) => (layout && isPeninsula(layout) ? "Poluotok" : "Otok");
+/** "otoka" / "poluotoka" (genitive) */
+export const islandOf = (layout?: Layout) => (layout && isPeninsula(layout) ? "poluotoka" : "otoka");
+
+/**
+ * The name of an end of a room's wall, as seen facing it: the corner with the neighbouring wall where the layout has one
+ * ("kut sa zidom B"), else the plain end ("lijevi kraj zida"); `genitive` for "od …" ("od kuta sa zidom B"). A peninsula
+ * stands at the end of wall A's kitchen run, not at an end of the wall, so it does not name one.
+ */
+export function wallEndName(layout: Layout, wall: WallId, side: "left" | "right", genitive = false): string {
+  const walls = wallsFor(layout);
+  const other: WallId | null = wall === "a" ? (side === "left" ? "b" : "c") : wall === "b" ? (side === "right" ? "a" : null) : side === "left" ? "a" : null;
+  if (other && walls.includes(other)) return `${genitive ? "kuta" : "kut"} sa zidom ${other.toUpperCase()}`;
+  if (side === "left") return genitive ? "lijevog kraja zida" : "lijevi kraj zida";
+  return genitive ? "desnog kraja zida" : "desni kraj zida";
+}
+
+/** "1 barska", "2 barske", "5 barskih" (with stolica / stolice / stolica: plan.ts stoolsWord) */
+function barAdj(n: number): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return "barska";
+  return m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "barske" : "barskih";
+}
+/** "2 barske stolice" / "4 stolice" (chairs at a lowered table) / "bez stolica" */
+export const seatsText = (n: number, chairs: boolean) => (n === 0 ? "bez stolica" : `${n} ${chairs ? "" : `${barAdj(n)} `}${stoolsWord(n)}`);
+
+/** that end of the wall is a corner of the room (the layout has the neighbouring wall there) */
+export const isRoomCorner = (layout: Layout, wall: WallId, side: "left" | "right") => wallEndName(layout, wall, side).startsWith("kut");
+
+/** "Zid A · desni kraj" / "Zid B · gornji elementi" / "Otok · lijevi kraj" — where a "+" adds something */
+export function gapPlace(g: Pick<PlanGap, "kind" | "run" | "side" | "zone">, layout?: Layout): string {
+  const where = g.run === "isl" ? islandWord(layout) : `Zid ${g.run.toUpperCase()}`;
+  if (g.kind === "upper") return `${where} · gornji elementi`;
+  if (g.kind === "free") return `${where} · ${g.zone === "upper" ? "prazan zid" : "slobodno mjesto"}`;
+  return `${where} · ${g.side === "left" ? "lijevi" : "desni"} kraj`;
+}
 
 /** shown when a new shape put the clicked-element edits back to their defaults */
 export const LAYOUT_RESET_NOTE =
@@ -90,8 +131,8 @@ export type Timeline = (typeof TIMELINES)[number];
 
 /* ------------------------------------------------------------------ runs and rows */
 
-/** "Zid A" / "Otok" */
-export const runName = (run: RunId) => (run === "isl" ? "Otok" : `Zid ${run.toUpperCase()}`);
+/** "Zid A" / "Otok" ("Poluotok" when the layout is given and has one) */
+export const runName = (run: RunId, layout?: Layout) => (run === "isl" ? islandWord(layout) : `Zid ${run.toUpperCase()}`);
 
 /** a row of cabinets as the UI shows it: one zone of one run (corners belong to wall A's base / upper rows) */
 export type RowZone = "base" | "upper" | "tall" | "island";
@@ -102,6 +143,8 @@ export const ROW_NAME: Record<RowZone, string> = {
   tall: "Visoki stup",
   island: "Elementi otoka",
 };
+/** ROW_NAME with the peninsula named as such */
+export const rowName = (z: RowZone, layout?: Layout) => (z === "island" ? `Elementi ${islandOf(layout)}` : ROW_NAME[z]);
 const ROW_SHORT: Record<RowZone, string> = { upper: "gornji", base: "donji", tall: "visoki stup", island: "" };
 
 /**
@@ -119,21 +162,22 @@ export function rowSlots(slots: PlanSlot[], run: RunId, zone: RowZone): PlanSlot
 /** the row a slot belongs to */
 export const rowOf = (s: PlanSlot): { run: RunId; zone: RowZone } => ({ run: s.run, zone: s.zone });
 
-/** "Zid A · donji" / "Visoki stup" / "Otok" */
-export function slotPlace(s: PlanSlot): string {
-  if (s.zone === "tall") return "Visoki stup";
-  if (s.zone === "island") return "Otok";
+/** "Zid A · donji" / "Visoki stup · zid B" / "Otok" */
+export function slotPlace(s: PlanSlot, layout?: Layout): string {
+  if (s.zone === "tall") return s.run === "isl" ? "Visoki stup" : `Visoki stup · zid ${s.run.toUpperCase()}`;
+  if (s.zone === "island") return islandWord(layout);
   return `${runName(s.run)} · ${ROW_SHORT[s.zone]}`;
 }
 
 /** wording that tells which way "left" is for a run */
-export function sideHint(run: RunId): string {
-  return run === "isl" ? "Lijevo i desno: gledano iz prostorije, prema zidu A." : `Lijevo i desno: gledano prema zidu ${run.toUpperCase()}.`;
+export function sideHint(run: RunId, layout?: Layout): string {
+  if (run !== "isl") return `Lijevo i desno: gledano prema zidu ${run.toUpperCase()}.`;
+  return layout && isPeninsula(layout) ? "Lijevo i desno: gledano prema frontama poluotoka." : "Lijevo i desno: gledano iz prostorije, prema zidu A.";
 }
 
-/** the list a reset of this slot's run should clear (resetRun arguments) */
-export function resetTarget(s: PlanSlot): { run: WallId | "isl" | "tall"; zone?: "base" | "upper" } {
-  if (s.zone === "tall") return { run: "tall" };
+/** the list a reset of this slot's run should clear (resetRun arguments): a tall column of its own resets alone */
+export function resetTarget(s: PlanSlot): { run: WallId | "isl" | "tall" | Extract<ListId, `tall:${string}`>; zone?: "base" | "upper" } {
+  if (s.zone === "tall") return { run: s.list && s.list.id.startsWith("tall:") ? (s.list.id as Extract<ListId, `tall:${string}`>) : "tall" };
   if (s.zone === "island") return { run: "isl" };
   return { run: s.run as WallId, zone: s.zone === "upper" ? "upper" : "base" };
 }
@@ -148,7 +192,7 @@ export function noRoomText(s: PlanSlot, free: number): string {
   const left = free >= 1 ? ` — slobodno je još ${Math.floor(free)} cm` : "";
   if (s.zone === "tall") {
     const wall = String(s.run).toUpperCase();
-    return `Visoki stup uz zid ${wall} je pun${left}. Produžite zid ${wall} ili suzite, zamijenite ili uklonite neki visoki element.`;
+    return `Visoki stup uz zid ${wall} je pun${left}. Produžite kuhinju na zidu ${wall} ili suzite, zamijenite ili uklonite neki visoki element.`;
   }
   return `Za novi element nema mjesta${left}. Suzite ili uklonite susjedni element.`;
 }

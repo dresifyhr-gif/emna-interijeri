@@ -1,34 +1,60 @@
 "use client";
 
+/**
+ * "Zidovi" — the room and the kitchen in it, as two clearly separate things (the owner: "zidovi prostora je jedno, a
+ * dužina kuhinje je drugo"):
+ *
+ *   Prostorija           the floor plan, the room's wall lengths and the window — a room measure (no undo step, like
+ *                        before); a kitchen that takes a whole wall follows that wall (sanitizeConfig / setWallLength)
+ *   Kuhinja na zidovima  per wall: whether the kitchen takes the whole wall, else how long it is and how far from the
+ *                        chosen end of the wall it starts (lib/studio/edit.ts kitchenExtent / setKitchenExtent, one undo
+ *                        step per gesture), with a bar that shows the kitchen inside the wall; then the island's /
+ *                        peninsula's length
+ *   Strop i visine       the ceiling, the top of the tall column right under it (with why it cannot go higher and
+ *                        "Podigni strop na X cm"), "Kuhinja do stropa", the worktop, wall-unit heights (HeightsSection)
+ *
+ * What a change caused (a kitchen run moved off a corner, an element left out) stays next to the control that caused it
+ * until the room changes again; the planner's other notes are listed at the end.
+ */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useMemo, useState } from "react";
-import { geometryKey, limitsFor, planHeights, wallsFor } from "@/lib/studio/plan";
+import { kitchenExtent, setKitchenExtent, wallLimits, type ExtentResult } from "@/lib/studio/edit";
+import { geometryKey, hasIsland, isPeninsula, limitsFor, planHeights, wallsFor } from "@/lib/studio/plan";
 import type { KitchenConfig, WallId, WindowSpec } from "@/lib/studio/types";
-import { Notes, NumberField, Segmented, SectionLabel, ToggleRow } from "../controls";
-import { fitToPlanner, islandLimits, windowLimits } from "../limits";
-import { EASE, WALL_HINT } from "../meta";
+import { Notes, NumberField, Segmented, SectionLabel, Switch, ToggleRow } from "../controls";
+import { KitchenBar } from "../KitchenBar";
+import { shorterKitchen } from "../room";
+import { fitToPlanner, windowLimits } from "../limits";
+import { EASE, WALL_HINT, isRoomCorner, islandOf, islandWord, stepIndex, wallEndName } from "../meta";
 import { WallSchematic, type SchematicFocus } from "../WallSchematic";
 import { HeightsSection } from "./HeightsSection";
 import type { StepProps } from "./types";
 
-export function WallsStep({ cfg, plan, update, edit, engine }: StepProps) {
+/** the notes of the last change made here, for the room it produced and the control that made it */
+interface LastNotes {
+  key: string;
+  where: string;
+  items: string[];
+}
+
+export function WallsStep({ cfg, plan, update, edit, engine, goTo }: StepProps) {
   const reduce = useReducedMotion();
   const [focus, setFocus] = useState<SchematicFocus>(null);
-  /** the notes of the last ceiling / heights change, for the room it produced (gone once the room changes again) */
-  const [last, setLast] = useState<{ key: string; items: string[] } | null>(null);
+  const [last, setLast] = useState<LastNotes | null>(null);
   const used = wallsFor(cfg.layout);
   const lim = limitsFor(cfg.layout);
   const win = cfg.window && used.includes(cfg.window.wall) ? cfg.window : null;
 
   const active = (k: SchematicFocus) => (on: boolean) => setFocus((f) => (on ? k : f === k ? null : f));
 
-  // the heights' own notes and the last change's sit with the height controls; the list at the end has the rest
+  // notes kept next to their control; the list at the end has the rest
   const kept = useMemo(() => planHeights(cfg).notes, [cfg]);
   const roomKey = geometryKey(cfg);
-  const fresh = last && last.key === roomKey ? last.items.filter((n) => !kept.includes(n)) : [];
-  const nearHeights = new Set([...fresh, ...kept]);
-  const rest = plan.warnings.filter((w) => !nearHeights.has(w));
-  const onNotes = useCallback((items: string[], next: KitchenConfig) => setLast({ key: geometryKey(fitToPlanner(next)), items }), []);
+  const freshOf = (where: string) => (last && last.key === roomKey && last.where === where ? last.items.filter((n) => !kept.includes(n)) : []);
+  const shownNear = new Set([...(last && last.key === roomKey ? last.items : []), ...kept]);
+  const rest = plan.warnings.filter((w) => !shownNear.has(w));
+  const remember = useCallback((where: string, items: string[], next: KitchenConfig) => setLast({ key: geometryKey(fitToPlanner(next)), where, items }), []);
+  const onHeightNotes = useCallback((items: string[], next: KitchenConfig) => remember("heights", items, next), [remember]);
 
   const setWall = (w: WallId, v: number) => update({ walls: { ...cfg.walls, [w]: v } });
   const setWindow = (patch: Partial<WindowSpec>) => {
@@ -46,18 +72,22 @@ export function WallsStep({ cfg, plan, update, edit, engine }: StepProps) {
   const winLen = win ? cfg.walls[win.wall] : 0;
   // the planner's own ranges (wall − 10 cm, sill 40 cm under the window top), so the field never shows a number the plan ignores
   const winLim = win ? windowLimits(cfg, win.wall) : null;
-  // at most wall A + 40 cm: longer islands can no longer be centred on the wall run
-  const island = islandLimits(cfg);
+  const island = hasIsland(cfg.layout) ? wallLimits(cfg, "isl") : null;
+  const pen = isPeninsula(cfg.layout);
 
   return (
     <div>
-      <div className="relative -mx-1 overflow-hidden rounded-2xl border border-white/10 bg-ink-900/40">
+      {/* ================================================================ the room */}
+      <PartHeading n="1" title="Prostorija" lead="Mjere sobe u kojoj stoji kuhinja. Visinu stropa upisujete niže, uz visine kuhinje." />
+
+      <div className="relative -mx-1 mt-5 overflow-hidden rounded-2xl border border-white/10 bg-ink-900/40">
         <WallSchematic plan={plan} focus={focus} className="block h-auto w-full" />
         <p className="pointer-events-none absolute left-3.5 top-3 text-[9.5px] font-medium uppercase tracking-[0.24em] text-mut/80">Tlocrt</p>
+        <SchematicKey />
       </div>
 
-      <SectionLabel className="mt-7">Duljina zidova</SectionLabel>
-      {engine && <p className="mt-2.5 text-[12px] leading-snug text-mut">Duljinu možete promijeniti i klikom na kotu u 3D prikazu.</p>}
+      <SectionLabel className="mt-7">Zidovi prostorije</SectionLabel>
+      {engine && <p className="mt-2.5 text-[12px] leading-snug text-mut">Duljinu zida možete promijeniti i klikom na sivu kotu iznad elemenata u 3D prikazu.</p>}
       <div className="mt-4 space-y-5">
         {used.map((w) => (
           <NumberField
@@ -72,34 +102,6 @@ export function WallsStep({ cfg, plan, update, edit, engine }: StepProps) {
           />
         ))}
       </div>
-
-      <SectionLabel className="mt-8">Visine</SectionLabel>
-      <HeightsSection
-        cfg={cfg}
-        plan={plan}
-        update={update}
-        edit={edit}
-        fresh={fresh}
-        kept={kept}
-        onNotes={onNotes}
-        onCeilingActive={active("ceiling")}
-      />
-
-      {cfg.layout === "otok" && (
-        <>
-          <SectionLabel className="mt-8">Otok</SectionLabel>
-          <NumberField
-            className="mt-4"
-            label="Duljina otoka"
-            value={cfg.island}
-            min={island[0]}
-            max={island[1]}
-            onChange={(v) => update({ island: v })}
-            onActive={active("island")}
-            hint="S pločom koja se s obje strane spušta do poda i mjestom za sjedenje."
-          />
-        </>
-      )}
 
       <SectionLabel className="mt-8">Prozor</SectionLabel>
       <div className="mt-4">
@@ -168,10 +170,228 @@ export function WallsStep({ cfg, plan, update, edit, engine }: StepProps) {
         </ToggleRow>
       </div>
 
-      <p className="mt-6 text-[12.5px] leading-relaxed text-mut">
+      {/* ================================================================ the kitchen on the walls */}
+      <PartHeading
+        n="2"
+        className="mt-12"
+        title="Kuhinja na zidovima"
+        lead="Kuhinja ne mora zauzeti cijeli zid. Za svaki zid odaberite koliko je duga i gdje počinje — ostatak zida ostaje slobodan."
+      />
+      <div className="mt-5 space-y-3">
+        {used.map((w) => (
+          <KitchenOnWall
+            key={w}
+            cfg={cfg}
+            plan={plan}
+            wall={w}
+            edit={edit}
+            many={used.length > 1}
+            focused={focus === `k-${w}`}
+            onActive={active(`k-${w}` as SchematicFocus)}
+            notes={freshOf(`ext-${w}`)}
+            onNotes={(items, next) => remember(`ext-${w}`, items, next)}
+          />
+        ))}
+        {island && (
+          <div
+            className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"
+            onPointerEnter={() => setFocus("island")}
+            onPointerLeave={() => setFocus((f) => (f === "island" ? null : f))}
+          >
+            <p className="font-display text-[15px] font-medium leading-tight">{islandWord(cfg.layout)}</p>
+            <NumberField
+              className="mt-4"
+              label={pen ? "Duljina od zida A" : `Duljina ${islandOf(cfg.layout)}`}
+              value={cfg.island}
+              min={island.min}
+              max={island.max}
+              onChange={(v) => update({ island: v })}
+              onActive={active("island")}
+              hint={pen ? "Od zida A do slobodnog kraja poluotoka." : "Otok stoji ispred kuhinje uz zid A, centriran na nju."}
+            />
+            <button
+              type="button"
+              onClick={() => goTo(stepIndex("oblik"))}
+              className="mt-3 text-[12px] text-fg/80 underline decoration-white/25 underline-offset-4 transition-colors hover:decoration-accent"
+            >
+              Ploča, sudoper, sjedenje i šank: korak Oblik
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ================================================================ ceiling and heights */}
+      <PartHeading n="3" className="mt-12" title="Strop i visine" lead="Visina stropa prostorije, a ispod nje koliko visoko idu elementi kuhinje." />
+      <HeightsSection
+        cfg={cfg}
+        plan={plan}
+        update={update}
+        edit={edit}
+        fresh={freshOf("heights")}
+        kept={kept}
+        onNotes={onHeightNotes}
+        onCeilingActive={active("ceiling")}
+      />
+
+      <p className="mt-8 text-[12.5px] leading-relaxed text-mut">
         Elementi koje ste uredili ostaju na svom mjestu. Ako neki više ne stane uz nove mjere, ovdje ćete vidjeti napomenu.
       </p>
       <Notes items={rest} />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ pieces */
+
+function PartHeading({ n, title, lead, className = "" }: { n: string; title: string; lead: string; className?: string }) {
+  return (
+    <div className={className}>
+      <h3 className="flex items-baseline gap-3 font-display text-[19px] font-medium leading-tight tracking-tight">
+        <span aria-hidden="true" className="text-[11px] font-medium tabular-nums tracking-[0.2em] text-accent">
+          {n.padStart(2, "0")}
+        </span>
+        {title}
+      </h3>
+      <p className="mt-2 text-[12.5px] leading-relaxed text-mut">{lead}</p>
+    </div>
+  );
+}
+
+/** what the schematic's lines mean */
+function SchematicKey() {
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute bottom-2.5 right-3.5 flex items-center gap-3 text-[9.5px] tracking-[0.06em] text-mut/85">
+      <span className="flex items-center gap-1.5">
+        <span className="h-[2px] w-3 rounded bg-fg/60" />
+        zid
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="h-2 w-3 rounded-[2px] border border-accent/60 bg-accent/25" />
+        kuhinja
+      </span>
+    </div>
+  );
+}
+
+/**
+ * One wall's kitchen run: the whole wall (it follows the wall), or a length and a distance from the end it is measured
+ * from (KitchenExtent). The bar above the fields shows the kitchen inside the room's wall.
+ */
+function KitchenOnWall({
+  cfg,
+  plan,
+  wall,
+  edit,
+  many,
+  focused,
+  onActive,
+  notes,
+  onNotes,
+}: Pick<StepProps, "cfg" | "plan" | "edit"> & {
+  wall: WallId;
+  many: boolean;
+  focused: boolean;
+  onActive: (on: boolean) => void;
+  /** what the last change of this wall's kitchen caused */
+  notes: string[];
+  onNotes: (items: string[], next: KitchenConfig) => void;
+}) {
+  const info = kitchenExtent(cfg, wall);
+  if (!info) return null;
+  const run = plan.runs.find((r) => r.wall === wall);
+  const W = wall.toUpperCase();
+  const L = info.room.value;
+  const corners = { left: isRoomCorner(cfg.layout, wall, "left"), right: isRoomCorner(cfg.layout, wall, "right") };
+  const win = plan.window && plan.window.wall === wall ? { from: plan.window.offset, to: plan.window.offset + plan.window.width } : null;
+  const anchorFrom = wallEndName(cfg.layout, wall, info.anchor, true);
+  const len = info.length.value;
+
+  const apply = (r: ExtentResult, coalesce?: string) => {
+    if (edit(r, { coalesce })) onNotes(r.notes, r.cfg);
+  };
+  // off: the kitchen gets a length of its own, a little shorter than the wall (room.ts shorterKitchen)
+  const setFull = (on: boolean) => {
+    if (on) return apply(setKitchenExtent(cfg, wall, null));
+    const shorter = shorterKitchen(info);
+    if (shorter === null) return edit({ cfg, ok: false, warning: `Zid ${W} je prekratak za kraću kuhinju — najkraća kuhinja na njemu je ${info.length.min} cm.`, slotId: null });
+    apply(setKitchenExtent(cfg, wall, { length: shorter }));
+  };
+  const setLength = (v: number) => apply(setKitchenExtent(cfg, wall, { length: v }), `ext-${wall}-len`);
+  // a new start keeps the kitchen's length (it moves along the wall) until it reaches the far end
+  const setOffset = (v: number) => apply(setKitchenExtent(cfg, wall, { offset: v, length: Math.min(len, L - v) }), `ext-${wall}-off`);
+  const setAnchor = (a: "left" | "right") => apply(setKitchenExtent(cfg, wall, { anchor: a }));
+
+  return (
+    <div
+      className={`rounded-2xl border p-4 transition-colors duration-500 ease-premium ${focused ? "border-accent/45 bg-accent/[0.04]" : "border-white/10 bg-white/[0.02]"}`}
+      onPointerEnter={() => onActive(true)}
+      onPointerLeave={() => onActive(false)}
+      onFocus={() => onActive(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onActive(false);
+      }}
+    >
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="font-display text-[15px] font-medium leading-tight">
+            Zid {W}
+            {many && <span className="ml-1.5 font-sans text-[12.5px] font-normal text-mut">{WALL_HINT[wall]}</span>}
+          </p>
+          <p className="mt-1 text-[12px] tabular-nums leading-snug text-mut">
+            Zid {L} cm · kuhinja {len} cm
+          </p>
+        </div>
+        <label className="flex shrink-0 cursor-pointer items-center gap-2.5 text-[12px] text-fg/80">
+          <span id={`studio-full-${wall}`}>Cijeli zid</span>
+          <Switch id={`studio-full-${wall}-s`} checked={info.full} onChange={setFull} labelledBy={`studio-full-${wall}`} />
+        </label>
+      </div>
+
+      <KitchenBar
+        className="mt-3 block h-auto w-full"
+        length={L}
+        kitchen={info.kitchen}
+        talls={run?.talls ?? []}
+        free={run?.free ?? []}
+        window={win}
+        corners={corners}
+        active={focused}
+      />
+
+      {info.full ? (
+        <p className="mt-2 text-[12px] leading-relaxed text-mut">Kuhinja zauzima cijeli zid i prati njegovu duljinu. Isključite „Cijeli zid” za kraću kuhinju.</p>
+      ) : (
+        <div className="mt-3 space-y-5">
+          <NumberField label="Duljina kuhinje" value={len} min={info.length.min} max={info.length.max} onChange={setLength} />
+          <NumberField
+            label="Razmak"
+            sub={`od ${anchorFrom}`}
+            hint={info.offset.value > 0 ? `Do kuhinje ostaje ${info.offset.value} cm slobodnog zida.` : "Kuhinja počinje odmah uz taj kraj zida."}
+            value={info.offset.value}
+            min={info.offset.min}
+            max={info.offset.max}
+            onChange={setOffset}
+          />
+          <div>
+            <p id={`studio-anchor-${wall}`} className="mb-2.5 text-[13px] text-fg">
+              Razmak mjerim od
+            </p>
+            <Segmented
+              labelledBy={`studio-anchor-${wall}`}
+              options={(["left", "right"] as const).map((sd) => ({
+                id: sd,
+                label: sd === "left" ? "lijevog kraja" : "desnog kraja",
+                aria: `${sd === "left" ? "Lijevog" : "Desnog"} kraja zida: ${wallEndName(cfg.layout, wall, sd)}`,
+              }))}
+              value={info.anchor}
+              onChange={setAnchor}
+              size="sm"
+            />
+            <p className="mt-2 text-[11.5px] leading-snug text-mut">Lijevo i desno: gledano prema zidu {W}.</p>
+          </div>
+        </div>
+      )}
+      <div aria-live="polite">{notes.length > 0 && <Notes items={notes} className="mt-4" />}</div>
     </div>
   );
 }

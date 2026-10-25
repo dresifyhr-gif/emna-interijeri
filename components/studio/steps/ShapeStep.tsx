@@ -1,11 +1,14 @@
 "use client";
 
+import { hasIsland } from "@/lib/studio/plan";
 import { Notes, RadioGrid } from "../controls";
 import { LayoutIcon, UndoIcon } from "../icons";
 import { LAYOUTS, LAYOUT_RESET_NOTE } from "../meta";
+import { IslandSection } from "./IslandSection";
 import type { StepProps } from "./types";
 
-export function ShapeStep({ cfg, setLayout, compact, onUndoLayout }: StepProps & { onUndoLayout: (() => void) | null }) {
+/** "Oblik": the six layouts, and for the island / peninsula its options (IslandSection) */
+export function ShapeStep({ cfg, setLayout, compact, edit, goTo, onUndoLayout }: StepProps & { onUndoLayout: (() => void) | null }) {
   return (
     <div>
       <RadioGrid
@@ -40,9 +43,10 @@ export function ShapeStep({ cfg, setLayout, compact, onUndoLayout }: StepProps &
           </>
         )}
       </RadioGrid>
+      {hasIsland(cfg.layout) && <IslandSection cfg={cfg} edit={edit} goTo={goTo} />}
       <p className="mt-6 text-[12.5px] leading-relaxed text-mut">
-        Duljine zidova i prozor upisujete u sljedećem koraku, a zatim po želji mijenjate svaki element: ladice, vrata,
-        sudoper, aparate, police.
+        Mjere prostorije i koliki dio zidova zauzima kuhinja upisujete u sljedećem koraku, a zatim po želji mijenjate svaki
+        element: ladice, vrata, sudoper, aparate, police.
       </p>
       <Notes
         items={

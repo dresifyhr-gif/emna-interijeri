@@ -184,8 +184,19 @@ export interface RoomWallDef {
   id: string;
   name: string;
   swatch: string;
+  /** paint colour (sRGB hex); a textured finish: its average tone */
   color: string;
   roughness: number;
+  /** a textured wall (lib/studio/engine/textures.ts); absent = plain paint */
+  render?: {
+    kind: "brick" | "microcement" | "tiles";
+    /** [base, dark, light] */
+    tones: [string, string, string];
+    /** one texture repeat in metres */
+    tile: number;
+    /** brick / tiles: mortar or grout colour */
+    grout?: string;
+  };
 }
 
 export interface RoomFloorDef {
@@ -193,7 +204,7 @@ export interface RoomFloorDef {
   name: string;
   swatch: string;
   render: {
-    kind: "solid" | "planks" | "concrete" | "tiles";
+    kind: "solid" | "planks" | "concrete" | "tiles" | "herringbone" | "chevron" | "terrazzo";
     color: string;
     roughness: number;
     /** [base, dark, light] */
@@ -202,6 +213,8 @@ export interface RoomFloorDef {
     tile?: number;
     /** tiles: grout colour */
     grout?: string;
+    /** tiles: columns × rows of tiles in one repeat (absent = 2 × 2 square tiles) */
+    grid?: [number, number];
   };
 }
 
@@ -246,6 +259,11 @@ export interface ModuleTypeDef {
   demo?: boolean;
   /** the type that takes over at a width this one does not come in (base doors: 1 door ≤ 60, 2 doors above) */
   sibling?: string;
+  /**
+   * corner units: the footprint (CORNER_FOOT) — "blind" = a blind corner (slijepi kut, the default and every `cornerOk`
+   * type), "l" = an L-shaped unit with a bi-fold door, "diagonal" = a unit with a diagonal front
+   */
+  cornerShape?: "blind" | "l" | "diagonal";
 }
 
 export interface CatalogExtras {
@@ -255,8 +273,27 @@ export interface CatalogExtras {
   ledFixed: number;
   /** delivery + installation per running metre of cabinets */
   installPerMeter: number;
-  /** island: back panel, seating overhang and both waterfall sides */
+  /** island / peninsula: back panel, seating overhang and the waterfall side(s) — assembly, fixing, cut-outs */
   islandFixed: number;
+  /**
+   * island / peninsula deeper than 60 cm (KitchenConfig.islandSpec.depth): the second row of cabinets on the outer side
+   * costs this share of the island's per-metre cabinet price per 60 cm of its depth (0,5 for a 30 cm row) …
+   */
+  islandBackRowShare: number;
+  /** … plus one push-to-open latch (TIP-ON) per door of that row, EUR */
+  islandBackRowLatch: number;
+  /** end panel in the front colour instead of a waterfall side (islandSpec.waterfall false), EUR per piece */
+  islandEndPanel: number;
+  /** raised bar (šank): the front-coloured upstand under the bar top, share of the island's per-metre cabinet price */
+  barUpstandShare: number;
+  /** raised bar: one steel bracket under the bar top (every ~90 cm, at least two), EUR */
+  barBracket: number;
+  /** raised bar: fitting the upstand and the bar top, EUR */
+  barFixed: number;
+  /** lowered table (spušteni stol): fitting the top and its two legs, EUR */
+  tableFixed: number;
+  /** the ceiling hood above the island / peninsula (otočna napa): ceiling fixing, chimney cover, duct — the hood itself is an appliance (not included), EUR */
+  islandHoodInstall: number;
   /**
    * stone backsplash between worktop and wall units, in the worktop material: share of the
    * worktop's price per m² (1 = same price per m² as the worktop)
@@ -307,7 +344,8 @@ function mod(d: Omit<ModuleTypeDef, "minWidth" | "maxWidth"> & { minWidth?: numb
  *          ploča + pećnica             60 90 · pećnica ispod ploče 60
  *          stalak za boce              15 20 30
  *          otvorene police             20 30 40 45 50 60
- *          kutni elementi              fixed blind-corner units (DIM.cornerBase), only the type changes
+ *          kutni elementi              fixed widths per footprint (CORNER_FOOT): blind corners 110 along A (60 across),
+ *                                      L-shaped / diagonal units and corner drawers 90 × 90; only the type changes
  *   upper  vrata                       30 40 45 50 60 (one door) · 80 90 100 120 (two doors)
  *          klapna                      40 45 50 60 80 90 100 120
  *          dvostruka klapna            60 80 90 100 120
@@ -317,6 +355,8 @@ function mod(d: Omit<ModuleTypeDef, "minWidth" | "maxWidth"> & { minWidth?: numb
  *          nosač za suđe               45 50 60 80 90
  *          napa                        60 80 90 100 120               (80 kept: the planner's hood follows its 80 cm hob)
  *          mikrovalna                  60
+ *          kutni gornji                blind 80 along A (35 across) · L-shaped, diagonal (door / glass + LED), open
+ *                                      corner shelves 60 × 60
  *   tall   izvlačna smočnica           15 20 30 40 45 50 60
  *          visoki ormar                30 40 45 50 60 80 90           (two doors above 60; 80 / 90 kept for v2 links)
  *          ormar za metle              30 40 45 50 60
@@ -340,27 +380,50 @@ const W_WIDE_XL = [60, ...W_TO120];
 const W_SPACER = [30, 40, 45, 50, 60, 80, 90];
 
 /**
- * Side-by-side (dvokrilni, američki) fridge niche, cm. The whole niche is ONE tall slot of SBS.niche cm:
- * a full-height side panel (bočna obloga, front colour) on each side, an air gap, the freestanding-look appliance,
- * and a bridge cabinet (ormarić iznad hladnjaka) between the panels from just above the appliance up to the
- * tall column's top line. The engine draws exactly these numbers (lib/studio/engine/modules.ts buildSbs).
+ * Side-by-side (dvokrilni, američki) fridge niche, cm. The whole niche is ONE tall slot of SBS.niche cm, built like a
+ * carpenter builds it around a freestanding side-by-side: a full-height side panel (bočna obloga, front colour, flush
+ * with the tall units' fronts) on each side, an air gap, the appliance standing in the niche with its body a little
+ * proud of the cabinet fronts and its two doors (and their bar handles) in FRONT of the cabinet front plane, and a bridge
+ * cabinet (ormarić iznad hladnjaka) between the panels, 60 cm deep with its front flush with the tall column, from the
+ * same line as an integrated fridge's top door (at least SBS.topGap above the appliance) up to the column's top line.
+ * The engine draws exactly these numbers (lib/studio/engine/modules.ts buildSbs).
  */
 export const SBS = {
   /** slot width: panel + gap + appliance + gap + panel */
   niche: 96,
   appliance: 91,
   applianceHeight: 178,
+  /** the appliance's body (without its doors): it stands in the niche, its front this far from the wall */
+  bodyDepth: 61,
+  /** the doors in front of the body; their bar handles reach this much further into the room */
+  doorDepth: 6,
+  handleDepth: 4.5,
   /** body + doors */
-  applianceDepth: 70,
-  /** side panel thickness and depth (covers the appliance body) */
+  applianceDepth: 67,
+  /** side panel thickness and depth (flush with the tall units' fronts, 60 cm) */
   panel: 2,
-  panelDepth: 70,
+  panelDepth: 60,
   /** air gap between the appliance and each panel */
   gap: 0.5,
-  /** air gap above the appliance, under the bridge cabinet */
+  /** at least this much air above the appliance, under the bridge cabinet */
   topGap: 2,
   /** bridge cabinet depth (flush with the tall column fronts) */
   bridgeDepth: 60,
+} as const;
+
+/**
+ * Corner units: how far they reach along wall A (`along` = the corner slot's width) and along the neighbouring wall
+ * (`across`: where the neighbour's run stops), cm — what Croatian carpenters build (TODO(vlasnik): potvrditi):
+ *
+ *   base   blind     110 along A (60 blind + 5 filler + 45 door), 60 across — kutni karusel, LeMans, Magic corner, vrata
+ *          L / diag   90 × 90: an L-shaped unit with a bi-fold door (shelves or a carousel inside), a diagonal unit,
+ *                     L-shaped corner drawers
+ *   upper  blind      80 along A (35 blind + 5 filler + 40 door), 35 across — vrata, vitrina
+ *          L / diag   60 × 60: an L-shaped unit with a bi-fold door, a diagonal unit (door / glass + LED), open shelves
+ */
+export const CORNER_FOOT = {
+  base: { blind: { along: 110, across: 60 }, l: { along: 90, across: 90 }, diagonal: { along: 90, across: 90 } },
+  upper: { blind: { along: 80, across: 35 }, l: { along: 60, across: 60 }, diagonal: { along: 60, across: 60 } },
 } as const;
 
 // ================================================================ the catalogue
@@ -777,6 +840,48 @@ export const catalog: Catalog = {
       { id: "pijesak", name: "Pijesak", swatch: "#cbbda5", color: "#b8aa92", roughness: 0.92 },
       { id: "kadulja", name: "Kadulja", swatch: "#9aa392", color: "#87907f", roughness: 0.92 },
       { id: "antracit", name: "Antracit", swatch: "#3b3c3f", color: "#333437", roughness: 0.92 },
+      // ---- more paints (the ones above keep their look: older links use them)
+      { id: "kreda", name: "Kredasto bijela", swatch: "#eeebe4", color: "#e2ded5", roughness: 0.93 },
+      { id: "lan", name: "Lan", swatch: "#e0d6c5", color: "#d0c5b2", roughness: 0.92 },
+      { id: "greige", name: "Greige", swatch: "#bdb4a7", color: "#aaa194", roughness: 0.92 },
+      { id: "glina", name: "Glina", swatch: "#c4a593", color: "#b39381", roughness: 0.92 },
+      { id: "terakota", name: "Terakota", swatch: "#b0694c", color: "#9c5a3f", roughness: 0.9 },
+      { id: "zelena-duboka", name: "Duboka zelena", swatch: "#2f4637", color: "#2a3f31", roughness: 0.9 },
+      { id: "plava-mornarska", name: "Mornarsko plava", swatch: "#273449", color: "#222e41", roughness: 0.9 },
+      { id: "ugljen", name: "Ugljen", swatch: "#2b2b2c", color: "#252526", roughness: 0.9 },
+      // ---- textured walls (tile = one texture repeat in metres: bricks 25 × 6,5 cm, tiles 20 × 10 cm)
+      {
+        id: "cigla",
+        name: "Ciglena obloga",
+        swatch: "linear-gradient(0deg,#d8cfc4 0 2px,transparent 2px) 0 0/16px 7px,linear-gradient(90deg,#d8cfc4 0 2px,transparent 2px) 0 0/16px 7px,#9a5a42",
+        color: "#94583f",
+        roughness: 0.94,
+        render: { kind: "brick", tones: ["#97573e", "#6f3d2b", "#b47456"], tile: 1.04, grout: "#cfc6ba" },
+      },
+      {
+        id: "cigla-bijela",
+        name: "Bijela ciglena obloga",
+        swatch: "linear-gradient(0deg,#bdb6ac 0 2px,transparent 2px) 0 0/16px 7px,linear-gradient(90deg,#bdb6ac 0 2px,transparent 2px) 0 0/16px 7px,#e6e1d8",
+        color: "#d6d1c7",
+        roughness: 0.95,
+        render: { kind: "brick", tones: ["#dcd6cc", "#c4bdb2", "#ece8e0"], tile: 1.04, grout: "#b9b2a7" },
+      },
+      {
+        id: "mikrocement",
+        name: "Mikrocement",
+        swatch: "radial-gradient(circle at 30% 40%,#c9c4bb,#aea99f 70%)",
+        color: "#b3aea5",
+        roughness: 0.82,
+        render: { kind: "microcement", tones: ["#b6b1a8", "#a29d94", "#c8c3ba"], tile: 2.4 },
+      },
+      {
+        id: "plocice-zid",
+        name: "Pločice uz zid (metro)",
+        swatch: "linear-gradient(0deg,#c9c5bd 0 1px,transparent 1px) 0 0/14px 7px,linear-gradient(90deg,#c9c5bd 0 1px,transparent 1px) 0 0/14px 7px,#f1efea",
+        color: "#e9e6e0",
+        roughness: 0.25,
+        render: { kind: "tiles", tones: ["#ece9e3", "#dedad3", "#f6f4f0"], tile: 0.8, grout: "#bdb8af" },
+      },
     ],
     floors: [
       { id: "studio", name: "Tamni studio", swatch: "#121213", render: { kind: "solid", color: "#121213", roughness: 0.78 } },
@@ -803,6 +908,55 @@ export const catalog: Catalog = {
         name: "Tamne pločice",
         swatch: "linear-gradient(90deg,transparent 47%,#1c1c1d 48% 52%,transparent 53%) 0 0/22px 22px,linear-gradient(0deg,transparent 47%,#1c1c1d 48% 52%,transparent 53%) 0 0/22px 22px,#3d3c3a",
         render: { kind: "tiles", color: "#3a3937", roughness: 0.4, tones: ["#3a3937", "#2f2e2c", "#454441"], tile: 1.2, grout: "#1d1d1e" },
+      },
+      // ---- more floors (believable scale: boards 20 cm wide, herringbone / chevron blocks 9 × 54 cm, tiles 60 × 120 cm)
+      {
+        id: "parket-svijetli",
+        name: "Parket hrast svijetli",
+        swatch: "repeating-linear-gradient(90deg,#c9ac85 0 18px,#a98d68 18px 19px,#d4b892 19px 37px,#a98d68 37px 38px)",
+        render: { kind: "planks", color: "#c6a882", roughness: 0.55, tones: ["#c4a67f", "#9a7d5a", "#dcc39f"], tile: 2.4 },
+      },
+      {
+        id: "parket-tamni",
+        name: "Parket hrast tamni",
+        swatch: "repeating-linear-gradient(90deg,#5e4632 0 18px,#433122 18px 19px,#6b5039 19px 37px,#433122 37px 38px)",
+        render: { kind: "planks", color: "#5c4431", roughness: 0.52, tones: ["#5a4230", "#36271a", "#755a42"], tile: 2.4 },
+      },
+      {
+        id: "riblja-kost",
+        name: "Parket riblja kost",
+        swatch: "repeating-linear-gradient(45deg,#a7825a 0 6px,#8a6a47 6px 7px),repeating-linear-gradient(-45deg,#b48e66 0 6px,#8a6a47 6px 7px)",
+        render: { kind: "herringbone", color: "#a07c56", roughness: 0.55, tones: ["#a27e58", "#6f5236", "#c29d74"], tile: 0.764 },
+      },
+      {
+        id: "chevron",
+        name: "Parket chevron",
+        swatch: "linear-gradient(135deg,#b08a62 0 50%,#9a7650 50%) 0 0/12px 12px",
+        render: { kind: "chevron", color: "#a8845d", roughness: 0.55, tones: ["#a8845d", "#755839", "#c7a27a"], tile: 1.08 },
+      },
+      {
+        id: "plocice-velike-svijetle",
+        name: "Velike svijetle pločice",
+        swatch: "linear-gradient(90deg,transparent 48%,#c2beb6 49% 51%,transparent 52%) 0 0/30px 15px,linear-gradient(0deg,transparent 47%,#c2beb6 48% 52%,transparent 53%) 0 0/30px 15px,#e2dfd8",
+        render: { kind: "tiles", color: "#dedad3", roughness: 0.3, tones: ["#dedad3", "#d3cfc7", "#e9e6e0"], tile: 2.4, grout: "#bfbab2", grid: [2, 4] },
+      },
+      {
+        id: "plocice-velike-tamne",
+        name: "Velike tamne pločice",
+        swatch: "linear-gradient(90deg,transparent 48%,#232324 49% 51%,transparent 52%) 0 0/30px 15px,linear-gradient(0deg,transparent 47%,#232324 48% 52%,transparent 53%) 0 0/30px 15px,#4a4946",
+        render: { kind: "tiles", color: "#454441", roughness: 0.35, tones: ["#464542", "#3b3a37", "#53524e"], tile: 2.4, grout: "#262627", grid: [2, 4] },
+      },
+      {
+        id: "terazzo",
+        name: "Terazzo",
+        swatch: "radial-gradient(circle,#8d8678 0 1.2px,transparent 1.8px) 0 0/7px 7px,radial-gradient(circle,#efe9df 0 1px,transparent 1.6px) 3px 4px/9px 9px,#d4cec3",
+        render: { kind: "terrazzo", color: "#cfc9be", roughness: 0.32, tones: ["#d2ccc1", "#837c6f", "#f1ece3"], tile: 1.2 },
+      },
+      {
+        id: "mikrocement",
+        name: "Mikrocement",
+        swatch: "radial-gradient(circle at 30% 40%,#b9b4ab,#9f9a90 70%)",
+        render: { kind: "concrete", color: "#a9a49b", roughness: 0.62, tones: ["#aaa59c", "#9a958c", "#bab5ac"], tile: 3.6 },
       },
     ],
   },
@@ -1034,6 +1188,55 @@ export const catalog: Catalog = {
       priceAdd: 640,
       widths: [90, 120],
     }),
+    // ---- L-shaped / diagonal corner units: 90 cm along each wall (CORNER_FOOT) — TODO(vlasnik): doplate su procjene
+    mod({
+      id: "kutni-l",
+      name: "L-kutni s preklopnim vratima",
+      zone: "base",
+      code: "kq",
+      group: "kut",
+      corner: true,
+      cornerShape: "l",
+      description: "Kutni element 90 × 90 cm u obliku slova L: preklopna vrata otvaraju cijeli kut, unutra police.",
+      priceAdd: 260,
+      widths: [90],
+    }),
+    mod({
+      id: "kutni-l-karusel",
+      name: "L-kutni s karuselom",
+      zone: "base",
+      code: "kc",
+      group: "kut",
+      corner: true,
+      cornerShape: "l",
+      description: "Kutni element 90 × 90 cm s preklopnim vratima i dvije okrugle police koje se okreću — ništa se ne izgubi u kutu.",
+      priceAdd: 390,
+      widths: [90],
+    }),
+    mod({
+      id: "kutni-dijagonalni",
+      name: "Dijagonalni kutni element",
+      zone: "base",
+      code: "kd",
+      group: "kut",
+      corner: true,
+      cornerShape: "diagonal",
+      description: "Kutni element 90 × 90 cm s kosim vratima preko kuta i policom.",
+      priceAdd: 220,
+      widths: [90],
+    }),
+    mod({
+      id: "kutni-ladice",
+      name: "Kutne ladice",
+      zone: "base",
+      code: "kz",
+      group: "kut",
+      corner: true,
+      cornerShape: "l",
+      description: "Tri ladice u obliku slova L koje izlaze iz kuta prema vama — kut 90 × 90 cm cijeli se koristi.",
+      priceAdd: 690,
+      widths: [90],
+    }),
 
     // ================================================================ upper
     mod({
@@ -1131,6 +1334,57 @@ export const catalog: Catalog = {
       description: "Mikrovalna ugrađena u zidni element, iznad nje mala klapna. Mikrovalna nije uračunata u cijenu.",
       priceAdd: 160,
       widths: [60],
+    }),
+    // ---- L-shaped / diagonal / open corner wall units: 60 cm along each wall (CORNER_FOOT) — TODO(vlasnik): procjene
+    mod({
+      id: "kutni-l",
+      name: "L-kutni gornji s preklopnim vratima",
+      zone: "upper",
+      code: "kq",
+      group: "kut",
+      corner: true,
+      cornerShape: "l",
+      description: "Gornji kutni element 60 × 60 cm u obliku slova L, s preklopnim vratima i policom.",
+      priceAdd: 180,
+      widths: [60],
+    }),
+    mod({
+      id: "kutni-dijagonalni",
+      name: "Dijagonalni gornji kutni",
+      zone: "upper",
+      code: "kd",
+      group: "kut",
+      corner: true,
+      cornerShape: "diagonal",
+      description: "Gornji kutni element 60 × 60 cm s kosim vratima preko kuta.",
+      priceAdd: 150,
+      widths: [60],
+    }),
+    mod({
+      id: "kutni-dijagonalni-staklo",
+      name: "Dijagonalna kutna vitrina s LED",
+      zone: "upper",
+      code: "kg",
+      group: "kut",
+      corner: true,
+      cornerShape: "diagonal",
+      description: "Gornji kutni element 60 × 60 cm s kosim staklenim vratima, staklenim policama i LED rasvjetom.",
+      priceAdd: 260,
+      widths: [60],
+    }),
+    mod({
+      id: "kutna-polica",
+      name: "Otvorena kutna polica",
+      zone: "upper",
+      code: "ko",
+      group: "kut",
+      corner: true,
+      cornerShape: "l",
+      description: "Otvorene police u obliku slova L, 60 × 60 cm, u boji fronte — kut ostaje prozračan.",
+      priceAdd: 90,
+      widths: [60],
+      frontShare: 0.35,
+      demo: false,
     }),
     mod({
       id: "prazno",
@@ -1253,6 +1507,16 @@ export const catalog: Catalog = {
     ledFixed: 150,
     installPerMeter: 70,
     islandFixed: 650,
+    // TODO(vlasnik): procjene za otok / poluotok / šank (nisu cjenik): stražnji red ormarića, TIP-ON zatvarač po vratima,
+    // bočna ploča umjesto slapa, nadogradnja i nosači šanka, montaža šanka i spuštenog stola, montaža stropne nape
+    islandBackRowShare: 0.85,
+    islandBackRowLatch: 25,
+    islandEndPanel: 70,
+    barUpstandShare: 0.35,
+    barBracket: 35,
+    barFixed: 120,
+    tableFixed: 90,
+    islandHoodInstall: 180,
     backsplashShare: 1,
     spread: 0.08,
   },
@@ -1325,7 +1589,13 @@ export function moduleTypes(zone: ModuleZone | "island"): ModuleTypeDef[] {
   const z: ModuleZone = zone === "island" ? "base" : zone;
   return catalog.modules.filter((m) => m.zone === z && !m.corner && (zone !== "island" || m.island));
 }
-/** types a blind-corner slot of this zone accepts */
+/** types a corner slot of this zone accepts (blind corners, L-shaped and diagonal units, and the `cornerOk` doors) */
 export function cornerTypes(zone: "base" | "upper"): ModuleTypeDef[] {
   return catalog.modules.filter((m) => m.zone === zone && (m.corner || m.cornerOk));
+}
+
+/** the footprint of a corner type (CORNER_FOOT): cm along wall A (= the corner slot's width) and along the neighbour */
+export function cornerFoot(zone: "base" | "upper", type: string | undefined): { along: number; across: number; shape: "blind" | "l" | "diagonal" } {
+  const shape = (type ? moduleDef(zone, type)?.cornerShape : undefined) ?? "blind";
+  return { ...CORNER_FOOT[zone][shape], shape };
 }

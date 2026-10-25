@@ -23,6 +23,8 @@ const CSS = `
 .emna-studio-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .emna-studio-dim{font:500 11px/1 var(--font-display,"Space Grotesk"),system-ui,-apple-system,sans-serif;letter-spacing:.12em;color:#C9B99A;background:rgba(8,8,9,.72);padding:6px 11px;border-radius:999px;border:1px solid rgba(201,185,154,.35);white-space:nowrap;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:opacity .6s cubic-bezier(.2,.8,.2,1);font-variant-numeric:tabular-nums}
 .emna-studio-dim b{font-weight:700;color:#F2EFE9;margin-right:.55em}
+.emna-studio-dim.emna-studio-dim--run{border-style:dashed;background:rgba(8,8,9,.6);font-size:10.5px;padding:5px 10px}
+.emna-studio-dim.emna-studio-dim--run b{font-weight:600;color:#C9B99A}
 .emna-studio-dim[role=button]{pointer-events:auto;cursor:pointer;outline:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:opacity .6s cubic-bezier(.2,.8,.2,1),border-color .3s cubic-bezier(.2,.8,.2,1),background-color .3s cubic-bezier(.2,.8,.2,1),box-shadow .3s cubic-bezier(.2,.8,.2,1)}
 .emna-studio-dim[role=button]::before{content:"";position:absolute;inset:-10px -8px}
 .emna-studio-dim[role=button]:hover{border-color:rgba(201,185,154,.85);background:rgba(8,8,9,.86);box-shadow:0 0 0 3px rgba(201,185,154,.14)}

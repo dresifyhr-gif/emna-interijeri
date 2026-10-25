@@ -10,9 +10,9 @@
  */
 import { useState } from "react";
 import { DIM, type KitchenPlan, type PlanSlot, type RunId } from "@/lib/studio/plan";
-import { moduleDef } from "@/lib/studio/catalog";
+import { cornerFoot, moduleDef } from "@/lib/studio/catalog";
 import { ModuleGlyph } from "./icons";
-import { isFlipped, runName } from "./meta";
+import { isFlipped, islandWord, runName } from "./meta";
 
 const ACCENT = "#C9B99A";
 
@@ -71,21 +71,27 @@ export function RunElevation({
     return [hp.plinth, baseTop];
   };
 
-  // the blind part of wall A's corner unit, seen on walls B / C
+  // the part of wall A's corner unit that reaches along walls B / C (a blind corner 60 cm, an L / diagonal unit 90 cm)
   const cornerZones: { x: number; w: number; y0: number; y1: number }[] = [];
   if (run === "b" || run === "c") {
     const atEnd = run === "b";
-    const has = (id: string) => plan.slots.some((s) => s.cornerId === id);
-    const baseId = atEnd ? "base-l" : "base-r";
-    const upId = atEnd ? "upper-l" : "upper-r";
-    if (has(baseId)) cornerZones.push({ x: atEnd ? len - DIM.baseDepth : 0, w: DIM.baseDepth, y0: hp.plinth, y1: baseTop });
-    if (has(upId)) cornerZones.push({ x: atEnd ? len - DIM.upperDepth : 0, w: DIM.upperDepth, y0: hp.upperBottom, y1: upperTop });
+    const corner = (id: string) => plan.slots.find((s) => s.cornerId === id);
+    const base = corner(atEnd ? "base-l" : "base-r");
+    const up = corner(atEnd ? "upper-l" : "upper-r");
+    if (base) {
+      const w = cornerFoot("base", base.type).across;
+      cornerZones.push({ x: atEnd ? len - w : 0, w, y0: hp.plinth, y1: baseTop });
+    }
+    if (up) {
+      const w = cornerFoot("upper", up.type).across;
+      cornerZones.push({ x: atEnd ? len - w : 0, w, y0: hp.upperBottom, y1: upperTop });
+    }
   }
 
   const counts = { base: 0, upper: 0, tall: 0, island: 0 };
   for (const s of slots) if (!moduleDef(s.zone, s.type)?.spacer) counts[s.zone]++;
   const aria = isl
-    ? `Otok, ${Math.round(len)} cm: ${counts.island} elemenata`
+    ? `${islandWord(plan.cfg.layout)}, ${Math.round(len)} cm: ${counts.island} elemenata`
     : `${runName(run)}, ${len} cm: ${counts.base} donjih, ${counts.upper} gornjih${counts.tall ? `, ${counts.tall} visokih` : ""} elemenata${win ? ", prozor" : ""}`;
 
   return (
@@ -134,6 +140,29 @@ export function RunElevation({
           height={c.y1 - c.y0}
           fill="rgba(242,239,233,.03)"
           stroke="rgba(242,239,233,.18)"
+          strokeDasharray="3 3"
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+
+      {/* the kitchen run on the room's wall: bare wall beyond it, bare floor it leaves (an edited run) */}
+      {runPlan && runPlan.kitchen.from > 0.5 && (
+        <line x1={0} x2={runPlan.kitchen.from} y1={Y(0) - 1.5} y2={Y(0) - 1.5} stroke="rgba(242,239,233,.2)" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+      )}
+      {runPlan && runPlan.kitchen.to < len - 0.5 && (
+        <line x1={runPlan.kitchen.to} x2={len} y1={Y(0) - 1.5} y2={Y(0) - 1.5} stroke="rgba(242,239,233,.2)" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+      )}
+      {runPlan?.free.map((f, i) => (
+        <rect
+          key={`free${i}`}
+          x={f.from + 0.6}
+          y={Y(baseTop)}
+          width={Math.max(0.5, f.to - f.from - 1.2)}
+          height={baseTop - hp.plinth}
+          rx={1.2}
+          fill="none"
+          stroke="rgba(201,185,154,.45)"
           strokeDasharray="3 3"
           strokeWidth={1}
           vectorEffect="non-scaling-stroke"

@@ -7,6 +7,8 @@ export interface StepEditOptions {
   say?: string;
   /** edits of one continuous control share one undo step (see ApplyOptions.coalesce) */
   coalesce?: string;
+  /** say the result's note in a toast over the 3D view (with "Poništi") instead of next to the controls */
+  notify?: boolean;
 }
 
 /** what every configurator step receives from <Studio> */
@@ -17,7 +19,8 @@ export interface StepProps {
   update: (patch: Partial<KitchenConfig>) => void;
   /**
    * apply a lib/studio/edit.ts result as one undo step (Ctrl / ⌘ + Z), without a toast: the step shows the
-   * result's notes next to its own controls. False when the edit was refused (its warning is then shown in a toast).
+   * result's notes next to its own controls (with `notify`, a toast says them). False when the edit was refused (its
+   * warning is then shown in a toast).
    */
   edit: (r: EditResult, opts?: StepEditOptions) => boolean;
   setLayout: (layout: Layout) => void;

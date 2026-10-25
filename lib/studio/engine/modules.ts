@@ -14,7 +14,7 @@
  */
 
 import * as THREE from "three";
-import { SBS, moduleDef } from "../catalog";
+import { SBS, cornerFoot, moduleDef } from "../catalog";
 import { hasTopBox, type PlanSlot } from "../plan";
 import type { FrontZone, HandleStyle } from "../types";
 import { BASE_FACE, D, TOP_Y, UPPER_FACE, WORK_Y, type EngineHeights } from "./dims";
@@ -648,6 +648,10 @@ function buildBase(b: Mod, includeBody: boolean): void {
     if (includeBody) b.ghost(D.plinth, TOP_Y - 0.004, D.carcass);
     return;
   }
+  if (corner && cornerFoot("base", type).shape !== "blind") {
+    buildShapedCorner(b, "base", includeBody);
+    return;
+  }
 
   // ---- body
   if (includeBody) {
@@ -914,6 +918,200 @@ function buildCorner(b: Mod, yb: number, yt: number, fz: number): void {
   }
 }
 
+/** a board of any outline (run-local x / z points, counter-clockwise or not) from y0 to y1 */
+function boardGeo(pts: [number, number][], y0: number, y1: number): THREE.BufferGeometry {
+  const shape = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)));
+  const g = new THREE.ExtrudeGeometry(shape, { depth: y1 - y0, bevelEnabled: false });
+  // the shape lies in x / −z, extruded along +z: turn it so the extrusion goes up
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, y0, 0);
+  return g;
+}
+
+/**
+ * L-shaped and diagonal corner units (catalog cornerShape "l" / "diagonal", CORNER_FOOT): 90 × 90 cm base units and
+ * 60 × 60 cm wall units reaching along wall A (the slot, `w` wide) and along the neighbouring wall (`across`, in A's run
+ * frame the strip x 0 … depth, z depth … across at a left corner; mirrored at a right one).
+ *
+ *   kutni-l / kutni-l-karusel   an L carcass with a bi-fold door: the leaf on the neighbour's side hangs on its outer
+ *                               edge, the leaf on A's side folds onto it; shelves or two carousel trays inside
+ *   kutni-ladice                three L-shaped drawers that glide out of the corner diagonally
+ *   kutni-dijagonalni(-staklo)  a five-sided carcass with one door across the corner (glass + LED for the vitrine)
+ *   kutna-polica                open L-shaped shelves in the front colour
+ */
+function buildShapedCorner(b: Mod, zone: "base" | "upper", includeBody: boolean): void {
+  const { ctx, m, w } = b;
+  const type = m.slot.type;
+  const mats = ctx.mats;
+  const foot = cornerFoot(zone, type);
+  const right = m.slot.corner === "right";
+  const base = zone === "base";
+  const dc = base ? D.carcass : D.upperCarcass;
+  const face = base ? BASE_FACE : UPPER_FACE;
+  const fz = base ? BASE_FZ : UPPER_FZ;
+  const across = foot.across / 100;
+  const gola = ctx.handles === "bez";
+  const lip = !base && gola ? D.upperLip : 0;
+  // carcass and fronts, bottom → top
+  const c0 = base ? D.plinth : ctx.ub;
+  const c1 = base ? TOP_Y : ctx.ut;
+  const f0 = base ? D.plinth : ctx.ub - lip;
+  const f1 = base ? TOP_Y - (gola ? D.golaH : 0) : ctx.ut;
+  const X = (x: number) => (right ? w - x : x);
+  const bx = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): BoxSpec =>
+    right ? [w - x1, y0, z0, w - x0, y1, z1] : [x0, y0, z0, x1, y1, z1];
+  const pts = (list: [number, number][]): [number, number][] => list.map(([x, z]) => [X(x), z]);
+  const diagonal = foot.shape === "diagonal";
+  const open = type === "kutna-polica";
+  /** the carcass outline (left corner): the L, or the L with its inner corner cut on the diagonal */
+  const outline: [number, number][] = diagonal
+    ? [
+        [0, 0],
+        [w, 0],
+        [w, dc],
+        [dc, across],
+        [0, across],
+      ]
+    : [
+        [0, 0],
+        [w, 0],
+        [w, dc],
+        [dc, dc],
+        [dc, across],
+        [0, across],
+      ];
+
+  if (includeBody) {
+    if (base) {
+      // plinth under both legs, set back like every plinth
+      const r = D.plinthRecess;
+      const pl = b.body(
+        boxes([bx(0.001, 0, 0.03, w - 0.001, D.plinth - 0.002, BASE_FACE - r), bx(0.03, 0, BASE_FACE - r, BASE_FACE - r, D.plinth - 0.002, across - 0.001)], [b.ox, 0, 0]),
+        ctx.plinth,
+      );
+      m.plinths.push(pl);
+    }
+    const boardMat = open ? ctx.front : ctx.carcass;
+    const boards: THREE.BufferGeometry[] = [];
+    for (const y of [c0, c0 + (c1 - c0) * 0.5 - T / 2, c1 - T]) boards.push(boardGeo(pts(outline), y, y + T));
+    for (const g of boards) {
+      const me = b.body(g, boardMat, !open);
+      if (open) m.panels.push(me);
+    }
+    // the ends of both legs, and the backs against the two walls
+    const sides: BoxSpec[] = [bx(w - T, c0, 0, w, c1, dc), bx(0, c0, across - T, dc, c1, across), bx(0, c0, 0, w, c1, D.back), bx(0, c0, 0, D.back, c1, across)];
+    if (open) b.openCarcass(sides);
+    else b.carcass(sides);
+    if (type === "kutni-dijagonalni-staklo") {
+      const lx = X(dc * 0.4);
+      b.ledInner(Math.min(lx, X(dc * 0.4 + 0.2)), Math.max(lx, X(dc * 0.4 + 0.2)), c1 - T, dc * 0.6);
+    }
+    if (open) {
+      // a few things on the open shelves
+      b.plates(X(dc * 0.55), c0 + T, dc * 0.55, 3);
+      b.vase(X(dc * 0.5), c0 + (c1 - c0) * 0.5 + T / 2, across * 0.6);
+      return;
+    }
+    if (type === "kutni-l-karusel") {
+      // two 3/4 trays (Lazy Susan) turning on a pole: the missing quarter faces the bi-fold door, the pole stands
+      // r + 4 cm from both backs so the trays stay inside the carcass (a full disc would poke through the backs and the door)
+      const r = Math.min(0.36, across - 0.12);
+      const c = r + 0.04;
+      const a0 = right ? Math.PI : Math.PI / 2;
+      const arc: [number, number][] = [[0, 0]];
+      for (let i = 0; i <= 30; i++) {
+        const a = a0 + (1.5 * Math.PI * i) / 30;
+        arc.push([r * Math.cos(a), r * Math.sin(a)]);
+      }
+      for (const ty of [c0 + 0.08, c0 + (c1 - c0) * 0.55]) {
+        const t = b.piece(`carousel34:${r.toFixed(3)}:${right ? "r" : "l"}`, () => boardGeo(arc, -0.009, 0.009), mats.drawer, X(c), ty, c);
+        t.castShadow = true;
+      }
+      b.piece("carousel:pole", () => new THREE.CylinderGeometry(0.012, 0.012, 0.7, 12), mats.brushed, X(c), c0 + 0.38, c);
+    }
+  }
+  if (open) return;
+
+  // ---- fronts
+  if (base && gola) {
+    const g = mesh(boxes([bx(dc, f1 + 0.001, dc - 0.03, w, TOP_Y - 0.001, dc + 0.001), bx(dc - 0.03, f1 + 0.001, dc, dc + 0.001, TOP_Y - 0.001, across)]), mats.gola, false, true);
+    m.fronts.add(g);
+  }
+  const H = f1 - f0;
+  const cy = (f0 + f1) / 2;
+  const leafA = w - face - 2 * G;
+  const leafB = across - face - 2 * G;
+  if (diagonal) {
+    // one door across the corner, from the end of wall A's front line to the neighbour's: hinged at the end that
+    // lets its face look into the room, its free end swinging out
+    const pA: [number, number] = [X(w - G), face];
+    const pN: [number, number] = [X(face), across - G];
+    const room: [number, number] = [right ? -1 : 1, 1];
+    const turn = (a: [number, number], e: [number, number]) => -Math.atan2(e[1] - a[1], e[0] - a[0]);
+    let [hp, ep] = [pN, pA];
+    let th = turn(hp, ep);
+    // the face (local +z) must look into the room
+    if (Math.sin(th) * room[0] + Math.cos(th) * room[1] < 0) {
+      [hp, ep] = [pA, pN];
+      th = turn(hp, ep);
+    }
+    const len = Math.hypot(ep[0] - hp[0], ep[1] - hp[1]);
+    // the free end moves into the room for this sign of the turn
+    const out = (d: number) => Math.cos(th + d) * room[0] - Math.sin(th + d) * room[1];
+    const amount = out(-1.3) > out(1.3) ? -1.3 : 1.3;
+    const h = b.holder("door", hp[0], cy, hp[1], amount, 0);
+    h.rotation.y = th;
+    b.lastHolder().rest.r.copy(h.rotation);
+    const fw = len - 2 * G;
+    const fh = H - 2 * G;
+    const glass = type === "kutni-dijagonalni-staklo";
+    const p = glass ? b.glassDoor(h, fw, fh, fw / 2 + G, (hp[0] + ep[0]) / 2, cy, fz) : b.panel(h, fw, fh, fw / 2 + G, 0, (hp[0] + ep[0]) / 2, cy, fz);
+    p.position.z = -FT / 2;
+    b.grip(p, fw, fh, { edge: base ? "top" : "bottom", free: fw / 2 - 0.035 });
+    m.anchor.set(X((w + face) / 2), base ? 0.62 : cy, (face + across) / 2);
+    return;
+  }
+  if (type === "kutni-ladice") {
+    // three L-shaped drawers: each front is two panels meeting in the inner corner, the drawer glides out diagonally
+    const rows = [0.22, 0.39, 0.39];
+    let y = f1;
+    rows.forEach((rr, i) => {
+      const hh = rr * H;
+      const y0 = y - hh;
+      y = y0;
+      const h = b.holder("glide", 0, 0, 0, 0, i * 0.12);
+      const hd = b.lastHolder();
+      hd.dx = right ? -0.28 : 0.28;
+      hd.dz = 0.28;
+      const fh = hh - 2 * G;
+      const pa = b.panel(h, leafA, fh, X(face + G + leafA / 2), y0 + hh / 2, X(face + G + leafA / 2), y0 + hh / 2, fz);
+      pa.position.z = fz;
+      const pb = b.panel(h, leafB, fh, X(fz), y0 + hh / 2, X(fz), y0 + hh / 2, face + G + leafB / 2);
+      pb.rotation.y = right ? -Math.PI / 2 : Math.PI / 2;
+      pb.position.z = face + G + leafB / 2;
+      b.grip(pa, leafA, fh, { edge: "top" });
+      // the L tray behind the fronts
+      const tb = 0.18;
+      h.add(mesh(boardGeo(pts([[0.05, 0.05], [w - 0.06, 0.05], [w - 0.06, dc - 0.03], [dc - 0.03, dc - 0.03], [dc - 0.03, across - 0.06], [0.05, across - 0.06]]), y0 + 0.012, y0 + 0.024), mats.drawer));
+      h.add(mesh(boxes([bx(0.05, y0 + 0.024, 0.05, w - 0.06, y0 + 0.024 + Math.min(tb, fh - 0.05), 0.062), bx(0.05, y0 + 0.024, 0.05, 0.062, y0 + 0.024 + Math.min(tb, fh - 0.05), across - 0.06)]), mats.drawer));
+    });
+    m.anchor.set(X((w + face) / 2), base ? 0.62 : cy, (face + across) / 2);
+    return;
+  }
+  // bi-fold: the leaf on the neighbour's side hangs on its outer edge, the leaf on A's side folds onto it
+  const fh = H - 2 * G;
+  const h1 = b.holder("door", X(fz), cy, across - G, right ? 1.25 : -1.25, 0);
+  const pB = b.panel(h1, leafB, fh, 0, 0, X(fz), cy, face + G + leafB / 2);
+  pB.rotation.y = right ? -Math.PI / 2 : Math.PI / 2;
+  pB.position.set(0, 0, -leafB / 2);
+  // the fold between the leaves, in the inner corner where the two front planes meet
+  const h2 = b.holder("door", 0, 0, fz - (across - G), right ? -2.5 : 2.5, 0.1, false, h1);
+  const pA = b.panel(h2, leafA, fh, 0, 0, X(face + G + leafA / 2), cy, fz);
+  pA.position.set(X(face + G + leafA / 2) - X(fz), 0, 0);
+  b.grip(pA, leafA, fh, { edge: base ? "top" : "bottom", free: right ? -leafA / 2 + 0.035 : leafA / 2 - 0.035 });
+  m.anchor.set(X((w + face) / 2), base ? 0.62 : cy, (face + across) / 2);
+}
+
 function buildUpper(b: Mod, includeBody: boolean): void {
   const { ctx, m, w } = b;
   const type = m.slot.type;
@@ -928,6 +1126,10 @@ function buildUpper(b: Mod, includeBody: boolean): void {
 
   if (type === "prazno") {
     if (includeBody) b.ghost(ub, ut, depth);
+    return;
+  }
+  if (corner && cornerFoot("upper", type).shape !== "blind") {
+    buildShapedCorner(b, "upper", includeBody);
     return;
   }
 
@@ -1047,10 +1249,13 @@ function buildUpper(b: Mod, includeBody: boolean): void {
 export const isSbs = (type: string) => type === "hladnjak-sbs" || type === "hladnjak-sbs-vrata";
 
 /**
- * Side-by-side fridge niche (catalog SBS, one slot of SBS.niche cm): full-height side panels in the front colour, the
- * freestanding-look appliance between them (two full-height doors in the appliance finish with long vertical bars, a
- * dispenser on the freezer door, a lit interior), and a bridge cabinet from just above the appliance up to the tall
- * column's top line — with a lift-up flap ("hladnjak-sbs") or two doors ("hladnjak-sbs-vrata").
+ * Side-by-side fridge niche (catalog SBS, one slot of SBS.niche cm), as a carpenter builds it around a freestanding
+ * side-by-side: full-height side panels in the front colour, flush with the tall units' fronts; the appliance standing
+ * in the niche with its body a little proud of them and its two full-height doors (appliance finish, long vertical bar
+ * handles, a dispenser on the freezer door) IN FRONT of the cabinet front plane; and a bridge cabinet between the panels,
+ * 60 cm deep with its front flush with the column, from the line of an integrated fridge's top door (at least
+ * SBS.topGap above the appliance) up to the column's top line — a lift-up flap ("hladnjak-sbs"; two flaps when it is
+ * taller than 60 cm) or two doors ("hladnjak-sbs-vrata"), with the column's 3 mm reveals.
  * Demo: both appliance doors swing open, then the bridge opens.
  */
 function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
@@ -1058,7 +1263,6 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
   const mats = ctx.mats;
   const cmm = (v: number) => v / 100;
   const P = cmm(SBS.panel);
-  const pd = cmm(SBS.panelDepth);
   const gap = cmm(SBS.gap);
   const aw = Math.min(cmm(SBS.appliance), w - 2 * P - 2 * gap);
   const ax0 = (w - aw) / 2;
@@ -1066,22 +1270,30 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
   // the appliance and its panels stand on the floor, also when the column is lifted for an 85 / 95 cm worktop
   const f0 = -(ctx.h?.lift ?? 0);
   const aTop = Math.min(f0 + cmm(SBS.applianceHeight), y1 - 0.2);
-  const doorT = 0.055;
-  const zDoor = pd - doorT;
+  // panels flush with the fronts; the body a little proud of them; the doors in front
+  const pd = BASE_FACE;
   const zBody0 = 0.035;
-  const bridge0 = Math.min(aTop + cmm(SBS.topGap), y1 - 0.12);
+  const zBody = cmm(SBS.bodyDepth);
+  const doorT = cmm(SBS.doorDepth);
+  const zDoor = zBody + 0.003 + doorT;
+  // the bridge's lower edge: on the line of an integrated fridge's top door in the same column (buildTall), never
+  // closer than SBS.topGap above the appliance
+  const y0 = D.plinth;
+  const Hc = y1 - y0;
+  const fridgeLine = y1 - Math.max(0.2, Hc - Math.min(0.72, Hc * 0.34) - 1.02);
+  const bridge0 = Math.min(Math.max(aTop + cmm(SBS.topGap), fridgeLine), y1 - 0.12);
   const split = ax0 + aw * 0.44;
   const fz = BASE_FZ;
 
   if (includeBody) {
-    // side panels (bočne obloge) floor to the column's top line, deep enough to hide the appliance's sides
+    // side panels (bočne obloge) floor to the column's top line, as deep as the tall units
     b.openCarcass([
       [0.001, f0, 0, P, y1, pd],
       [w - P, f0, 0, w - 0.001, y1, pd],
     ]);
-    // the appliance: body, top, feet and a dark ventilation grille at the bottom
-    b.body(boxes([[ax0, f0 + 0.012, zBody0, ax1, aTop, zDoor]]), mats.appliance);
-    b.body(boxes([[ax0 + 0.02, f0, zDoor - 0.02, ax1 - 0.02, f0 + 0.012, zDoor]]), mats.trim);
+    // the appliance: body (its front ~1 cm proud of the panels), feet and a dark ventilation grille at the bottom
+    b.body(boxes([[ax0, f0 + 0.012, zBody0, ax1, aTop, zBody]]), mats.appliance);
+    b.body(boxes([[ax0 + 0.02, f0, zBody - 0.02, ax1 - 0.02, f0 + 0.012, zBody + 0.002]]), mats.trim);
     // interior (seen with the doors open): white liner, a divider, glass shelves on the fridge side,
     // baskets on the freezer side, and a cool light strip at the top of each compartment
     const ix0 = ax0 + 0.025;
@@ -1089,7 +1301,7 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
     const iy0 = f0 + 0.09;
     const iy1 = aTop - 0.06;
     const iz0 = zBody0 + 0.05;
-    const iz1 = zDoor - 0.003;
+    const iz1 = zBody + 0.002;
     b.body(boxes(hollow(ix0, iy0, iz0, ix1, iy1, iz1, 0.012)), mats.liner);
     b.body(boxes([[split - 0.012, iy0, iz0, split + 0.012, iy1, iz1]]), mats.liner);
     const shelves: BoxSpec[] = [];
@@ -1110,22 +1322,23 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
     ];
     const lm = mesh(boxes(light), mats.fridgeLight, false, false);
     m.body.add(lm);
-    // bridge cabinet carcass between the panels
-    if (y1 - bridge0 > 0.1) b.carcass(carcassBoxes(w - 2 * P, bridge0, y1 - bridge0, cmm(SBS.bridgeDepth) - D.frontOff - D.frontT).map((bx) => [bx[0] + P, bx[1], bx[2], bx[3] + P, bx[4], bx[5]] as BoxSpec));
+    // the air gap above the appliance stays dark; the bridge cabinet carcass between the panels, like the column
+    b.body(boxes([[ax0, aTop, zBody0, ax1, bridge0 - 0.002, 0.04]]), mats.trim);
+    if (y1 - bridge0 > 0.1) b.carcass(carcassBoxes(w - 2 * P, bridge0, y1 - bridge0, D.carcass).map((bx) => [bx[0] + P, bx[1], bx[2], bx[3] + P, bx[4], bx[5]] as BoxSpec));
   }
 
-  // appliance doors: hinged on the outer sides, long vertical bars at the split
+  // appliance doors in front of the cabinet front plane: hinged on the outer sides, bar handles at the split
   const dy0 = f0 + 0.03;
   const doorH = aTop - dy0;
   const leaf = (x0: number, x1: number, hinge: "left" | "right", delay: number, dispenser: boolean) => {
     const fw = x1 - x0 - 0.003;
     const px = hinge === "left" ? x0 : x1;
-    const h = b.holder("door", px, dy0 + doorH / 2, pd, hinge === "left" ? -1.45 : 1.45, delay);
+    const h = b.holder("door", px, dy0 + doorH / 2, zDoor, hinge === "left" ? -1.45 : 1.45, delay);
     const lx = hinge === "left" ? fw / 2 : -fw / 2;
     const door = mesh(boxes([[-fw / 2, -doorH / 2, -doorT, fw / 2, doorH / 2, 0]]), mats.appliance);
     door.position.set(lx, 0, 0);
     h.add(door);
-    // inner door bins (swing with the door)
+    // inner door bins (swing with the door; closed, they sit inside the body)
     const bins: BoxSpec[] = [];
     for (const f of [0.2, 0.45, 0.7]) {
       const yy = -doorH / 2 + doorH * f;
@@ -1134,14 +1347,15 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
     const bm = mesh(boxes(bins), mats.liner);
     bm.position.set(lx, 0, 0);
     h.add(bm);
-    // vertical bar handle on the free edge
+    // vertical bar handle on the free edge, standing off the door
     const free = hinge === "left" ? fw / 2 - 0.03 : -fw / 2 + 0.03;
     const L = Math.min(1.1, doorH * 0.62);
+    const hd = cmm(SBS.handleDepth);
     const bar = mesh(
       boxes([
-        [free - 0.009, -L / 2, 0.028, free + 0.009, L / 2, 0.042],
-        [free - 0.006, -L / 2 + 0.03, 0, free + 0.006, -L / 2 + 0.045, 0.028],
-        [free - 0.006, L / 2 - 0.045, 0, free + 0.006, L / 2 - 0.03, 0.028],
+        [free - 0.009, -L / 2, hd - 0.014, free + 0.009, L / 2, hd],
+        [free - 0.006, -L / 2 + 0.03, 0, free + 0.006, -L / 2 + 0.045, hd - 0.014],
+        [free - 0.006, L / 2 - 0.045, 0, free + 0.006, L / 2 - 0.03, hd - 0.014],
       ]),
       mats.brushed,
     );
@@ -1161,7 +1375,7 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
   leaf(ax0, split, "left", 0, true);
   leaf(split, ax1, "right", 0.1, false);
 
-  // bridge cabinet front(s)
+  // bridge cabinet front(s): flush with the column's fronts, the column's reveals
   if (y1 - bridge0 > 0.1) {
     const x0 = P;
     const x1 = w - P;
@@ -1170,14 +1384,21 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
       b.door(x0, mid, bridge0, y1, fz, "left", "bottom", 0.35);
       b.door(mid, x1, bridge0, y1, fz, "right", "bottom", 0.43);
     } else {
-      const fw = x1 - x0 - 2 * G;
-      const fh = y1 - bridge0 - 2 * G;
-      const h = b.holder("flap", (x0 + x1) / 2, y1 - G, fz, -1.68, 0.35);
-      const p = b.panel(h, fw, fh, 0, -fh / 2, (x0 + x1) / 2, (bridge0 + y1) / 2, fz);
-      b.grip(p, fw, fh, { edge: "bottom" });
+      // a lift-up flap; a tall bridge (a high column) gets two, so neither is taller than about 60 cm
+      const rows = y1 - bridge0 > 0.62 ? 2 : 1;
+      const rh = (y1 - bridge0) / rows;
+      for (let r = 0; r < rows; r++) {
+        const ya = bridge0 + r * rh;
+        const yb = ya + rh;
+        const fw = x1 - x0 - 2 * G;
+        const fh = yb - ya - 2 * G;
+        const h = b.holder("flap", (x0 + x1) / 2, yb - G, fz, -1.68, 0.35 + r * 0.1);
+        const p = b.panel(h, fw, fh, 0, -fh / 2, (x0 + x1) / 2, (ya + yb) / 2, fz);
+        b.grip(p, fw, fh, { edge: "bottom" });
+      }
     }
   }
-  m.anchor.set(w / 2, Math.min(1.4, aTop * 0.75), pd);
+  m.anchor.set(w / 2, Math.min(1.4, aTop * 0.75), zDoor);
 }
 
 function buildTall(b: Mod, includeBody: boolean): void {
@@ -1469,23 +1690,51 @@ function buildHeightExtras(b: Mod, includeBody: boolean): void {
   if (box && box.y1 - box.y0 > 0.1) {
     const y0 = box.y0 - dy;
     const y1 = box.y1 - dy;
-    if (includeBody) b.carcass(carcassBoxes(w, y0, y1 - y0, upper ? D.upperCarcass : D.carcass));
     const corner = m.slot.corner;
-    if (corner) {
-      // blind corner: the 5 cm filler beside the blind part, a door on the open part (as the unit below)
-      const blind = 0.35;
-      const fill = 0.05;
-      const doorW = w - blind - fill;
-      if (corner === "left") {
-        b.fixedPanel(blind + 0.0045, blind + fill - G, y0 + G, y1 - G, fz);
-        b.door(blind + fill, w, y0, y1, fz, "right", "bottom", 0.3);
-      } else {
-        b.fixedPanel(doorW + G, doorW + fill - 0.0045, y0 + G, y1 - G, fz);
-        b.door(0, doorW, y0, y1, fz, "left", "bottom", 0.3);
-      }
-    } else b.flap(y0, y1, fz, 0.3);
+    const shaped = corner && upper ? cornerFoot("upper", m.slot.type) : null;
+    if (shaped && shaped.shape !== "blind") {
+      // an L-shaped / diagonal corner wall unit: its top box follows both legs, a fixed front on each leg
+      const across = shaped.across / 100;
+      const dc = D.upperCarcass;
+      const right = corner === "right";
+      const X = (x: number) => (right ? w - x : x);
+      const bx = (x0: number, yy0: number, z0: number, x1: number, yy1: number, z1: number): BoxSpec =>
+        right ? [w - x1, yy0, z0, w - x0, yy1, z1] : [x0, yy0, z0, x1, yy1, z1];
+      if (includeBody) b.carcass([bx(0, y0, 0, w, y1, dc), bx(0, y0, dc, dc, y1, across)]);
+      b.fixedPanel(Math.min(X(UPPER_FACE + G), X(w - G)), Math.max(X(UPPER_FACE + G), X(w - G)), y0 + G, y1 - G, fz);
+      // the neighbour's leg: the same strip turned to face along wall A
+      const lb = across - UPPER_FACE - 2 * G;
+      const pb = b.fixedPanel(X(fz) - lb / 2, X(fz) + lb / 2, y0 + G, y1 - G, UPPER_FACE + G + lb / 2);
+      pb.rotation.y = right ? -Math.PI / 2 : Math.PI / 2;
+    } else {
+      if (includeBody) b.carcass(carcassBoxes(w, y0, y1 - y0, upper ? D.upperCarcass : D.carcass));
+      if (corner) {
+        // blind corner: the 5 cm filler beside the blind part, a door on the open part (as the unit below)
+        const blind = 0.35;
+        const fill = 0.05;
+        const doorW = w - blind - fill;
+        if (corner === "left") {
+          b.fixedPanel(blind + 0.0045, blind + fill - G, y0 + G, y1 - G, fz);
+          b.door(blind + fill, w, y0, y1, fz, "right", "bottom", 0.3);
+        } else {
+          b.fixedPanel(doorW + G, doorW + fill - 0.0045, y0 + G, y1 - G, fz);
+          b.door(0, doorW, y0, y1, fz, "left", "bottom", 0.3);
+        }
+      } else b.flap(y0, y1, fz, 0.3);
+    }
   }
-  if (h.cornice && h.cornice.y1 - h.cornice.y0 > 0.004) b.fixedPanel(0, w, h.cornice.y0 - dy + G, h.cornice.y1 - dy, fz);
+  if (h.cornice && h.cornice.y1 - h.cornice.y0 > 0.004) {
+    b.fixedPanel(0, w, h.cornice.y0 - dy + G, h.cornice.y1 - dy, fz);
+    // an L-shaped / diagonal corner wall unit: the strip runs on along the neighbour's leg
+    const corner = m.slot.corner;
+    const f = corner && upper ? cornerFoot("upper", m.slot.type) : null;
+    if (corner && f && f.shape !== "blind") {
+      const lb = f.across / 100 - UPPER_FACE;
+      const x = corner === "right" ? w - fz : fz;
+      const p = b.fixedPanel(x - lb / 2, x + lb / 2, h.cornice.y0 - dy + G, h.cornice.y1 - dy, UPPER_FACE + lb / 2);
+      p.rotation.y = corner === "right" ? -Math.PI / 2 : Math.PI / 2;
+    }
+  }
 }
 
 /** put every moving part back to its rest pose */

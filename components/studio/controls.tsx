@@ -189,6 +189,148 @@ export function Segmented<T extends string>({
   );
 }
 
+/* ------------------------------------------------------------------ chip radio (with options that are not available) */
+
+export interface RadioChip<T extends string | number> {
+  value: T;
+  label: ReactNode;
+  /** accessible name (defaults to the visible text) */
+  aria?: string;
+  /** a small second line under the label ("ne stane") */
+  sub?: string;
+  /** not available here: shown dimmed, skipped by the arrow keys, `why` in its tooltip */
+  disabled?: boolean;
+  why?: string;
+}
+
+/**
+ * Pill choices in a grid — a radio group (arrows move and pick, skipping options that are not available). For values
+ * like cm, kinds of seating, island functions.
+ */
+export function ChipRadio<T extends string | number>({
+  label,
+  labelledBy,
+  describedBy,
+  options,
+  value,
+  onChange,
+  cols,
+  className = "",
+}: {
+  label?: string;
+  labelledBy?: string;
+  describedBy?: string;
+  options: readonly RadioChip<T>[];
+  value: T | null;
+  onChange: (v: T) => void;
+  /** grid columns (default: one per option, at most 4) */
+  cols?: number;
+  className?: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const enabled = options.flatMap((o, i) => (o.disabled ? [] : [i]));
+  const cur = options.findIndex((o) => o.value === value);
+  const stop = cur >= 0 && !options[cur].disabled ? cur : (enabled[0] ?? -1);
+  const n = cols ?? Math.min(4, options.length);
+
+  const onKey = (e: KeyboardEvent, i: number) => {
+    const k = rovingIndex(e, Math.max(0, enabled.indexOf(i)), enabled.length);
+    if (k === null || !enabled.length) return;
+    e.preventDefault();
+    const j = enabled[k];
+    onChange(options[j].value);
+    refs.current[j]?.focus();
+  };
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      className={`grid gap-2 ${className}`}
+      style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}
+    >
+      {options.map((o, i) => {
+        const on = i === cur;
+        return (
+          <button
+            key={String(o.value)}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            aria-label={o.aria}
+            aria-disabled={o.disabled || undefined}
+            title={o.disabled ? o.why : undefined}
+            tabIndex={i === stop ? 0 : -1}
+            onClick={() => !o.disabled && onChange(o.value)}
+            onKeyDown={(e) => onKey(e, i)}
+            className={`flex min-h-10 flex-col items-center justify-center rounded-2xl border px-1.5 py-1.5 text-center text-[12.5px] font-medium leading-tight tabular-nums transition-colors duration-300 ease-premium ${
+              on
+                ? "border-accent/70 bg-accent/[0.1] text-fg"
+                : o.disabled
+                  ? "cursor-not-allowed border-white/[0.05] text-fg/30"
+                  : "border-white/[0.12] text-fg/75 hover:border-white/30 hover:text-fg"
+            }`}
+          >
+            <span>{o.label}</span>
+            {o.sub && <span className={`mt-0.5 text-[10px] font-normal leading-none ${on ? "text-accent" : "text-mut"}`}>{o.sub}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ small stepper (counts) */
+
+/** − value + for small counts (stools): the value is read out, the buttons say what they do */
+export function Stepper({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+  format = (v: number) => String(v),
+  hint,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+  format?: (v: number) => string;
+  hint?: string;
+}) {
+  const uid = useId();
+  const btn =
+    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/[0.12] text-fg/75 transition-colors duration-300 ease-premium hover:border-accent/70 hover:text-accent disabled:pointer-events-none disabled:opacity-30 select-none touch-manipulation";
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <p id={`${uid}-l`} className="min-w-0 text-[13px] leading-tight text-fg">
+          {label}
+        </p>
+        <div role="group" aria-labelledby={`${uid}-l`} className="flex items-center gap-1.5">
+          <button type="button" aria-label={`${label}: manje`} disabled={value <= min} className={btn} onClick={() => onChange(Math.max(min, value - 1))}>
+            <MinusIcon className="h-4 w-4" />
+          </button>
+          <output aria-live="polite" className="w-[86px] text-center font-display text-[15px] font-medium tabular-nums text-fg">
+            {format(value)}
+          </output>
+          <button type="button" aria-label={`${label}: više`} disabled={value >= max} className={btn} onClick={() => onChange(Math.min(max, value + 1))}>
+            <PlusIcon className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      {hint && <p className="mt-1.5 text-[12px] leading-snug text-mut">{hint}</p>}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ switch */
 
 export function Switch({
@@ -286,6 +428,7 @@ export function NumberField({
   unit = "cm",
   onChange,
   onActive,
+  onBeyond,
   className = "",
 }: {
   label: string;
@@ -298,6 +441,12 @@ export function NumberField({
   onChange: (v: number) => void;
   /** true while the field is hovered / focused (drives the schematic highlight) */
   onActive?: (on: boolean) => void;
+  /**
+   * the customer asks for more than `max` (types a bigger number, presses + or ↑ at the top): called with what they
+   * asked for instead of clamping; `stepped` = by the + button / arrow (then `v` = max + the step). The slider stays
+   * within min … max. Without it, + is disabled at the top and bigger numbers are clamped.
+   */
+  onBeyond?: (v: number, stepped: boolean) => void;
   className?: string;
 }) {
   const uid = useId();
@@ -305,14 +454,15 @@ export function NumberField({
   const lo = Math.min(min, max);
   const hi = Math.max(min, max);
   const set = (v: number) => onChange(clamp(Math.round(v), lo, hi));
+  const up = (v: number, stepped: boolean) => (v > hi && onBeyond ? onBeyond(Math.round(v), stepped) : set(v));
 
   const dec = useHoldRepeat((step) => set(step === 1 ? value - 1 : Math.ceil(value / step) * step - step));
-  const inc = useHoldRepeat((step) => set(step === 1 ? value + 1 : Math.floor(value / step) * step + step));
+  const inc = useHoldRepeat((step) => up(step === 1 ? value + 1 : Math.floor(value / step) * step + step, true));
 
   const commitDraft = () => {
     if (draft === null) return;
     const n = Number(draft);
-    if (draft !== "" && Number.isFinite(n)) set(n);
+    if (draft !== "" && Number.isFinite(n)) up(n, false);
     setDraft(null);
   };
 
@@ -363,7 +513,7 @@ export function NumberField({
                 } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
                   e.preventDefault();
                   setDraft(null);
-                  set(value + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1));
+                  up(value + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1), true);
                 }
               }}
               className="w-full bg-transparent pl-3.5 pr-8 text-right font-display text-[15px] font-medium tabular-nums text-fg outline-none focus-visible:outline-none"
@@ -372,7 +522,7 @@ export function NumberField({
               {unit}
             </span>
           </div>
-          <button type="button" aria-label={`${label}: povećaj`} disabled={value >= hi} className={stepBtn} {...inc}>
+          <button type="button" aria-label={`${label}: povećaj`} disabled={value >= hi && !onBeyond} className={stepBtn} {...inc}>
             <PlusIcon className="h-4 w-4" />
           </button>
         </div>

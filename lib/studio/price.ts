@@ -66,8 +66,84 @@ export interface PriceBreakdown {
   finishes: number;
   led: number;
   install: number;
+  /** island / peninsula extras (islandCost: fixed + bar build + hood mounting); its slab and bar top are in `worktop`, its outer row and end panels in `cabinets` */
   island: number;
   total: number;
+}
+
+/**
+ * What the island / peninsula costs beyond its cabinets (KitchenConfig.islandSpec, plan.ts IslandPlan) — price.ts adds it
+ * to the categories named below, lib/admin/quote-from-config.ts itemises it. All rates: catalog.extras (TODO(vlasnik)).
+ * For the island of every older link exactly what price.ts always counted: the slab (1,5 m of worktop per metre) and two
+ * waterfall sides (0,8 m each per metre of height), plus catalog.extras.islandFixed.
+ */
+export interface IslandCost {
+  /** metres of worktop (KitchenConfig.top) the slab and its waterfall sides count as → `worktop` */
+  slabM: number;
+  /** of which the waterfall sides */
+  waterfallM: number;
+  /** bar / table top in its own top material → `worktop` (EUR) */
+  barTop: number;
+  /** catalog.tops id of that top (null without a bar) */
+  barTopId: string | null;
+  /** raised bar: upstand, brackets and fitting; table: fitting → `island` (EUR) */
+  barBuild: number;
+  /** the outer row of push-to-open cabinets (deeper body) → `cabinets` (EUR) */
+  backRow: number;
+  /** front-coloured end panels instead of waterfall sides → `cabinets` (EUR) */
+  endPanels: number;
+  /** catalog.extras.islandFixed → `island` */
+  fixed: number;
+  /** mounting the ceiling hood above the island hob → `island` (EUR) */
+  hood: number;
+}
+
+/** the slab depth every older island had (worktop + 35 cm overhang): the island slab's 1,5 m per metre is for this depth */
+const STD_SLAB_DEPTH = DIM.worktopDepth + DIM.islandOverhang;
+
+/** the island / peninsula extras of a plan (null without one) */
+export function islandCost(plan: KitchenPlan): IslandCost | null {
+  const I = plan.island;
+  if (!I) return null;
+  const c = plan.cfg;
+  const x = catalog.extras;
+  const m = (cm: number) => cm / 100;
+  const islandFront = frontDef(frontFor(c, "island")) ?? catalog.fronts[0];
+  // a deeper / shallower slab costs in proportion (the older islands' 98,5 cm deep slab is 1,5 m per metre)
+  const slabM = I.slab.reduce((sum, r) => sum + m(r.to - r.from) * ((r.z1 - r.z0) / STD_SLAB_DEPTH) * 1.5, 0);
+  const wf = I.waterfalls[0];
+  const waterfallM = wf ? I.waterfalls.length * m(plan.heights.worktop) * 0.8 * ((wf.z1 - wf.z0) / STD_SLAB_DEPTH) : 0;
+  let barTop = 0;
+  let barBuild = 0;
+  const b = I.bar;
+  if (b) {
+    const t = topDef(b.top) ?? catalog.tops[0];
+    const len = m(b.to - b.from);
+    const depthK = b.depth / DIM.worktopDepth;
+    if (b.kind === "raised") {
+      barTop = t.pricePerMeter * len * depthK;
+      barBuild = islandFront.pricePerMeter * ZONE_FACTOR.island * x.barUpstandShare * len + b.brackets.length * x.barBracket + x.barFixed;
+    } else {
+      // the top and its two legs (each like a waterfall side of the table's height)
+      barTop = t.pricePerMeter * (len + b.legs.length * m(b.height) * 0.8) * depthK;
+      barBuild = x.tableFixed;
+    }
+  }
+  const backRow = I.backRow
+    ? islandFront.pricePerMeter * ZONE_FACTOR.island * m(I.backRow.to - I.backRow.from) * x.islandBackRowShare * (I.backRow.depth / 60) +
+      I.backRow.doors.length * x.islandBackRowLatch
+    : 0;
+  return {
+    slabM: slabM + waterfallM,
+    waterfallM,
+    barTop,
+    barTopId: b ? b.top : null,
+    barBuild,
+    backRow,
+    endPanels: I.endPanels.length * x.islandEndPanel,
+    fixed: x.islandFixed,
+    hood: I.hood ? x.islandHoodInstall : 0,
+  };
 }
 
 /** m² of backsplash the engine draws for this plan (every piece starts on the worktop surface) */
@@ -118,13 +194,19 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
   for (const c of plan.heights.cornices) cabinets += front(c.zone).pricePerMeter * ZONE_FACTOR.filler * m(c.to - c.from);
 
   let worktopM = plan.runs.reduce((sum, r) => sum + (r.worktop ? m(r.worktop.to - r.worktop.from) : 0), 0);
-  let islandCost = 0;
-  if (plan.island) {
-    // slab (deeper than a wall worktop, ~1.5x) + two waterfall sides (~0.9 m each)
-    worktopM += m(plan.island.length) * 1.5 + 2 * m(plan.heights.worktop) * 0.8;
-    islandCost = catalog.extras.islandFixed;
+  let islandTotal = 0;
+  let barTop = 0;
+  let backRowM = 0;
+  const ic = islandCost(plan);
+  if (ic) {
+    // slab (deeper than a wall worktop, ~1.5x) + waterfall sides (~0.9 m each); bar / table top; outer row, end panels
+    worktopM += ic.slabM;
+    barTop = ic.barTop;
+    cabinets += ic.backRow + ic.endPanels;
+    islandTotal = ic.fixed + ic.barBuild + ic.hood;
+    if (plan.island?.backRow) backRowM = m(plan.island.backRow.to - plan.island.backRow.from);
   }
-  const worktop = top.pricePerMeter * worktopM;
+  const worktop = top.pricePerMeter * worktopM + barTop;
   // the top's price per m² (a running metre of worktop is DIM.worktopDepth deep) times the backsplash share
   const backsplash = (top.pricePerMeter / m(DIM.worktopDepth)) * catalog.extras.backsplashShare * backsplashArea(plan);
   const handles = handle.pricePerMeter * fronted;
@@ -136,9 +218,9 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
   finishes += (finishDef("plinths", c.finish?.plinth ?? FINISH_DEFAULTS.plinth)?.priceAdd ?? 0) * (run.base + run.tall + run.island);
 
   const led = c.led ? catalog.extras.ledPerMeter * Math.max(run.upper, 0.6) + catalog.extras.ledFixed : 0;
-  const install = catalog.extras.installPerMeter * (run.base + run.tall + run.island + run.upper * 0.5);
-  const total = cabinets + worktop + backsplash + handles + mechanisms + finishes + led + install + islandCost;
-  return { cabinets, worktop, backsplash, handles, mechanisms, finishes, led, install, island: islandCost, total };
+  const install = catalog.extras.installPerMeter * (run.base + run.tall + run.island + run.upper * 0.5 + backRowM * 0.5);
+  const total = cabinets + worktop + backsplash + handles + mechanisms + finishes + led + install + islandTotal;
+  return { cabinets, worktop, backsplash, handles, mechanisms, finishes, led, install, island: islandTotal, total };
 }
 
 /** Rough price range in EUR, rounded to 100 € (about ±8 %). */

@@ -1,8 +1,9 @@
 "use client";
 
 /**
- * "Zidovi" → Visine: the ceiling, "Kuhinja do stropa", the worktop height and, folded away, heights to measure
- * (wall-unit height, top of the tall column).
+ * "Zidovi" → Strop i visine: the ceiling, right under it the top of the tall column (why it cannot go higher — "najviše
+ * 257 cm, strop je 260 cm" — and, when the customer asks for more, "Podigni strop na X cm": edit.ts raiseCeilingFor),
+ * "Kuhinja do stropa", the worktop height and, folded away, the wall-unit height.
  *
  * Every change goes through lib/studio/edit.ts (setCeiling, setHeights, heightChoices), so the 3D view, the price,
  * the summary and the link show exactly what the planner fitted under the ceiling. Height changes are undo steps
@@ -11,11 +12,12 @@
  * controls until the room changes again — <WallsStep> keeps that note and leaves it out of its own list.
  */
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { heightChoices, setCeiling, setHeights } from "@/lib/studio/edit";
+import { heightChoices, setCeiling, setHeights, type HeightChoices } from "@/lib/studio/edit";
 import { DIM, limitsFor, planKitchen, type HeightPlan } from "@/lib/studio/plan";
 import type { HeightSpec, KitchenConfig } from "@/lib/studio/types";
 import { Disclosure, Notes, NumberField, Segmented, ToggleRow, rovingIndex } from "../controls";
-import { HeightIcon, ResetIcon } from "../icons";
+import { HeightIcon, NoteIcon, ResetIcon } from "../icons";
+import { raiseForTall } from "../room";
 import type { StepEditOptions, StepProps } from "./types";
 
 const r = Math.round;
@@ -86,10 +88,16 @@ export function HeightsSection({
     if (edit(res, opts)) onNotes(res.notes, res.cfg);
   };
 
+  /** "Podigni strop na X cm": the ceiling for a column up to `wish`, and the column up to it — one undo step */
+  const raiseFor = (wish: number) => {
+    const r = raiseForTall(cfg, wish);
+    if (r && edit(r.result, { say: `Strop je podignut na ${r.ceiling} cm.` })) onNotes(r.notes, r.result.cfg);
+  };
+
   const ds = choices.doStropa;
   const dsHint = `${upperText(ds)}${hasTall ? `, visoki stup do ${r(ds.tallTop)} cm` : ""}`;
   // the folded header: what the kitchen has now, short enough for a phone
-  const nowText = `${MODE_NAME[choices.mode]}: ${upperText(cur, true)}${hasTall ? ` · stup ${r(cur.tallTop)} cm` : ""}`;
+  const nowText = `${MODE_NAME[choices.mode]}: ${upperText(cur, true)}`;
 
   // wall-unit heights: the drawn one is checked (not in "do stropa", where the row follows the ceiling)
   const upper = choices.upper.map((u) => ({
@@ -113,6 +121,16 @@ export function HeightsSection({
           onChange={setCeil}
           onActive={onCeilingActive}
         />
+
+        {hasTall && choices.mode !== "do-stropa" && (
+          <TallTopField
+            ceiling={cfg.ceiling}
+            tall={choices.tallTop}
+            custom={custom}
+            onChange={(v) => change({ mode: "custom", tallTop: v }, { coalesce: "heights-tall" })}
+            onRaise={raiseFor}
+          />
+        )}
 
         <ToggleRow
           prominent
@@ -170,16 +188,6 @@ export function HeightsSection({
                 </p>
               )}
             </div>
-            {hasTall && (
-              <NumberField
-                label="Vrh visokog stupa"
-                hint="Od poda do vrha visokih elemenata (hladnjak, pećnica, ostava)."
-                value={choices.tallTop.value}
-                min={choices.tallTop.min}
-                max={choices.tallTop.max}
-                onChange={(v) => change({ mode: "custom", tallTop: v }, { coalesce: "heights-tall" })}
-              />
-            )}
             {custom && (
               <button
                 type="button"
@@ -198,6 +206,85 @@ export function HeightsSection({
       <div aria-live="polite">{fresh.length > 0 && <Notes items={fresh} className="mt-5" />}</div>
       <Notes items={kept} className={fresh.length ? "mt-2" : "mt-5"} />
     </>
+  );
+}
+
+/**
+ * The top of the tall column, right under the ceiling field: its maximum and why ("strop je 260 cm"); asking for more
+ * (typing it, + at the top) keeps the wish and offers to raise the ceiling for it.
+ */
+function TallTopField({
+  ceiling,
+  tall,
+  custom,
+  onChange,
+  onRaise,
+}: {
+  ceiling: number;
+  tall: HeightChoices["tallTop"];
+  custom: boolean;
+  onChange: (v: number) => void;
+  onRaise: (wish: number) => void;
+}) {
+  const [wish, setWish] = useState<number | null>(null);
+  // a wish the ceiling now allows (raised by hand) is no longer one; under the highest ceiling there is nothing to raise
+  const over = wish !== null && wish > tall.max && tall.max < tall.ceilingMax ? Math.min(wish, tall.ceilingMax) : null;
+  const need = over !== null ? over + (ceiling - tall.max) : 0;
+  const atTop = over !== null && over >= tall.ceilingMax;
+  return (
+    <div>
+      <NumberField
+        label="Vrh visokog stupa"
+        value={tall.value}
+        min={tall.min}
+        max={tall.max}
+        onChange={(v) => {
+          setWish(null);
+          onChange(v);
+        }}
+        onBeyond={(v, stepped) => setWish((w) => (stepped && w !== null && w > tall.max ? w + (v - tall.value) : v))}
+      />
+      <div aria-live="polite">
+        {over === null ? (
+          <p className="mt-1.5 text-[12px] leading-snug text-mut">
+            Od poda do vrha hladnjaka, pećnice i ostave{custom ? "" : " — promjenom prelazite na visine po mjeri"}.{" "}
+            <span className="tabular-nums text-fg/75">
+              Najviše {tall.max} cm — strop je {ceiling} cm.
+            </span>
+          </p>
+        ) : (
+          <div className="mt-2.5 rounded-xl border border-accent/25 bg-accent/[0.06] px-3.5 py-3 text-[12.5px] leading-relaxed text-fg/85">
+            <p className="flex gap-2.5">
+              <NoteIcon className="mt-px h-4 w-4 shrink-0 text-accent" />
+              <span>
+                {atTop
+                  ? `Visoki stup ide najviše do ${tall.ceilingMax} cm, uz najviši strop koji primamo.`
+                  : `Za stup do ${over} cm strop mora biti visok barem ${need} cm — sada je ${ceiling} cm.`}
+              </span>
+            </p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 pl-[26px]">
+              <button
+                type="button"
+                onClick={() => {
+                  setWish(null);
+                  onRaise(over);
+                }}
+                className="inline-flex min-h-9 items-center rounded-full bg-accent px-4 text-[12.5px] font-semibold tracking-wide text-ink transition-colors duration-300 ease-premium hover:bg-fg"
+              >
+                Podigni strop na {need} cm
+              </button>
+              <button
+                type="button"
+                onClick={() => setWish(null)}
+                className="text-[12.5px] font-medium text-mut transition-colors duration-300 hover:text-fg"
+              >
+                Ostavi {tall.max} cm
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
