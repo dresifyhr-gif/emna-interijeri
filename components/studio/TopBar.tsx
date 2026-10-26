@@ -8,6 +8,7 @@ import { Segmented } from "./controls";
 import { useReducedMotionSafe } from "./hooks";
 import { CloseIcon, ListIcon, MoonIcon, SunIcon } from "./icons";
 import { EASE, STEPS } from "./meta";
+import { PdfButton, type PdfExportApi } from "./PdfExport";
 
 export const TOPBAR_H = { desktop: 72, mobile: 56 } as const;
 
@@ -18,6 +19,7 @@ export function TopBar({
   onMood,
   controls,
   onSummary,
+  pdf,
 }: {
   desktop: boolean;
   step: number;
@@ -26,6 +28,8 @@ export function TopBar({
   /** show mood / summary once the studio is ready */
   controls: boolean;
   onSummary: () => void;
+  /** "Preuzmi PDF" (also without 3D — the PDF then has no 3D pages); null = not yet */
+  pdf?: PdfExportApi | null;
 }) {
   // known only after mount (hooks.ts useReducedMotionSafe): the server and the hydrating render agree
   const reduce = useReducedMotionSafe();
@@ -68,6 +72,15 @@ export function TopBar({
       )}
 
       <div className="pointer-events-auto flex items-center gap-2">
+        {pdf && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: reduce ? 0 : 0.9, ease: EASE }}
+          >
+            <PdfButton pdf={pdf} variant={desktop ? "pill" : "icon"} />
+          </motion.div>
+        )}
         <motion.div {...fade} className={`flex items-center gap-2 ${controls ? "" : "pointer-events-none"}`} inert={!controls}>
           {desktop ? (
             <Segmented

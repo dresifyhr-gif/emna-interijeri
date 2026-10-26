@@ -435,6 +435,9 @@ export interface QuoteLeadInfo {
   status: LeadStatus;
   source: string;
   snapshotPath: string | null;
+  /** the studio kitchen (leads.config) — for "Preuzmi PDF kuhinje" on the quote (getQuoteDetail fills it) */
+  config?: Record<string, unknown> | null;
+  configUrl?: string | null;
 }
 
 export interface QuoteDetail {
@@ -453,7 +456,16 @@ export async function getQuoteDetail(id: string): Promise<QuoteDetail | null> {
   const [row] = await db
     .select({
       quote: quotes,
-      lead: { id: leads.id, number: leads.number, name: leads.name, status: leads.status, source: leads.source, snapshotPath: leads.snapshotPath },
+      lead: {
+        id: leads.id,
+        number: leads.number,
+        name: leads.name,
+        status: leads.status,
+        source: leads.source,
+        snapshotPath: leads.snapshotPath,
+        config: leads.config,
+        configUrl: leads.configUrl,
+      },
     })
     .from(quotes)
     .leftJoin(leads, eq(leads.id, quotes.leadId))

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { LinkButton } from "@/components/ui/Button";
 import { CopyLinkButton } from "./CopyLink";
 import { EASE } from "./meta";
+import { PdfButton, type PdfExportApi } from "./PdfExport";
 import type { SentInfo } from "./useStudioLead";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -13,7 +14,18 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), texta
  * Thank-you screen after the API confirmed the send. The kitchen stays visible behind it.
  * A real modal: <Studio> makes everything behind it inert, Tab stays inside, Esc closes it.
  */
-export function SuccessOverlay({ sent, getUrl, onContinue }: { sent: SentInfo; getUrl: () => string; onContinue: () => void }) {
+export function SuccessOverlay({
+  sent,
+  getUrl,
+  pdf,
+  onContinue,
+}: {
+  sent: SentInfo;
+  getUrl: () => string;
+  /** "Preuzmi PDF" — the kitchen they just sent, to keep */
+  pdf?: PdfExportApi;
+  onContinue: () => void;
+}) {
   const reduce = Boolean(useReducedMotion());
   const dialogRef = useRef<HTMLDivElement>(null);
   /** what had focus before the dialog (the send button) — focus goes back there when it closes */
@@ -115,8 +127,9 @@ export function SuccessOverlay({ sent, getUrl, onContinue }: { sent: SentInfo; g
           <ConfirmationLine sent={sent} /> Link na kuhinju možete spremiti i otvoriti kad god želite.
         </p>
 
-        <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <CopyLinkButton getUrl={getUrl} variant="accent" block />
+          {pdf && <PdfButton pdf={pdf} label="Preuzmi PDF" />}
           <LinkButton href="/" variant="outline" arrow className="py-3">
             Natrag na stranicu
           </LinkButton>

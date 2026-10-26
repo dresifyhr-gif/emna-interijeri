@@ -8,6 +8,7 @@ import { site, telHref, waHref } from "@/lib/site";
 import { Fill, showTodos } from "@/components/site/Fill";
 import { RadioGrid, SectionLabel } from "../controls";
 import { CopyLinkButton } from "../CopyLink";
+import { PdfButton, type PdfExportApi } from "../PdfExport";
 import { ChevronUp, Spinner } from "../icons";
 import { EASE, TIMELINES, eur } from "../meta";
 import { SummaryList } from "../SummaryList";
@@ -23,9 +24,11 @@ export interface SendStepProps extends StepProps {
   noEngine: boolean;
   getUrl: () => string;
   fieldId: (f: LeadField | "timeline" | "hp") => string;
+  /** "Preuzmi PDF kuhinje" */
+  pdf: PdfExportApi;
 }
 
-export function SendStep({ lead, summary, price, preview, noEngine, getUrl, fieldId, compact }: SendStepProps) {
+export function SendStep({ lead, summary, price, preview, noEngine, getUrl, fieldId, compact, pdf }: SendStepProps) {
   const reduce = Boolean(useReducedMotion());
   const [allLines, setAllLines] = useState(false);
   const { values, errors, status, update, blur, submit } = lead;
@@ -90,6 +93,18 @@ export function SendStep({ lead, summary, price, preview, noEngine, getUrl, fiel
           <ChevronUp className={`h-3.5 w-3.5 transition-transform duration-300 ${allLines ? "" : "rotate-180"}`} />
         </button>
       )}
+
+      {/* ---------- the kitchen as a PDF */}
+      <PdfButton
+        pdf={pdf}
+        label="Preuzmi PDF kuhinje"
+        hint={
+          noEngine
+            ? "Tlocrt, nacrti zidova s kotama, popis elemenata i materijali — za vas ili za razgovor s nama."
+            : "3D prikazi, tlocrt, nacrti zidova s kotama, popis elemenata i materijali — za vas ili za razgovor s nama."
+        }
+        className="mt-6"
+      />
 
       {/* ---------- form */}
       <SectionLabel className="mt-9">Vaši podaci</SectionLabel>

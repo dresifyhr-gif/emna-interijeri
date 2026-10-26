@@ -55,6 +55,7 @@ import { fitToPlanner } from "./limits";
 import { EASE, LAST_STEP, STEPS, clamp, columnSlots, eur, islandWord, resetTarget, runName, stepIndex } from "./meta";
 import { isTyping, type Insets } from "./overlay";
 import { DesktopPanel, MobileSheet, MobileSummary, PANEL_GAP, PANEL_W } from "./Panel";
+import { usePdfExport } from "./PdfExport";
 import { Segmented } from "./controls";
 import { STEP_PANEL_ID, stepTabId } from "./StepNav";
 import { StudioLoader } from "./StudioLoader";
@@ -867,6 +868,21 @@ export function Studio() {
   const lead = useStudioLead({ getSnapshot, fieldId, getPayloadExtras });
   const thanks = lead.status === "success" && lead.sent ? lead.sent : null;
 
+  /* ---------------------------------------------------------------- PDF */
+
+  // "Preuzmi PDF": the kitchen as it is now, its pictures from the running 3D view (none without WebGL); after the
+  // inquiry went out, the customer's name goes on the cover. lib/pdf loads only when an export starts.
+  const pdf = usePdfExport(
+    () => ({
+      source: "studio",
+      cfg: sanitizeConfig(cfg),
+      configUrl: `${origin}${studioPath(cfg)}`,
+      pictures: { engine: status === "ready" ? apiRef.current : null },
+      preparedFor: thanks ? lead.values.name.trim() || null : null,
+    }),
+    setAnnounce,
+  );
+
   // the keyboard listeners registered once call the latest handlers
   useEffect(() => {
     keys.current = { remove: removeSelected, undo: undoStack.length && !thanks ? undo : null };
@@ -954,6 +970,7 @@ export function Studio() {
                 noEngine={failed}
                 getUrl={getUrl}
                 fieldId={fieldId}
+                pdf={pdf}
               />
             )}
           </div>
@@ -996,6 +1013,7 @@ export function Studio() {
     getUrl,
     shown: uiShown,
     overlay: editor,
+    pdf,
   };
 
   const loading = status === "loading" && !uiShown;
@@ -1025,6 +1043,7 @@ export function Studio() {
           mood={mood}
           onMood={setMood}
           controls={uiShown && !failed}
+          pdf={uiShown ? pdf : null}
           onSummary={() => {
             if (selId) closeEditor();
             setSummaryOpen((o) => !o);
@@ -1196,7 +1215,7 @@ export function Studio() {
         )}
 
         <AnimatePresence>
-          {!desktop && summaryOpen && <MobileSummary key="summary" summary={summary} price={price} getUrl={getUrl} onClose={() => setSummaryOpen(false)} />}
+          {!desktop && summaryOpen && <MobileSummary key="summary" summary={summary} price={price} getUrl={getUrl} pdf={pdf} onClose={() => setSummaryOpen(false)} />}
         </AnimatePresence>
 
         {/* loading veil */}
@@ -1214,7 +1233,7 @@ export function Studio() {
       </div>
 
       <AnimatePresence>
-        {thanks && <SuccessOverlay key="success" sent={thanks} getUrl={getUrl} onContinue={lead.dismissSuccess} />}
+        {thanks && <SuccessOverlay key="success" sent={thanks} getUrl={getUrl} pdf={pdf} onContinue={lead.dismissSuccess} />}
       </AnimatePresence>
 
       <p className="sr-only" role="status" aria-live="polite">

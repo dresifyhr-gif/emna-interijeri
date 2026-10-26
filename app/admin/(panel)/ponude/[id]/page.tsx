@@ -7,6 +7,7 @@ import { DeleteDraftForm, DuplicateQuoteForm, QuoteSharePanel, QuoteStatusPanel 
 import { QuoteDocument } from "@/components/admin/quotes/QuoteDocument";
 import { QuoteEditor } from "@/components/admin/quotes/QuoteEditor";
 import { IconPrint } from "@/components/admin/quotes/icons";
+import { LeadPdfButton } from "@/components/admin/leads/LeadPdfButton";
 import { isQuoteLocked } from "@/components/admin/quotes/model";
 import { adminFileUrl } from "@/lib/admin/files";
 import { formatLongDate } from "@/lib/admin/format";
@@ -15,7 +16,9 @@ import { getCompanyInfo, getQuoteDetail, publicQuoteUrl, toDocumentData, toFormV
 import { requireAdmin } from "@/lib/auth/session";
 import { dbErrorLabel } from "@/lib/db";
 import { isValidEmail } from "@/lib/lead-client";
+import { normalizeCompany } from "@/lib/pdf/company";
 import { site } from "@/lib/site";
+import { PRICES_CONFIRMED } from "@/lib/studio/catalog";
 import { changeQuoteStatusAction, deleteQuoteAction, duplicateQuoteAction, saveQuoteAction, sendQuoteEmailAction } from "../actions";
 
 export const metadata: Metadata = { title: "Ponuda" };
@@ -122,6 +125,22 @@ export default async function QuotePage({ params }: { params: Params }) {
           <Link href={`/admin/upiti/${lead.id}`} className="mt-2 inline-block text-[12.5px] font-medium text-mut transition-colors hover:text-accent">
             Otvori upit
           </Link>
+          {lead.config && typeof lead.config === "object" && (
+            // the kitchen as a PDF to send along with this quote — without the studio's rough price (the quote has the real one)
+            <LeadPdfButton
+              className="mt-4"
+              size="sm"
+              withOptions={false}
+              defaultPrice={false}
+              config={lead.config}
+              configUrl={lead.configUrl && /^https?:\/\//i.test(lead.configUrl) ? lead.configUrl : null}
+              leadNumber={lead.number}
+              customerName={q.customerName || lead.name}
+              snapshotUrl={lead.snapshotPath ? adminFileUrl(lead.snapshotPath) : null}
+              company={normalizeCompany(company)}
+              pricesConfirmed={PRICES_CONFIRMED}
+            />
+          )}
         </Card>
       )}
       {status === "nacrt" && (

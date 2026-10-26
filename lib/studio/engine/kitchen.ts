@@ -105,6 +105,12 @@ export interface KitchenRT {
   /** framing box (world): the cabinets along the room's walls (lights, fog, the sweep) */
   box: THREE.Box3;
   /**
+   * the corners (world) of the boxes the kitchen is made of — each run's cabinets (where they stand on the wall, up to
+   * the wall units), the island with its seats: a tighter fit than `box`, which for an L / U spans the bare floor between
+   * the runs (StudioEngineApi.snapshotViews frame "kitchen")
+   */
+  boxPoints: THREE.Vector3[];
+  /**
    * the studio's framing box (world): every room wall over its whole length, from the floor up to the room labels, the
    * floor in front of the cabinets out to the kitchen labels, the island with its seats
    */
@@ -355,6 +361,7 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     windowLight: null,
     timeline: tl,
     box: new THREE.Box3(),
+    boxPoints: [],
     frame: new THREE.Box3(),
     room: new THREE.Box3(),
     assembled: 0,
@@ -768,9 +775,15 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
   const addLocal = (obj: THREE.Object3D, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) => {
     for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [z0, z1]) box.expandByPoint(obj.localToWorld(pt.set(x, y, z)));
   };
+  const points: THREE.Vector3[] = [];
+  const addPoints = (obj: THREE.Object3D, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) => {
+    for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [z0, z1]) points.push(obj.localToWorld(new THREE.Vector3(x, y, z)));
+  };
   for (const r of plan.runs) {
     const run = K.runs.get(r.wall)!;
     addLocal(run.group, 0, run.length, 0, Math.min(ceil, ut + 0.12), 0, 0.62);
+    const span = r.cabinets ?? r.kitchen;
+    addPoints(run.group, cm(span.from), cm(span.to), 0, Math.min(ceil, ut + 0.04), 0, 0.62);
   }
   if (plan.island && islandGroup) {
     const I = plan.island;
@@ -780,8 +793,10 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     const endR = I.seats.some((st) => st.x > I.length) ? 0.35 : 0;
     const y1 = Math.max(WORK_Y, I.bar ? cm(I.bar.height) : 0);
     addLocal(islandGroup, ext.x0 - endL, ext.x1 + endR, 0, y1, ext.z0 - 0.35, 0.64);
+    addPoints(islandGroup, ext.x0 - endL, ext.x1 + endR, 0, y1, ext.z0 - 0.35, 0.64);
   }
   K.box = box;
+  K.boxPoints = points;
   // the studio frames the room: every wall over its whole length up to the room labels, the floor out to the kitchen
   // labels in front of the cabinets, the island with its seats
   const frame = box.clone();

@@ -1172,6 +1172,15 @@ export const PaletteIcon = (p: P) => (
   </Svg>
 );
 
+/** a document with a fold and a down arrow — "Preuzmi PDF" */
+export const PdfIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5Z" {...line} />
+    <path d="M13.5 3.5v5h5" {...line} />
+    <path d="M12 11v6M9.5 14.75 12 17.25l2.5-2.5" {...line} />
+  </Svg>
+);
+
 export function Spinner({ className = "" }: { className?: string }) {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" className={`animate-spin ${className}`}>

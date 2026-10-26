@@ -19,6 +19,7 @@ import { CopyLinkButton } from "./CopyLink";
 import { useReducedMotionSafe } from "./hooks";
 import { ChevronLeft, ChevronUp, CloseIcon } from "./icons";
 import { EASE, STEPS } from "./meta";
+import { PdfButton, type PdfExportApi } from "./PdfExport";
 import { PriceBlock } from "./Price";
 import { StepNav } from "./StepNav";
 import { SummaryList } from "./SummaryList";
@@ -40,6 +41,8 @@ interface ShellProps {
   shown: boolean;
   /** shown over the shell instead of the steps (the element editor) */
   overlay?: ReactNode;
+  /** "Preuzmi PDF" in the summary */
+  pdf?: PdfExportApi;
 }
 
 /* ------------------------------------------------------------------ nav buttons */
@@ -96,6 +99,7 @@ export function DesktopPanel({
   onSummary,
   scrollRef,
   overlay,
+  pdf,
 }: ShellProps & {
   summaryOpen: boolean;
   onSummary: (open: boolean) => void;
@@ -151,7 +155,10 @@ export function DesktopPanel({
                   </button>
                 </div>
                 <SummaryList lines={summary} className="mt-3" />
-                <CopyLinkButton getUrl={getUrl} variant="quiet" className="mt-4" />
+                <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
+                  <CopyLinkButton getUrl={getUrl} variant="quiet" />
+                  {pdf && <PdfButton pdf={pdf} variant="quiet" label="Preuzmi PDF kuhinje" />}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -325,11 +332,13 @@ export function MobileSummary({
   summary,
   price,
   getUrl,
+  pdf,
   onClose,
 }: {
   summary: string[];
   price: { low: number; high: number };
   getUrl: () => string;
+  pdf?: PdfExportApi;
   onClose: () => void;
 }) {
   const reduce = useReducedMotionSafe();
@@ -355,7 +364,10 @@ export function MobileSummary({
       </div>
       <PriceBlock price={price} compact className="mt-3" />
       <SummaryList lines={summary} className="mt-3" />
-      <CopyLinkButton getUrl={getUrl} className="mt-5" />
+      <div className="mt-5 flex flex-col gap-3">
+        <CopyLinkButton getUrl={getUrl} block className="[&>button]:w-full" />
+        {pdf && <PdfButton pdf={pdf} label="Preuzmi PDF kuhinje" />}
+      </div>
     </motion.div>
   );
 }

@@ -559,6 +559,63 @@ export interface StudioEngineOptions {
   onSurfaceClick?: (hit: SurfaceHit) => void;
 }
 
+/** the camera presets of StudioEngineApi.snapshotViews (the PDF export's pictures) */
+export type SnapshotViewId = "perspektiva-desno" | "perspektiva-lijevo" | "frontalno" | "pticja-perspektiva";
+
+/**
+ * A camera for a picture of the kitchen: the angles around the kitchen's centre (the engine frames the whole kitchen in
+ * the picture at that angle). A side view the room's walls would block (the camera behind a wall of an L / U kitchen)
+ * turns towards the layout's own default view until every wall is in front of the camera.
+ */
+export interface SnapshotView {
+  id: string;
+  /** Croatian caption ("Perspektiva desno") */
+  label: string;
+  /** azimuth (radians): 0 = facing wall A from the room, + = the camera to the right, − = to the left */
+  az: number;
+  /**
+   * `az` is counted from the layout's own studio angle (the one the studio opens at, mirrored for a left peninsula)
+   * instead of from wall A — one camera that suits every layout (the PDF's cover); absent = from wall A
+   */
+  home?: boolean;
+  /** elevation above the horizon (radians): 0.1 ≈ eye level, 1.1 ≈ from above */
+  el: number;
+}
+
+// the presets themselves (SNAPSHOT_VIEWS) live in ./snapshot-views — a runtime value here would ship in the homepage's
+// and the studio's first-load JS, which import this file for its types and DEFAULT_CONFIG
+
+export interface SnapshotViewsOptions {
+  /** the pictures, in this order (a preset id or a camera of its own); absent = the four presets */
+  views?: (SnapshotViewId | SnapshotView)[];
+  /** picture size in px; absent = 1600 × 1000 (16:10) */
+  width?: number;
+  height?: number;
+  /** JPEG quality 0..1; absent = 0.88 */
+  quality?: number;
+  /**
+   * what each picture frames: "room" = every wall of the room over its whole length, as the studio frames it (absent);
+   * "kitchen" = only the kitchen — its cabinets up to the wall units, the island with its seats — so it fills the picture
+   * and the room's walls run out of it (a product shot)
+   */
+  frame?: "room" | "kitchen";
+  /**
+   * the part of the picture (fractions 0..1 from the left / top) the framed box has to fit in — the camera aims at its
+   * centre, so a picture can leave room for a title or a fade; absent = nearly all of it (3–5 % margins)
+   */
+  region?: { x0: number; x1: number; y0: number; y1: number };
+}
+
+/** one picture of StudioEngineApi.snapshotViews */
+export interface ViewSnapshot {
+  id: string;
+  label: string;
+  /** "data:image/jpeg;base64,…" */
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 export interface StudioEngineApi {
   /** diff-aware: material/handle changes animate in place, geometry changes re-assemble */
   setConfig(cfg: KitchenConfig): void;
@@ -567,6 +624,14 @@ export interface StudioEngineApi {
   setProgress(p: number): void;
   /** JPEG data URL of the current view (for the lead e-mail) */
   snapshot(maxWidth?: number): Promise<string>;
+  /**
+   * Pictures of the kitchen from a few cameras (SNAPSHOT_VIEWS: right / left perspective, frontal, bird's eye) for the
+   * PDF export: the whole kitchen framed in each, in the current mood (lights, LEDs), without the dimension labels,
+   * the selection / hover rims and the studio's empty-space outlines. The customer's own camera, selection and view
+   * are restored after each picture (each renders synchronously; the engine breathes between pictures). Resolves
+   * to [] before the kitchen is built or after dispose. Optional: engines built before it do not have it.
+   */
+  snapshotViews?(opts?: SnapshotViewsOptions): Promise<ViewSnapshot[]>;
   /** open/close a module's doors or drawers to show its mechanism */
   demo(moduleId: string): void;
   /** clear the current selection (hover rim) without calling onSelect — for UI that closes its own editor */

@@ -19,11 +19,15 @@ import { ConfirmDialog } from "@/components/admin/leads/ConfirmDialog";
 import { CopyButton } from "@/components/admin/leads/CopyButton";
 import { IconChat, IconCube, IconDownload, IconMail, IconPhone, IconPlus, IconTrash } from "@/components/admin/leads/icons";
 import { LeadArchiveButton, LeadStatusControl } from "@/components/admin/leads/LeadStatusControl";
+import { LeadPdfButton } from "@/components/admin/leads/LeadPdfButton";
 import { NotesEditor } from "@/components/admin/leads/NotesEditor";
 import { SummaryList } from "@/components/admin/leads/SummaryList";
 import { adminFileUrl } from "@/lib/admin/files";
 import { formatCents, formatDate, formatDateTime, formatPriceRange, plural } from "@/lib/admin/format";
 import { LEAD_NOTES_MAX, getLeadDetail, isUuid } from "@/lib/admin/leads";
+import { getCompanyInfo } from "@/lib/admin/quotes";
+import { normalizeCompany } from "@/lib/pdf/company";
+import { PRICES_CONFIRMED } from "@/lib/studio/catalog";
 import { toWhatsappDigits } from "@/lib/admin/settings";
 import { LEAD_SOURCE_LABEL } from "@/lib/admin/status";
 import { requireAdmin } from "@/lib/auth/session";
@@ -89,6 +93,9 @@ export default async function LeadDetailPage({ params }: { params: Params }) {
   const subject = `Vaš upit ${lead.number} – ${site.name}`;
   const mailHref = `mailto:${lead.email}?subject=${encodeURIComponent(subject)}`;
   const newQuoteHref = `/admin/ponude/nova?upit=${lead.id}`;
+  // the kitchen PDF: only for a studio inquiry that stored its kitchen; the company block from Postavke
+  const hasKitchen = isStudio && lead.config !== null && typeof lead.config === "object";
+  const pdfCompany = hasKitchen ? normalizeCompany(await getCompanyInfo()) : null;
 
   return (
     <>
@@ -213,6 +220,23 @@ export default async function LeadDetailPage({ params }: { params: Params }) {
                   Slika 3D prikaza nije stigla s ovim upitom.
                   {configUrl ? " Kuhinju možete otvoriti u studiju poveznicom gore." : ""}
                 </p>
+              )}
+              {hasKitchen && pdfCompany && (
+                <div className="mb-6 rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 py-4">
+                  <p className="mb-3 text-[12.5px] leading-relaxed text-mut">
+                    PDF za kupca: 3D prikazi, tlocrt i nacrti zidova s kotama, popis elemenata, materijali i kontakt — složen iz
+                    kuhinje u ovom upitu.
+                  </p>
+                  <LeadPdfButton
+                    config={lead.config}
+                    configUrl={configUrl}
+                    leadNumber={lead.number}
+                    customerName={lead.name}
+                    snapshotUrl={lead.snapshotPath ? adminFileUrl(lead.snapshotPath) : null}
+                    company={pdfCompany}
+                    pricesConfirmed={PRICES_CONFIRMED}
+                  />
+                </div>
               )}
               {summary.length > 0 ? (
                 <SummaryList lines={summary} />

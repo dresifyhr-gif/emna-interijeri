@@ -18,6 +18,7 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { FINISH_DEFAULTS, moduleDef } from "../catalog";
 import { backsplashOfCfg, frontFor, geometryKey, glassOf, kitchenRange, planGaps, planKitchen, sanitizeConfig, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId } from "../plan";
+import { SNAPSHOT_VIEWS } from "../snapshot-views";
 import {
   DEFAULT_CONFIG,
   type CreateStudioEngine,
@@ -30,12 +31,16 @@ import {
   type ModuleInfo,
   type Mood,
   type ScreenRect,
+  type SnapshotView,
+  type SnapshotViewId,
+  type SnapshotViewsOptions,
   type StudioEngineApi,
   type StudioEngineOptions,
   type ViewInfo,
+  type ViewSnapshot,
   type WallId,
 } from "../types";
-import { applyViewOffset, fitBox, viewDir, type Region } from "./camera";
+import { applyViewOffset, fitBox, fitPoints, snapshotRegion, viewDir, type Framing, type Region } from "./camera";
 import { BASE_FACE, UPPER_FACE, WORK_Y } from "./dims";
 import {
   buildKitchen,
@@ -507,6 +512,7 @@ class Engine {
       setMood: (m) => this.setMood(m),
       setProgress: (p) => this.setProgress(p),
       snapshot: (mw) => this.snapshot(mw),
+      snapshotViews: (o) => this.snapshotViews(o),
       demo: (id) => this.demo(id),
       deselect: () => this.deselect(),
       select: (id) => this.selectById(id),
@@ -2664,6 +2670,175 @@ class Engine {
     K?.labels.forEach((l, i) => (l.group.visible = dimsWere[i] ?? true));
     this.dirty = true;
     return out.toDataURL("image/jpeg", 0.85);
+  }
+
+  /**
+   * Pictures from a few cameras (SNAPSHOT_VIEWS) for the PDF export — StudioEngineApi.snapshotViews. Each picture
+   * renders synchronously at its own size and camera and puts everything back before it returns (camera, controls,
+   * projection, renderer size, fog, the walls the dollhouse cut-away hid, selection rims, labels); between pictures the
+   * engine gives the main thread back, so the studio stays responsive and the customer's view renders as before.
+   */
+  async snapshotViews(opts: SnapshotViewsOptions = {}): Promise<ViewSnapshot[]> {
+    const out: ViewSnapshot[] = [];
+    if (this.disposed || !this.kitchen) return out;
+    const clampPx = (v: number | undefined, d: number) => Math.round(Math.min(4096, Math.max(64, Number.isFinite(v) ? (v as number) : d)));
+    const W = clampPx(opts.width, 1600);
+    const H = clampPx(opts.height, Math.round(W * 0.625));
+    const q = Math.min(1, Math.max(0.3, opts.quality ?? 0.88));
+    const fit = { kitchen: opts.frame === "kitchen", region: snapshotRegion(opts.region) };
+    const views: SnapshotView[] = (opts.views ?? (Object.keys(SNAPSHOT_VIEWS) as SnapshotViewId[]))
+      .map((v) => (typeof v === "string" ? SNAPSHOT_VIEWS[v] : v))
+      .filter((v): v is SnapshotView => Boolean(v) && Number.isFinite(v.az) && Number.isFinite(v.el));
+    // a config change still on its way (the debounced rebuild, the old kitchen sinking away, a reveal): let it land
+    // first — at most ~3 s, and only while the render loop runs (paused off screen / in a hidden tab nothing moves;
+    // renderView finishes the assembly itself)
+    for (let t = 0; t < 60 && (this.rebuildTimer || (this.raf && this.tweens.activeExcept("camera"))); t++) {
+      await new Promise<void>((r) => this.win.setTimeout(r, 50));
+      if (this.disposed) return out;
+    }
+    for (let i = 0; i < views.length; i++) {
+      if (i > 0) await new Promise<void>((r) => this.win.setTimeout(r, 0));
+      if (this.disposed || !this.kitchen) break;
+      const shot = this.renderView(this.kitchen, views[i], W, H, q, fit);
+      if (shot) out.push(shot);
+    }
+    return out;
+  }
+
+  /** one picture for snapshotViews; everything it changes is put back before it returns */
+  private renderView(K: KitchenRT, view: SnapshotView, W: number, H: number, quality: number, fit: { kitchen: boolean; region: Region }): ViewSnapshot | null {
+    // what is still moving lands first: the assembly, material waves, a mood change (the picture shows where they end)
+    if (this.play) {
+      K.timeline.finish();
+      this.play = null;
+    }
+    this.tweens.cancel("wave", true);
+    this.tweens.cancel("reveal", true);
+    this.tweens.cancel("mood", true);
+    this.tweens.cancel("led", true);
+    const cam = this.camera;
+    const ctl = this.controls;
+    const saved = {
+      pos: cam.position.clone(),
+      quat: cam.quaternion.clone(),
+      aspect: cam.aspect,
+      fov: cam.fov,
+      target: ctl?.target.clone() ?? null,
+      fogNear: this.fog.near,
+      fogFar: this.fog.far,
+      pr: this.renderer.getPixelRatio(),
+    };
+    // ---- what only the studio shows: selection / hover rims, the dimension labels' bars, the floor marks of bare floor
+    // and the outlines of empty-space elements, a hovered wall's tint
+    const hl: ModuleRT[] = [];
+    for (const m of K.modules.values()) {
+      if (m.pickables.some((p) => p.userData.hl)) {
+        hl.push(m);
+        this.highlight(m, false);
+      }
+    }
+    const hidden: THREE.Object3D[] = [];
+    for (const l of K.labels) {
+      if (l.group.visible) {
+        l.group.visible = false;
+        hidden.push(l.group);
+      }
+    }
+    const studioOnly = new Set<THREE.Material>([this.mats.dim, this.mats.ghost, this.mats.ghostHl]);
+    K.root.traverse((o) => {
+      const me = o as THREE.Mesh;
+      if (me.isMesh && me.visible && (studioOnly.has(me.material as THREE.Material) || me.userData.ghost)) {
+        me.visible = false;
+        hidden.push(me);
+      }
+    });
+    const sh = this.surfaceHover;
+    const shMat = sh && sh.userData.hl ? (sh.material as THREE.Material) : null;
+    if (sh && shMat) sh.material = sh.userData.baseMat as THREE.Material;
+
+    // ---- the camera: the whole kitchen (or the room) framed at the view's angles, in the picture's region (the
+    // projection shifted so the region's centre is the picture's visual centre, as the studio does for its panels)
+    const region = fit.region;
+    cam.aspect = W / H;
+    cam.fov = 30;
+    applyViewOffset(cam, W, H, region);
+    const box = this.mode === "studio" ? K.frame : K.room;
+    const points = fit.kitchen && K.boxPoints.length ? K.boxPoints : null;
+    const target = this.frameTarget(K);
+    const fitAt = (a: number): Framing => (points ? fitPoints(cam, points, viewDir(a, view.el), region, 1.5, 60) : fitBox(cam, box, target, viewDir(a, view.el), region, 1.5, 60));
+    /** the dollhouse rule of the render loop: a wall shows when the camera is on its room side */
+    const wallsShown = (p: THREE.Vector3) =>
+      K.walls.map((w) => {
+        const g = w.group.parent as THREE.Object3D;
+        const n = this.tmpA.set(0, 0, 1).transformDirection(g.matrixWorld);
+        const o = this.tmpB.setFromMatrixPosition(g.matrixWorld);
+        return o.sub(p).negate().dot(n) > -0.05;
+      });
+    // a side view the room's walls would block (the camera behind a wall): turn towards the layout's own view
+    const home = this.view().az;
+    // SnapshotView.home: the angle is counted from the layout's own studio angle
+    const asked = view.home ? home + view.az : view.az;
+    let az = asked;
+    let f = fitAt(az);
+    for (let k = 0; k < 40 && !wallsShown(f.position).every(Boolean) && Math.abs(home - az) > 1e-3; k++) {
+      az += Math.sign(home - az) * Math.min(0.05, Math.abs(home - az));
+      f = fitAt(az);
+    }
+    if (!wallsShown(f.position).every(Boolean) && Math.abs(home - az) <= 1e-3) {
+      // even the layout's own angle has a wall behind the camera: the preset as asked, the cut-away as in the studio
+      az = asked;
+      f = fitAt(az);
+    }
+    cam.position.copy(f.position);
+    cam.lookAt(f.target);
+    cam.updateMatrixWorld(true);
+    const r = K.box.getSize(this.tmpC).length() / 2;
+    this.fog.near = f.distance + r * 0.6;
+    this.fog.far = this.fog.near + 12 + r;
+    const shown = wallsShown(cam.position);
+    const wallsWere = K.walls.map((w) => w.group.visible);
+    K.walls.forEach((w, i) => (w.group.visible = shown[i]));
+
+    // ---- render at the picture's size
+    let url = "";
+    try {
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(W, H, false);
+      this.composer.setPixelRatio(1);
+      this.composer.setSize(W, H);
+      this.applyLights();
+      this.lights.invalidateShadows();
+      this.composer.render(0);
+      const c = this.doc.createElement("canvas");
+      c.width = W;
+      c.height = H;
+      c.getContext("2d")?.drawImage(this.renderer.domElement, 0, 0, W, H);
+      url = c.toDataURL("image/jpeg", quality);
+    } finally {
+      // ---- everything back as it was
+      const { w, h } = this.size;
+      this.renderer.setPixelRatio(saved.pr);
+      this.renderer.setSize(w, h, false);
+      this.composer.setPixelRatio(saved.pr);
+      this.composer.setSize(w, h);
+      this.sizeBloom();
+      cam.aspect = saved.aspect;
+      cam.fov = saved.fov;
+      applyViewOffset(cam, w, h, this.region);
+      cam.position.copy(saved.pos);
+      cam.quaternion.copy(saved.quat);
+      cam.updateMatrixWorld(true);
+      if (ctl && saved.target) ctl.target.copy(saved.target);
+      this.fog.near = saved.fogNear;
+      this.fog.far = saved.fogFar;
+      K.walls.forEach((wl, i) => (wl.group.visible = wallsWere[i]));
+      for (const o of hidden) o.visible = true;
+      if (sh && shMat) sh.material = shMat;
+      for (const m of hl) this.highlight(m, true);
+      this.dirty = true;
+    }
+    if (!url.startsWith("data:image/")) return null;
+    return { id: view.id, label: view.label, dataUrl: url, width: W, height: H };
   }
 
   resize(): void {
