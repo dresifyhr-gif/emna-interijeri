@@ -7,10 +7,13 @@
  *   2  "Plus dodaje novi element"       pointing at a "+" when one is on screen (they pulse); done by opening one too
  *   3  "Kliknite kotu za mjere"         pointing at a dimension label (they glow); done by clicking one too
  *
+ * Mark 1 is done by selecting an element in 3D, from the "Elementi" list or the drawing, or by editing one (<Studio>).
+ *
  * How far the customer got is remembered (hooks.ts useCoach: localStorage, in memory when it is blocked). The card
  * follows its target through ViewInfo (written straight into the DOM, never asking the engine to render); with nothing
- * to point at it waits in a corner of the 3D view (desktop: bottom left, phone: under the top bar). It never takes
- * focus; Escape inside it skips.
+ * to point at it waits in a corner of the 3D view (desktop: bottom left, phone: under the top bar). It never covers the
+ * control in use — the selected element, its toolbar and picker, the focused control — and covers as few "+" as it can
+ * (placeCard: below / above its target, shifted sideways, else a corner). It never takes focus; Escape inside it skips.
  *
  * Mark 1's cabinet: ViewInfo has no rects of elements that are not selected, so it is worked out from the "+" places the
  * engine projects (ViewInfo.gaps): a full row's joint ("seam") lies on the fronts of two cabinets, at their mid height —
@@ -22,20 +25,24 @@ import { planGaps, type KitchenPlan, type PlanGap } from "@/lib/studio/plan";
 import type { StudioEngineApi, ViewInfo } from "@/lib/studio/types";
 import type { CoachState } from "./hooks";
 import { clamp } from "./meta";
-import { areaOf, useEngineView, type Area, type Insets } from "./overlay";
+import { areaOf, placeCard, useEngineView, type Area, type Insets, type Rect } from "./overlay";
 import s from "./studio.module.css";
 
-/** `seen`: mark 2 — a "+" is on screen; mark 3 — a kitchen (gold) label is on screen */
-const MARKS: { title: string; text: (touch: boolean, seen: boolean) => string }[] = [
+/**
+ * `seen`: mark 2 — a "+" is on screen; mark 3 — a kitchen (gold) label is on screen. `docked`: phone — the element's
+ * quick actions are docked above the sheet, not over the element
+ */
+const MARKS: { title: string; text: (touch: boolean, seen: boolean, docked: boolean) => string }[] = [
   {
     title: "Kliknite element za izmjenu",
-    text: (touch) => `${touch ? "Dodirnite" : "Kliknite"} ormarić u 3D prikazu — iznad njega su širina, zamjena, dodavanje i uklanjanje.`,
+    text: (touch, _, docked) =>
+      `${touch ? "Dodirnite" : "Kliknite"} ormarić u 3D prikazu — ${docked ? "ispod prikaza pojave se" : "iznad njega su"} širina, zamjena, dodavanje i uklanjanje.`,
   },
   {
     title: "Plus dodaje novi element",
     text: (_, gaps) =>
       gaps
-        ? "Znak + dodaje element na slobodno mjesto, na zidu i na podu — ili između dva elementa, a susjedni se suzi."
+        ? "Znak + dodaje element na slobodno mjesto, na zidu i na podu — ili između dva elementa: susjedni se suzi, a gdje ne može, novi ga zamijeni."
         : "Znak + pojavi se na svakom slobodnom mjestu, na zidu i na podu. Uz odabrani element: + lijevo i + desno.",
   },
   {
@@ -47,8 +54,11 @@ const MARKS: { title: string; text: (touch: boolean, seen: boolean) => string }[
   },
 ];
 
-/** room between the card and what it points at */
-const GAP = 16;
+const rectOf = (el: Element | null): Rect | null => {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? { x: r.x, y: r.y, w: r.width, h: r.height } : null;
+};
 
 /**
  * Mark 1: a point on a cabinet on screen (see the file comment) — the selected element when there is one, else the middle
@@ -92,6 +102,7 @@ export function CoachMarks({
   docked,
   touch,
   insetsRef,
+  selKey = null,
   onNext,
   onSkip,
 }: {
@@ -105,6 +116,8 @@ export function CoachMarks({
   /** "Dodirnite" instead of "Kliknite" */
   touch: boolean;
   insetsRef: RefObject<Insets>;
+  /** the selected element (the card looks again when it changes) */
+  selKey?: string | null;
   onNext: () => void;
   onSkip: () => void;
 }) {
@@ -132,39 +145,67 @@ export function CoachMarks({
       const w = root.offsetWidth;
       const h = root.offsetHeight;
       const inA = (p: { x: number; y: number }) => p.x >= A.x0 && p.x <= A.x1 && p.y >= A.y0 && p.y <= A.y1;
-      // what this mark points at: a "+" on screen, a room label (else any label)
+      // what this mark points at: a cabinet, a "+" on screen (any of them: the one the card can point at best), a room
+      // label (else any label)
       let at: { x: number; y: number } | null = null;
+      let targets: { x: number; y: number }[] = [];
       if (i === 0) {
         // a cabinet on screen, else the middle of the 3D view (the kitchen is framed there)
         at = (v ? cabinetPoint(v, seams, plan, A) : null) ?? { x: (A.x0 + A.x1) / 2, y: (A.y0 + A.y1) / 2 };
       } else if (i === 1) {
-        const g = v?.gaps?.find((x) => x.visible && inA(x.anchor));
-        at = g ? g.anchor : null;
+        // the "+" where GapLayer put them (moved off a label / a neighbour), else their anchors
+        targets = [...document.querySelectorAll<HTMLElement>("[data-gap-btn][data-on]")]
+          .filter((b) => b.dataset.x && b.dataset.y)
+          .map((b) => ({ x: Number(b.dataset.x), y: Number(b.dataset.y) }));
+        if (!targets.length) targets = (v?.gaps ?? []).filter((x) => x.visible && inA(x.anchor)).map((x) => x.anchor);
+        at = targets[0] ?? null;
         see(Boolean(v?.gaps?.some((x) => x.visible)));
       } else if (i === 2) {
         const ls = v?.walls.filter((l) => l.visible && inA(l.label)) ?? [];
         see(ls.some((l) => l.kind === "kitchen" && l.wall !== "isl"));
         at = (ls.find((l) => (l.kind ?? "room") === "room") ?? ls[0])?.label ?? null;
       }
-      let x: number;
-      let y: number;
-      let side = "none";
-      if (at) {
-        // below the target when there is room (the labels sit high), else above it
-        const below = at.y + GAP + 14;
-        const above = at.y - GAP - 14 - h;
-        side = below + h <= A.y1 || above < A.y0 ? "below" : "above";
-        y = side === "below" ? below : above;
-        x = clamp(at.x - w / 2, A.x0, Math.max(A.x0, A.x1 - w));
-        root.style.setProperty("--caret-x", `${Math.round(clamp(at.x - x, 22, w - 22))}px`);
-      } else if (docked) {
-        x = (size.w - w) / 2;
-        y = A.y0 + 4;
-      } else {
-        x = A.x0 + 16;
-        y = A.y1 - h - 8;
+      // what must stay in sight: the selected element, its toolbar (and picker), the focused control; the other "+"
+      const keep: Rect[] = [];
+      const sel = v?.selected;
+      if (sel?.visible) keep.push(sel.rect);
+      const bar = document.querySelector<HTMLElement>("[data-studio-toolbar]");
+      if (bar && bar.dataset.shown !== undefined) {
+        const r = rectOf(bar.querySelector("[data-tb-bar]"));
+        if (r) keep.push(r);
+        const pop = rectOf(bar.querySelector('[role="dialog"]'));
+        if (pop) keep.push(pop);
       }
-      y = clamp(y, A.y0, Math.max(A.y0, A.y1 - h));
+      const act = document.activeElement;
+      if (act && act !== document.body && !root.contains(act) && act.tagName !== "CANVAS") {
+        const r = rectOf(act);
+        if (r && r.x < A.x1 && r.x + r.w > A.x0 && r.y < A.y1 && r.y + r.h > A.y0) keep.push(r);
+      }
+      const allDots = [...document.querySelectorAll<HTMLElement>("[data-gap-btn][data-on]")].map(rectOf).filter((r): r is Rect => Boolean(r));
+      /** the other "+" than the one pointed at */
+      const dotsBut = (t: { x: number; y: number } | null) => allDots.filter((r) => !(t && Math.abs(r.x + r.w / 2 - t.x) < 2 && Math.abs(r.y + r.h / 2 - t.y) < 2));
+      const rest = docked
+        ? [
+            { x: (size.w - w) / 2, y: A.y0 + 4 },
+            { x: (size.w - w) / 2, y: A.y1 - h - 8 },
+          ]
+        : [
+            { x: A.x0 + 16, y: A.y1 - h - 8 },
+            { x: A.x0 + 16, y: A.y0 + 8 },
+            { x: A.x1 - w - 16, y: A.y0 + 8 },
+          ];
+      let placed = placeCard({ w, h }, A, at, rest, keep, dotsBut(at));
+      // mark 2: the first "+" the card can point at without covering what is in use (and the fewest others)
+      for (const t of targets.slice(1, 8)) {
+        if (placed.side !== "none" && placed.cost < 1) break;
+        const p = placeCard({ w, h }, A, t, rest, keep, dotsBut(t));
+        if (p.cost < placed.cost && p.side !== "none") {
+          placed = p;
+          at = t;
+        }
+      }
+      const { x, y, side } = placed;
+      if (at && side !== "none") root.style.setProperty("--caret-x", `${Math.round(clamp(at.x - x, 22, w - 22))}px`);
       root.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
       root.dataset.side = side;
       // mark 1: a ring on the cabinet it points at
@@ -182,7 +223,14 @@ export function CoachMarks({
   useEngineView(apiRef, live, place);
   useLayoutEffect(() => {
     place(apiRef.current?.viewInfo?.() ?? null);
-  }, [apiRef, place, seen]);
+  }, [apiRef, place, seen, selKey]);
+  // the element toolbar shows / hides or opens a picker (it places itself from the same ViewInfo, after this card, or
+  // without a new frame at all): look again then — the engine is not asked to render
+  useEffect(() => {
+    const mo = new MutationObserver(() => place(apiRef.current?.viewInfo?.() ?? null));
+    mo.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-shown", "data-pop-open"] });
+    return () => mo.disconnect();
+  }, [apiRef, place]);
   useEffect(() => {
     const onResize = () => place(apiRef.current?.viewInfo?.() ?? null);
     window.addEventListener("resize", onResize);
@@ -215,7 +263,7 @@ export function CoachMarks({
                 {i + 1} / {MARKS.length}
               </span>
             </p>
-            <p className="mt-1.5 text-[12px] leading-relaxed text-fg/70">{mark.text(touch, seen)}</p>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-fg/70">{mark.text(touch, seen, docked)}</p>
           </div>
           <div className="flex items-center justify-end gap-1 border-t border-white/[0.08] px-2.5 py-2">
             <button

@@ -11,7 +11,11 @@
  *
  * A base cabinet or wall unit of a wall run can become a tall unit ("Visoki element umjesto ovoga" — it takes the place
  * of both; when that takes another element away, one short line asks first, tallSwap.ts) and gets tall units beside
- * it under "Dodaj lijevo / desno"; a tall unit standing in the run can become a base cabinet again.
+ * it under "Dodaj lijevo / desno"; a tall unit standing in the run can become a base cabinet again. A unit of a tall
+ * column with more units in it offers "Ukloni cijeli visoki stup" next to its own "Ukloni".
+ *
+ * A refusal note goes stale once another action starts (it is not shown any more; a new refusal brings a new note), and
+ * the tall unit's question is dropped by any other pick — what the editor shows is always about the last action.
  *
  * "Left" and "right" are always the left and right of the drawing at the top (the island is mirrored so this
  * matches the default 3D view, see meta.isFlipped).
@@ -52,7 +56,7 @@ import {
   UndoIcon,
 } from "./icons";
 import { ChipRadio } from "./controls";
-import { EASE, isFlipped, isInRunTall, islandOf, noRoomText, rowOf, rowSlots, runName, sideHint, slotPlace, wallEndName } from "./meta";
+import { EASE, columnSlots, elementsCount, isFlipped, isInRunTall, islandOf, noRoomText, rowOf, rowSlots, runName, sideHint, slotPlace, wallEndName } from "./meta";
 import { AddPicker, addItems, type AddItem } from "./AddPicker";
 import { keepAbove, moveFocus } from "./overlay";
 import { PriceBlock } from "./Price";
@@ -106,6 +110,8 @@ export interface ElementEditorProps {
   onHover?: (slotId: string | null) => void;
   onDemo: () => void;
   onResetRun: (slot: PlanSlot) => void;
+  /** "Ukloni cijeli stup": the tall column the element belongs to goes (<Studio> removeColumn) */
+  onRemoveColumn?: () => void;
   onUndo: (() => void) | null;
   onClose: () => void;
 }
@@ -129,6 +135,7 @@ export function ElementEditor({
   onHover,
   onDemo,
   onResetRun,
+  onRemoveColumn,
   onUndo,
   onClose,
 }: ElementEditorProps) {
@@ -144,6 +151,17 @@ export function ElementEditor({
   const asking = ask && ask.id === slotId && ask.cfg === cfg ? ask : null;
   const askRef = useRef<HTMLButtonElement>(null);
   const askingType = asking?.type ?? null;
+  /**
+   * a refusal goes stale once the customer starts something else (another tile, a width, "Dodaj", the column's place …):
+   * the note of that refusal (EditNote.n) is not shown any more — a new refusal brings a new note
+   */
+  const [staleNote, setStaleNote] = useState<number | null>(null);
+  const shownNote = note && !(note.tone === "refused" && note.n === staleNote) ? note : null;
+  /** a new action starts: the last refusal and an open tall question (it asked about another pick) are no longer current */
+  const begin = (keepAsk = false) => {
+    if (note?.tone === "refused") setStaleNote(note.n);
+    if (!keepAsk) setAsk(null);
+  };
 
   const own = useMemo(() => (shared !== undefined ? null : slotEditInfo(cfg, slotId)), [shared, cfg, slotId]);
   const info = shared !== undefined ? (shared && shared.slot.id === slotId ? shared : null) : own;
@@ -185,6 +203,8 @@ export function ElementEditor({
   const spacer = Boolean(def?.spacer);
   const flip = isFlipped(slot.run);
   const inRunTall = isInRunTall(slot);
+  /** the tall column this unit stands in (all its units; empty for anything else) */
+  const column = columnSlots(plan, slot);
   const row = rowSlots(plan.slots, slot.run, rowOf(slot).zone);
   const idx = row.findIndex((x) => x.id === slot.id);
   const prev = idx > 0 ? row[idx - 1] : null;
@@ -217,21 +237,25 @@ export function ElementEditor({
   const widthOf = (r: EditResult) => (r.slotId ? planKitchen(r.cfg).slots.find((x) => x.id === r.slotId)?.width : undefined);
 
   const pickType = (t: TypeChoice) => {
+    begin();
     if (t.current) return;
     const r = changeType(cfg, slot.id, t.id);
     const w = widthOf(r);
     onEdit(r, { say: `Element je sada ${lower(t.name)}${w ? `, ${Math.round(w)} cm` : ""}.` });
   };
   const pickWidth = (w: number) => {
+    begin();
     if (w === width) return;
     onEdit(changeWidth(cfg, slot.id, w), { say: `Širina ${w} cm.` });
   };
   const doMove = (sd: Side) => {
+    begin();
     const r = side[sd].move();
     onEdit(r, { say: `Pomaknuto ${sd === "left" ? "lijevo" : "desno"}.` });
   };
   /** the tall unit in this element's place; when that takes another element away, ask first (a second press confirms) */
   const pickTall = (t: TypeChoice, confirmed = false) => {
+    begin(true);
     if (t.width === null) {
       setAsk(null);
       refuse(changeType(cfg, slot.id, t.id, "tall").warning ?? `${t.name} ovdje ne stane.`);
@@ -253,6 +277,7 @@ export function ElementEditor({
     onEdit(sw.result, { toast: `${t.name}${w ? `, ${Math.round(w)} cm` : ""}.` });
   };
   const doInsert = (sd: Side, { t, tall }: AddItem, width?: number) => {
+    begin();
     const r = side[sd].insert(t.id, width, tall);
     const w = widthOf(r);
     if (onEdit(r, { say: `Dodan element ${sd === "left" ? "lijevo" : "desno"}: ${lower(t.name)}${w ? `, ${Math.round(w)} cm` : ""}.` })) {
@@ -261,6 +286,7 @@ export function ElementEditor({
     }
   };
   const doRemove = () => {
+    begin();
     const r = remove(cfg, slot.id);
     let follow: string | null = r.slotId;
     if (r.ok && slot.list) {
@@ -271,9 +297,13 @@ export function ElementEditor({
     }
     onEdit(r, { select: follow, say: spacer ? "Razmak je zatvoren." : `Uklonjeno: ${lower(name)}.` });
   };
-  const refuse = (text: string) => onEdit({ cfg, ok: false, warning: text, slotId: slot.id });
+  const refuse = (text: string) => {
+    begin();
+    onEdit({ cfg, ok: false, warning: text, slotId: slot.id });
+  };
   /** why a move does not work, in the drawing's terms (edit.ts speaks of the run's start / end) */
   const refuseMove = (sd: Side) => {
+    begin();
     const w = side[sd].move().warning ?? "";
     refuse(/početku niza|kraju niza/.test(w) || !w ? `Element je već skroz ${sd === "left" ? "lijevo" : "desno"}.` : w);
   };
@@ -364,10 +394,11 @@ export function ElementEditor({
   const noteBox = (
     <div aria-live="polite" aria-atomic="true" className={`shrink-0 ${desktop ? "px-7" : "px-4"}`}>
       <AnimatePresence initial={false} mode="popLayout">
-        {/* while a tall unit's question is open it is the one thing to read (an earlier refusal would contradict it) */}
-        {note && !asking && (
+        {/* while a tall unit's question is open it is the one thing to read (an earlier refusal would contradict it); a
+            refusal is gone once something else is started (`begin`) */}
+        {shownNote && !asking && (
           <motion.p
-            key={note.n}
+            key={shownNote.n}
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto", transition: { duration: reduce ? 0 : 0.4, ease: EASE } }}
             exit={{ opacity: 0, height: 0, transition: { duration: reduce ? 0 : 0.2 } }}
@@ -375,11 +406,11 @@ export function ElementEditor({
           >
             <span
               className={`mb-3 mt-1 flex gap-2.5 rounded-xl border px-3 py-2.5 text-[12.5px] leading-relaxed ${
-                note.tone === "refused" ? "border-[#E39A84]/35 bg-[#E39A84]/[0.07] text-fg/90" : "border-accent/25 bg-accent/[0.06] text-fg/85"
+                shownNote.tone === "refused" ? "border-[#E39A84]/35 bg-[#E39A84]/[0.07] text-fg/90" : "border-accent/25 bg-accent/[0.06] text-fg/85"
               }`}
             >
-              <NoteIcon className={`mt-px h-4 w-4 shrink-0 ${note.tone === "refused" ? "text-[#E39A84]" : "text-accent"}`} />
-              {note.text}
+              <NoteIcon className={`mt-px h-4 w-4 shrink-0 ${shownNote.tone === "refused" ? "text-[#E39A84]" : "text-accent"}`} />
+              {shownNote.text}
             </span>
           </motion.p>
         )}
@@ -502,7 +533,11 @@ export function ElementEditor({
           icon={<InsertIcon side="left" className="h-4 w-4" />}
           disabled={!canAdd("left")}
           expanded={addSide === "left"}
-          onClick={() => (canAdd("left") ? setAdding({ id: slot.id, side: "left" }) : refuse(side.left.options.length ? noRoom : "Lijevo od ovog elementa nastavlja se susjedni zid."))}
+          onClick={() => {
+            begin();
+            if (canAdd("left")) setAdding({ id: slot.id, side: "left" });
+            else refuse(side.left.options.length ? noRoom : "Lijevo od ovog elementa nastavlja se susjedni zid.");
+          }}
         >
           Dodaj lijevo
         </ActionButton>
@@ -511,7 +546,11 @@ export function ElementEditor({
           iconEnd
           disabled={!canAdd("right")}
           expanded={addSide === "right"}
-          onClick={() => (canAdd("right") ? setAdding({ id: slot.id, side: "right" }) : refuse(side.right.options.length ? noRoom : "Desno od ovog elementa nastavlja se susjedni zid."))}
+          onClick={() => {
+            begin();
+            if (canAdd("right")) setAdding({ id: slot.id, side: "right" });
+            else refuse(side.right.options.length ? noRoom : "Desno od ovog elementa nastavlja se susjedni zid.");
+          }}
         >
           Dodaj desno
         </ActionButton>
@@ -522,8 +561,23 @@ export function ElementEditor({
           className="col-span-2"
           onClick={() => (info.canRemove ? doRemove() : refuse(remove(cfg, slot.id).warning ?? "Ovaj element se ne može ukloniti."))}
         >
-          {spacer ? "Zatvori razmak" : slot.zone === "upper" ? "Ukloni (zid ostaje prazan)" : "Ukloni element"}
+          {spacer ? "Zatvori razmak" : slot.zone === "upper" ? "Ukloni (zid ostaje prazan)" : column.length > 1 ? `Ukloni samo ${lower(name)}` : "Ukloni element"}
         </ActionButton>
+        {/* a unit of a tall column with more in it: the whole column in one go (no "Visoki stup" switch any more) */}
+        {column.length > 1 && onRemoveColumn && (
+          <ActionButton
+            icon={<TrashIcon className="h-4 w-4" />}
+            disabled={false}
+            danger
+            className="col-span-2"
+            onClick={() => {
+              begin();
+              onRemoveColumn();
+            }}
+          >
+            Ukloni cijeli visoki stup ({elementsCount(column.length)})
+          </ActionButton>
+        )}
       </div>
     </Section>
   );
@@ -545,6 +599,7 @@ export function ElementEditor({
           })}
           value={places.find((p) => p.current)?.end ?? null}
           onChange={(end) => {
+            begin();
             const { wall, side } = parseRunEnd(end);
             onEdit(moveTall(cfg, tallList, end), { say: `Visoki stup je sada uz zid ${wall.toUpperCase()}, ${side === "left" ? "lijevi" : "desni"} kraj.` });
           }}
@@ -571,7 +626,10 @@ export function ElementEditor({
           {info.edited && (
             <button
               type="button"
-              onClick={() => onResetRun(slot)}
+              onClick={() => {
+                begin();
+                onResetRun(slot);
+              }}
               className="inline-flex min-h-9 items-center gap-2 text-[12.5px] font-medium text-mut transition-colors duration-300 hover:text-fg"
             >
               <ResetIcon className="h-4 w-4" />

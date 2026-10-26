@@ -31,9 +31,11 @@
  * the plinth LED, the wall units and the top row stop (RunPlan.worktops / counters / runTalls; the wall units flow around
  * it like around the window); one that would stand under the window is left out with a note. An edited base list keeps
  * the planner's filler at a wall / corner / column end as a "filer" entry (it holds its place and gives way first), so
- * cabinets do not slide when the run changes. Corner
+ * cabinets do not slide when the run changes. Two columns standing side by side share one 2 cm cover panel (a column in
+ * the run against the column at the run's end, two columns with only filler strips between). Corner
  * units come blind (110 × 60 / 80 × 35) or L-shaped / diagonal (90 × 90 / 60 × 60, catalog CORNER_FOOT); the runs beside
- * them move with the footprint. planGaps lists every empty place the studio shows a "+" for.
+ * them move with the footprint. planGaps lists every empty place the studio shows a "+" for — and one "+" on every full
+ * row (an insert the row makes room for, or a replace where nothing can).
  *
  * Pure TypeScript (no three.js, no DOM): the 3D engine, the price estimate and
  * the summary all use the same plan, so what the customer sees is what is
@@ -261,8 +263,11 @@ export function baseHeights(worktop: number): { plinth: number; carcass: number 
   const carcass = DIM.worktopTop - DIM.plinth - DIM.worktopT;
   return { plinth: Math.max(5, Math.round(worktop) - carcass - DIM.worktopT), carcass };
 }
-/** an explicit run's remainder at least this wide stays free space (no filler) */
-const FREE_MIN = 30;
+/**
+ * an explicit run's remainder at least this wide stays free space (no filler); a narrower one is closed with a filler at
+ * the wall / corner end (lib/studio/edit.ts keepSliver keeps the cabinets in place when an insert would leave one)
+ */
+export const FREE_MIN = 30;
 
 export interface Limits {
   a: [number, number];
@@ -783,11 +788,13 @@ function sanitizeShallow(input: unknown): KitchenConfig {
     }
     if (Object.keys(up).length) cfg.upperRuns = up;
   }
-  {
+  // the main column's units and place only while it is on: `tall` is the head field of every link (the legacy "Visoki
+  // stup" switch) — off, they are dead state (no switch brings them back; insertAtGap starts a new column), so they go
+  if (cfg.tall) {
     const t = cleanList(src.tallRun, "tall");
     if (t && t.length) cfg.tallRun = t;
+    if (typeof src.tallAt === "string" && (RUN_ENDS as readonly string[]).includes(src.tallAt)) cfg.tallAt = src.tallAt as RunEnd;
   }
-  if (typeof src.tallAt === "string" && (RUN_ENDS as readonly string[]).includes(src.tallAt)) cfg.tallAt = src.tallAt as RunEnd;
   if (isObj(src.tallRuns)) {
     const tr: Partial<Record<RunEnd, CabinetSpec[]>> = {};
     for (const e of RUN_ENDS) {
@@ -1144,7 +1151,13 @@ export interface PlanList {
    * wall units only: the free stretches between corners / window / hood, left → right (cm the cabinets in each
    * may take), and the list index of the hood that splits them (null = no anchored hood)
    */
-  segments?: { left: number[]; right: number[]; hoodAt: number | null };
+  segments?: {
+    left: number[];
+    right: number[];
+    hoodAt: number | null;
+    /** where those stretches are (run-local x, the span each flows into — its end panels included) */
+    spans?: { left: Range[]; right: Range[] };
+  };
 }
 
 export interface KitchenPlan {
@@ -1637,16 +1650,33 @@ function baseListItems(list: CabinetSpec[]): (ModItem | FillerItem)[] {
   });
 }
 
-/** consecutive tall units are one column: a tall cover panel before and after each run of them */
-function withTallPanels(items: (ModItem | FillerItem)[]): Item[] {
+/** which ends of a base span a column standing at the run's end closes (its cover panel is shared there: withTallPanels) */
+type PanelShare = { left: boolean; right: boolean };
+const NO_SHARE: PanelShare = { left: false, right: false };
+
+/**
+ * Consecutive tall units are one column: a tall cover panel before and after each run of them. Two columns with only
+ * filler strips between them are one column too (the strips stand in it, full height): one panel between, not two. And a
+ * column at an end of the sequence that stands against a column at the run's end (`share`: the span ends there, only
+ * filler strips between) shares that column's cover panel — its own is a zero-width marker (it still opens / closes the
+ * column for layoutKitchen; no piece is drawn for it). One 2 cm panel between two columns standing side by side, not 4 cm.
+ */
+function withTallPanels(items: (ModItem | FillerItem)[], share: PanelShare = NO_SHARE): Item[] {
   const out: Item[] = [];
+  const isTall = (it: ModItem | FillerItem | undefined) => Boolean(it && it.kind === "module" && it.tall);
+  /** the nearest item that is not a filler strip, before (-1) / after (+1) item i */
+  const beyond = (i: number, d: -1 | 1) => {
+    let j = i + d;
+    while (j >= 0 && j < items.length && items[j].kind === "filler") j += d;
+    return items[j];
+  };
   items.forEach((it, i) => {
-    const tall = it.kind === "module" && it.tall;
-    const prev = items[i - 1];
-    const next = items[i + 1];
-    if (tall && !(prev && prev.kind === "module" && prev.tall)) out.push({ kind: "panel", width: DIM.panel, tall: true });
+    const tall = isTall(it);
+    const prev = beyond(i, -1);
+    const next = beyond(i, 1);
+    if (tall && !isTall(prev)) out.push({ kind: "panel", width: !prev && share.left ? 0 : DIM.panel, tall: true });
     out.push(it);
-    if (tall && !(next && next.kind === "module" && next.tall)) out.push({ kind: "panel", width: DIM.panel, tall: true });
+    if (tall && !isTall(next)) out.push({ kind: "panel", width: !next && share.right ? 0 : DIM.panel, tall: true });
   });
   return out;
 }
@@ -1661,9 +1691,30 @@ function spanUse(span: Span, seq: Item[]): number {
  * An edited base run: exactly its list. When the span got shorter its filler strips give way first, then entries are
  * left out from the end (empty space first, then ordinary cabinets, tall units, the sink / hob / dishwasher last). A
  * tall unit that would stand under the window (`win`: its opening with DIM.windowMargin) cannot: it is left out too
- * (`windowCut`), and the rest closes up.
+ * (`windowCut`), and the rest closes up. A column at an end of the list standing against the column at the run's end
+ * shares that column's cover panel (one 2 cm panel between them), unless free space comes between them.
  */
 function fillExplicitBase(span: Span, list: CabinetSpec[], win: Range | null): BaseFillResult {
+  // a column at an end of the list against the column standing at the run's end shares its cover panel (withTallPanels)
+  const share: PanelShare = { left: span.left === "tall", right: span.right === "tall" };
+  for (let k = 0; k < 3; k++) {
+    const res = fillExplicitShared(span, list, win, share);
+    // ... unless bare floor / free space comes between them: then its side shows, it needs its own panel
+    const lone = (side: "left" | "right") => {
+      const its = side === "left" ? res.items : [...res.items].reverse();
+      const p = its.findIndex((it) => it.kind === "panel" && it.tall);
+      return p > 0 && its[p].width < 0.01 && its.slice(0, p).some((it) => it.kind === "gap");
+    };
+    const L = share.left && lone("left");
+    const R = share.right && lone("right");
+    if (!L && !R) return res;
+    if (L) share.left = false;
+    if (R) share.right = false;
+  }
+  return fillExplicitShared(span, list, win, NO_SHARE);
+}
+
+function fillExplicitShared(span: Span, list: CabinetSpec[], win: Range | null, share: PanelShare): BaseFillResult {
   let items = baseListItems(list);
   const len = span.to - span.from;
   const cut: number[] = [];
@@ -1671,7 +1722,7 @@ function fillExplicitBase(span: Span, list: CabinetSpec[], win: Range | null): B
   const rank = (it: ModItem) => (isSpacer("base", it.type) ? 0 : it.tall ? 1.5 : it.feature ? 2 : 1);
   for (let guard = 0; guard <= list.length; guard++) {
     // filler strips give way (from the last), then entries leave
-    let over = spanUse(span, withTallPanels(items)) - len;
+    let over = spanUse(span, withTallPanels(items, share)) - len;
     if (over > 0.01) {
       for (let i = items.length - 1; i >= 0 && over > 0.01; i--) {
         const it = items[i];
@@ -1682,7 +1733,7 @@ function fillExplicitBase(span: Span, list: CabinetSpec[], win: Range | null): B
       }
       items = items.filter((it) => it.kind !== "filler" || it.width >= 0.5);
     }
-    while (spanUse(span, withTallPanels(items)) > len + 0.01) {
+    while (spanUse(span, withTallPanels(items, share)) > len + 0.01) {
       let k = -1;
       for (const r of [0, 1, 1.5, 2]) {
         for (let i = items.length - 1; i >= 0; i--) {
@@ -1698,7 +1749,7 @@ function fillExplicitBase(span: Span, list: CabinetSpec[], win: Range | null): B
       cut.push(items[k].src ?? -1);
       items.splice(k, 1);
     }
-    const seq = withTallPanels(items);
+    const seq = withTallPanels(items, share);
     const out = wrapExplicit(span, seq);
     if (!win) return { items: out, dropped: [], cut, windowCut, used: spanUse(span, seq) - innerSpanPanels(span) - fillerCm(items) };
     // a tall unit (with the cover panel beside it) under the window: left out, the rest closes up
@@ -1720,7 +1771,7 @@ function fillExplicitBase(span: Span, list: CabinetSpec[], win: Range | null): B
     cut.push(b.src ?? -1);
     items = items.filter((it) => it !== b);
   }
-  const seq = withTallPanels(items);
+  const seq = withTallPanels(items, share);
   return { items: wrapExplicit(span, seq), dropped: [], cut, windowCut, used: spanUse(span, seq) - innerSpanPanels(span) - fillerCm(items) };
 }
 
@@ -2534,6 +2585,20 @@ const essentials = (p: KitchenPlan) => {
 const cutCount = (p: KitchenPlan) =>
   p.lists.reduce((n, l) => n + l.dropped.filter((e) => !moduleDef(l.zone === "island" ? "base" : l.zone, e.type)?.spacer).length, 0);
 
+/**
+ * Whether `after` has fewer sinks, hobs or dishwashers than `before` in the lists the planner fills on its own in both
+ * (not KitchenConfig.runs): a wider or moved tall column must not push the planner's own sink / hob out of a wall run —
+ * the planner itself leaves the tall column out rather than either of them (planCore), and lib/studio/edit.ts refuses
+ * such an edit (fuzz seed 2016: a 60 cm tallRuns column widened to a side-by-side fridge took wall A's hob away without
+ * a word, the island's hob still counting). A list the edit made explicit decides its own contents and is not counted.
+ */
+export function plannerFeaturesLost(before: KitchenPlan, after: KitchenPlan): boolean {
+  const own = (p: KitchenPlan) => new Set(p.lists.filter((l) => !l.explicit && (l.zone === "base" || l.zone === "island")).map((l) => l.id));
+  const both = new Set([...own(before)].filter((id) => own(after).has(id)));
+  const count = (p: KitchenPlan, f: string) => p.slots.filter((s) => s.list && both.has(s.list.id) && s.zone !== "tall" && moduleDef("base", s.type)?.feature === f).length;
+  return (["sink", "hob", "dishwasher"] as const).some((f) => count(after, f) < count(before, f));
+}
+
 /** The single source of truth for cabinet positions. */
 export function planKitchen(input: KitchenConfig): KitchenPlan {
   return planCore(sanitizeConfig(input));
@@ -2558,7 +2623,8 @@ export function tallCapacity(input: KitchenConfig, id: ListId = "tall"): number 
   const ok = (w: number) => {
     const stand: CabinetSpec[] = [{ type: "ormar", width: w }];
     const p = planCore(id === "tall" ? { ...cfg, tallRun: stand } : withList(cfg, id, stand));
-    return p.slots.some((s) => s.list?.id === id) && cutCount(p) <= cut0 && others(p) >= others0;
+    // (nor push the planner's own sink / hob / dishwasher out of a run it fills: plannerFeaturesLost)
+    return p.slots.some((s) => s.list?.id === id) && cutCount(p) <= cut0 && others(p) >= others0 && !plannerFeaturesLost(now, p);
   };
   let lo = used;
   let hi = Math.max(...wallsFor(cfg.layout).map((w) => cfg.walls[w]));
@@ -3019,7 +3085,8 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     }
     {
       const { subsL, subsR } = split(hoodRange);
-      upperInfo.set(s.wall, { left: subsL.map(innerLength), right: subsR.map(innerLength), hoodAt });
+      const at = (sp: Span): Range => ({ from: sp.from, to: sp.to });
+      upperInfo.set(s.wall, { left: subsL.map(innerLength), right: subsR.map(innerLength), hoodAt, spans: { left: subsL.map(at), right: subsR.map(at) } });
     }
     segs.sort((p, q) => p.from - q.from);
     for (const sg of segs) {
@@ -3150,7 +3217,8 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
           listFillers.push({ list: b.wall, index: baseExplicit ? (item.src ?? autoIdx) : autoIdx, width: Math.round(item.width * 10) / 10 });
           if (!baseExplicit) autoIdx++;
         }
-      } else if (item.kind === "panel") {
+      } else if (item.kind === "panel" && item.width >= 0.01) {
+        // (a column's zero-width panel: it shares the cover panel of the column it stands against — withTallPanels)
         pieces.push({ kind: "panel", zone: item.tall ? "tall" : "base", run: b.wall, x, width: item.width });
       }
     }
@@ -3450,11 +3518,14 @@ function mkSlot(
  *           base cabinets stay as they are: bare floor under the new wall unit)
  *   island  an end of the island / peninsula: room left in it and / or what it can still grow (not the end at wall A)
  *   seam    a full row (a wall's base or wall-unit list with no other "+": the owner, "nema na zidu plus da dodam novi
- *           element"; the island / peninsula row when no room is left inside it): one joint between two elements standing
- *           side by side (one per row — the one with most room; never inside a tall column) — a new element goes in
- *           between and one of the two (`between`) gets narrower to make room for it, as "+ lijevo / + desno" on a full
- *           row do. `split` is the width the picker starts with (half of the wider one, at most what fits). A wall's base
- *           row also takes a tall unit there (it then stands in the run; label "Donji ili visoki element" when one fits)
+ *           element"; the island / peninsula row when no room is left inside it) — EVERY such row with an element in it
+ *           gets one: a joint between two elements standing side by side (one per row — the one with most room beside it;
+ *           never inside a tall column; in a stretch of a single element, beside it) — a new element goes in between and
+ *           the row makes room (`room` free cm, then `narrow`: the two beside the joint first, then the stretch's others,
+ *           plain cabinets before the sink / hob / dishwasher, none below SEAM_MIN), as "+ lijevo / + desno" on a full
+ *           row do. Where nothing can make room even for a SEAM_MIN cabinet, the "+" replaces an element (`replace`).
+ *           `split` is the width the picker starts with (half of the wider one, at most what fits). A wall's base row
+ *           also takes a tall unit there (it then stands in the run; label "Donji ili visoki element" when one fits)
  *
  * `at` is on the wall (z = 1 cm) for every wall gap: wall units at mid wall-unit height, the end of a base run at mid
  * base-cabinet height right beside the cabinets (where a 60 cm cabinet would go); empty space under the worktop and
@@ -3491,10 +3562,24 @@ export interface PlanGap {
   tallList?: ListId;
   /** upper: a hob stands below this stretch without a hood above it (a hood element may go here) */
   hob?: boolean;
-  /** seam: the two elements (slot ids, left then right) the new one goes between — one of them gets narrower */
+  /**
+   * seam: the two elements (slot ids, left then right) the new one goes between (one of them may get narrower). Beside a
+   * stretch of a single element one of the two is what stands next to it outside the row (a corner unit, a column, the
+   * hood) or "" (nothing: the wall, the window)
+   */
   between?: [string, string];
   /** seam: the width the picker preselects (cm) */
   split?: number;
+  /** seam: cm free for the new element without anything getting narrower (a base row's free cm; wall units: the filler strips of the joint's stretch) */
+  room?: number;
+  /** seam (insert): the elements (slot ids) that may get narrower to make room, in the order they are asked (the two beside the joint first) */
+  narrow?: string[];
+  /**
+   * seam, when nothing in the row can make room (a 30 cm cabinet alone between a corner and a column, a row of narrow wall
+   * units, a row at MAX_LIST): the element (slot id) the new one takes the place of — "zamijeni susjedni" (edit.ts
+   * insertAtGap says what it replaced). `index` is that element's place in the list
+   */
+  replace?: string;
 }
 
 /** the UI's short name of what a gap adds */
@@ -3771,69 +3856,185 @@ export function planGaps(plan: KitchenPlan): PlanGap[] {
   const check = gapCheck;
   const res = check ? out.filter((g) => check(plan, g)) : out;
 
-  // ---- full rows (no "+" of their own): one joint between two of their elements — one of the two gets narrower. One
-  // per row, not one per joint (14 "+" on a U kitchen read as clutter): the joint with the most room (beside the widest
-  // element that can give way), nearest the middle of the row on a tie. The first that passes the check (edit.ts
-  // insertSeam follows the same rule; of 3,541 fuzzed joints the check turned none away). The island / peninsula row too,
-  // when there is no room left inside it (its end "+" only make it longer)
+  // ---- full rows (no "+" of their own): every wall base row, wall-unit row and the island / peninsula row (when no room
+  // is left inside it: its end "+" only make it longer) gets one "+" (the owner: "nema na zidu plus da dodam novi
+  // element") — one per row, not one per joint (14 "+" on a U kitchen read as clutter), the first that passes the check:
+  //   insert   a joint between two elements (or, in a stretch of one element, beside it): the new element goes in there and
+  //            the elements of the row make room — the run's free cm first, then the two beside the joint, then the others
+  //            of the row (a base row slides; wall units: the stretch between the window / the hood / the row's ends), plain
+  //            cabinets before the sink / hob / dishwasher, never a corner unit, the hood above the hob or a tall unit, none
+  //            below SEAM_MIN (`narrow`: who may give way, nearest first; `room`: the free cm). The joint with the most room
+  //            beside it wins, nearest the middle of the row on a tie.
+  //   replace  where nothing can make room for even a SEAM_MIN cabinet (a 30 cm cabinet alone between a corner and a
+  //            column, a full row of narrow wall units, a row at MAX_LIST): the new element takes the place of one element
+  //            of the row (`replace`; plain cabinets first, the widest) — so the "+" always offers something that works
   const rows: { run: RunId; id: ListId }[] = plan.runs.flatMap((r) => [
     { run: r.wall as RunId, id: r.wall as ListId },
     { run: r.wall as RunId, id: `${r.wall}:u` as ListId },
   ]);
   if (I) rows.push({ run: "isl", id: "isl" });
   for (const { run, id } of rows) {
-    {
-      if (id === "isl" ? res.some((g) => g.list === id && (g.kind !== "island" || (g.floor ?? 0) >= GAP_MIN)) : res.some((g) => g.list === id)) continue;
-      const l = listOfId(id);
-      if (!l || (l.zone !== "base" && l.zone !== "upper" && l.zone !== "island") || l.entries.length >= MAX_LIST) continue;
-      const zone = l.zone === "island" ? "base" : l.zone;
-      const seams: PlanGap[] = [];
-      const row = plan.slots.filter((s) => s.list?.id === id).sort((p, q) => p.list!.index - q.list!.index);
-      /** cm this element can give up (down to its narrowest width, never below SEAM_MIN) */
-      const give = (s: PlanSlot) => {
-        const d = s.corner || s.anchored || s.zone === "tall" ? null : seamDef(zone, s.type);
-        const lo = d ? d.widths.filter((w) => w < s.width - 0.5 && w >= SEAM_MIN && (l.zone !== "island" || d.island)) : [];
-        return lo.length ? s.width - Math.min(...lo) : 0;
-      };
-      // wall units: only what one of the two gives up (the row's free cm may lie beyond the window); base runs and the
-      // island: + that
-      const free = l.zone !== "upper" ? room(l) : 0;
-      for (let i = 1; i < row.length; i++) {
-        const a = row[i - 1];
-        const b = row[i];
-        if (b.list!.index !== a.list!.index + 1 || Math.abs(a.x + a.width - b.x) > 0.5) continue;
-        // not inside a tall column standing in the run
-        if (a.zone === "tall" && b.zone === "tall") continue;
-        const ga = give(a);
-        const gb = give(b);
-        const maxWidth = Math.floor(free + Math.max(ga, gb) + 1e-6);
-        if (maxWidth < SEAM_MIN) continue;
-        const wider = (ga > 0 ? a.width : 0) >= (gb > 0 ? b.width : 0) ? a : b;
-        seams.push({
-          id: `seam:${id}:${b.list!.index}`,
-          kind: "seam",
-          run,
-          zone: l.zone === "island" ? "island" : zone,
-          label: zone === "upper" ? GAP_LABEL.upper : l.zone === "island" ? islandLabel : GAP_LABEL.base,
-          from: a.x,
-          to: b.x + b.width,
-          maxWidth,
-          at: { x: b.x, y: zone === "upper" ? upY : baseY, z: (zone === "upper" ? DIM.upperDepth : DIM.baseDepth) + 0.5 },
-          list: id,
-          index: b.list!.index,
-          between: [a.id, b.id],
-          split: Math.min(maxWidth, Math.floor(wider.width / 2)),
-        });
-      }
-      if (!seams.length) continue;
-      const mid = (row[0].x + row[row.length - 1].x + row[row.length - 1].width) / 2;
-      seams.sort((p, q) => q.maxWidth - p.maxWidth || Math.abs(p.at.x - mid) - Math.abs(q.at.x - mid));
-      const best = check ? seams.find((g) => check(plan, g)) : seams[0];
-      if (best) res.push(best);
-    }
+    if (id === "isl" ? res.some((g) => g.list === id && (g.kind !== "island" || (g.floor ?? 0) >= GAP_MIN)) : res.some((g) => g.list === id)) continue;
+    const l = listOfId(id);
+    if (!l || (l.zone !== "base" && l.zone !== "upper" && l.zone !== "island")) continue;
+    const best = rowSeam(plan, l, run, upY, baseY, islandLabel, check);
+    if (best) res.push(best);
   }
   gapCache.set(plan, res);
   return res;
+}
+
+/**
+ * The one "+" of a full row (planGaps: an insert between its elements, else a replace), or null when the row has no
+ * element it could go beside / replace. Candidates are checked in order with `check` (edit.ts gapHasOption) when given.
+ */
+function rowSeam(
+  plan: KitchenPlan,
+  l: PlanList,
+  run: RunId,
+  upY: number,
+  baseY: number,
+  islandLabel: string,
+  check: ((plan: KitchenPlan, gap: PlanGap) => boolean) | null,
+): PlanGap | null {
+  const id = l.id;
+  const zone: "base" | "upper" = l.zone === "upper" ? "upper" : "base";
+  const isl = l.zone === "island";
+  const row = plan.slots.filter((s) => s.list?.id === id).sort((p, q) => p.list!.index - q.list!.index);
+  if (!row.length) return null;
+  const base = {
+    kind: "seam" as const,
+    run,
+    zone: isl ? ("island" as const) : zone,
+    label: zone === "upper" ? GAP_LABEL.upper : isl ? islandLabel : GAP_LABEL.base,
+    list: id,
+  };
+  const y = zone === "upper" ? upY : baseY;
+  const z = (zone === "upper" ? DIM.upperDepth : DIM.baseDepth) + 0.5;
+  /** cm this element can give up (down to its narrowest width, never below SEAM_MIN): never a corner unit, the hood, a tall unit, empty space */
+  const give = (s: PlanSlot) => {
+    const d = s.corner || s.anchored || s.zone === "tall" ? null : seamDef(zone, s.type);
+    const lo = d ? d.widths.filter((w) => w < s.width - 0.5 && w >= SEAM_MIN && (!isl || d.island)) : [];
+    return lo.length ? s.width - Math.min(...lo) : 0;
+  };
+  /** side by side (a tall unit standing in the run: across its cover panel) */
+  const adjacent = (a: PlanSlot, b: PlanSlot) => {
+    const d = b.x - (a.x + a.width);
+    return d > -0.5 && d < (a.zone === "tall" || b.zone === "tall" ? DIM.panel : 0) + 0.5;
+  };
+  /** the element standing right beside `s` outside its row (a corner unit, a column, the hood …), for `between` */
+  const outside = (s: PlanSlot, side: "left" | "right") =>
+    plan.slots.find(
+      (o) =>
+        o.run === s.run &&
+        o !== s &&
+        (zone === "upper" ? o.zone === "upper" : o.zone !== "upper") &&
+        (side === "left" ? adjacent(o, s) : adjacent(s, o)),
+    )?.id ?? "";
+  // stretches: a base row (and the island) slides as one; wall units hang in stretches between the window, the hood
+  // above the hob and the row's ends (an edited list flows into them)
+  const stretches: PlanSlot[][] = [];
+  for (const s of row) {
+    const cur = stretches[stretches.length - 1];
+    const last = cur?.[cur.length - 1];
+    if (zone === "upper" && s.anchored) stretches.push([]);
+    else if (cur && last && (zone !== "upper" || (adjacent(last, s) && last.list!.index + 1 === s.list!.index))) cur.push(s);
+    else stretches.push([s]);
+  }
+  /** cm free in a stretch without anything getting narrower: a base row's free cm; wall units: the stretch's filler strips */
+  const roomOf = (S: PlanSlot[]) => {
+    if (zone !== "upper") return Math.max(0, l.capacity - l.used);
+    const lo = S[0].x;
+    const hi = S[S.length - 1].x + S[S.length - 1].width;
+    return plan.pieces
+      .filter((p) => p.run === run && p.zone === "upper" && p.kind === "filler" && (Math.abs(p.x + p.width - lo) < 0.5 || Math.abs(p.x - hi) < 0.5))
+      .reduce((n, p) => n + p.width, 0);
+  };
+  const mid = (row[0].x + row[row.length - 1].x + row[row.length - 1].width) / 2;
+  /** the elements that may give way for a "+" at `x` beside `pair`: those two first (the wider first), then the stretch's others, nearest first */
+  const order = (S: PlanSlot[], pair: PlanSlot[], x: number) =>
+    [...pair.filter((s) => give(s) > 0).sort((p, q) => q.width - p.width), ...S.filter((s) => !pair.includes(s) && give(s) > 0).sort((p, q) => Math.abs(p.x + p.width / 2 - x) - Math.abs(q.x + q.width / 2 - x))].map((s) => s.id);
+
+  // ---- insert: the joints of each stretch (a stretch of one element: beside it)
+  const inserts: { gap: PlanGap; local: number }[] = [];
+  if (l.entries.length < MAX_LIST) {
+    for (const S of stretches.filter((x) => x.length)) {
+      const room = roomOf(S);
+      const total = room + S.reduce((n, s) => n + give(s), 0);
+      if (total < SEAM_MIN - 1e-6) continue;
+      const maxWidth = Math.floor(total + 1e-6);
+      const joint = (a: PlanSlot | null, b: PlanSlot | null, index: number, x: number) => {
+        const pair = [a, b].filter((s): s is PlanSlot => Boolean(s && S.includes(s)));
+        const wider = pair.reduce((m, s) => (give(s) > 0 && s.width > m ? s.width : m), 0) || Math.max(...pair.map((s) => s.width));
+        inserts.push({
+          local: room + Math.max(0, ...pair.map(give)),
+          gap: {
+            ...base,
+            id: `seam:${id}:${index}`,
+            from: (a ?? b)!.x,
+            to: (b ?? a)!.x + (b ?? a)!.width,
+            maxWidth,
+            at: { x, y, z },
+            index,
+            between: [a?.id ?? outside(b!, "left"), b?.id ?? outside(a!, "right")],
+            split: Math.min(maxWidth, Math.floor(wider / 2)),
+            room: Math.round(room * 10) / 10,
+            narrow: order(S, pair, x),
+          },
+        });
+      };
+      if (S.length === 1) {
+        const e = S[0];
+        joint(null, e, e.list!.index, e.x);
+        joint(e, null, e.list!.index + 1, e.x + e.width);
+        continue;
+      }
+      for (let i = 1; i < S.length; i++) {
+        const a = S[i - 1];
+        const b = S[i];
+        // never inside a tall column standing in the run; across a column's cover panel the "+" sits on the panel
+        if (b.list!.index !== a.list!.index + 1 || !adjacent(a, b) || (a.zone === "tall" && b.zone === "tall")) continue;
+        joint(a, b, b.list!.index, Math.abs(a.x + a.width - b.x) < 0.5 ? b.x : (a.x + a.width + b.x) / 2);
+      }
+    }
+  }
+  inserts.sort((p, q) => q.local - p.local || Math.abs(p.gap.at.x - mid) - Math.abs(q.gap.at.x - mid));
+  for (const { gap } of inserts) if (!check || check(plan, gap)) return gap;
+
+  // ---- replace: nothing can make room — the new element takes an element's place (plain cabinets first, the widest)
+  const free = zone !== "upper" ? Math.max(0, l.capacity - l.used) : 0;
+  // (a hood that hangs above no hob is a wall unit like any other here)
+  const swaps = row
+    .filter((s) => !s.corner && !s.anchored && s.zone !== "tall" && (seamDef(zone, s.type) || moduleDef(zone, s.type)?.hood))
+    .sort(
+      (p, q) =>
+        Number(Boolean(moduleDef(zone, p.type)?.feature)) - Number(Boolean(moduleDef(zone, q.type)?.feature)) ||
+        q.width - p.width ||
+        Math.abs(p.x + p.width / 2 - mid) - Math.abs(q.x + q.width / 2 - mid),
+    );
+  for (const r of swaps) {
+    const maxWidth = Math.floor(r.width + free + 1e-6);
+    if (maxWidth < GAP_MIN) continue;
+    const i = row.indexOf(r);
+    const left = row[i - 1] && adjacent(row[i - 1], r) ? row[i - 1] : null;
+    const right = row[i + 1] && adjacent(r, row[i + 1]) ? row[i + 1] : null;
+    const atLeft = Boolean(left) || !right;
+    const gap: PlanGap = {
+      ...base,
+      id: `seam:${id}:r${r.list!.index}`,
+      from: r.x,
+      to: r.x + r.width,
+      maxWidth,
+      at: { x: atLeft ? r.x : r.x + r.width, y, z },
+      index: r.list!.index,
+      between: atLeft ? [left?.id ?? outside(r, "left"), r.id] : [r.id, right?.id ?? outside(r, "right")],
+      split: Math.min(maxWidth, Math.round(r.width)),
+      room: Math.round(free * 10) / 10,
+      replace: r.id,
+    };
+    if (!check || check(plan, gap)) return gap;
+  }
+  return null;
 }
 
 /**

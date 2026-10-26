@@ -215,7 +215,13 @@ export interface KitchenConfig {
   /** id from catalog.tops */
   top: string;
   handles: HandleStyle;
-  /** tall column (fridge + oven) at the right end of wall a */
+  /**
+   * the main tall column is on (absent `tallRun`: the planner's fridge + oven where the layout puts it — every default
+   * kitchen). LEGACY as a switch: it is the head field of every link and stays for them, but no UI needs a "Visoki stup"
+   * toggle any more — the column is an element like the others: lib/studio/edit.ts insertAtGap at a run's free end starts
+   * one (tall + tallRun + tallAt), removing its last unit or removeColumn ends it, resetAll brings the default back. Off,
+   * sanitizeConfig drops `tallRun` / `tallAt` (dead state; old links with them decode to the same kitchen, without them).
+   */
   tall: boolean;
   /**
    * island length (layout "otok"), or the peninsula's length from wall A to its free end ("poluotok", "G"), cm;
@@ -342,7 +348,8 @@ export interface GapView {
    * upper  bare wall in the wall-unit row: between wall units, beside the window, or (with `side`) at a free end of the
    *        row — over bare floor and on the bare wall beyond the kitchen (an insert there grows the kitchen run)
    * island an end of the island / peninsula (free room in it, or it can grow)
-   * seam   a full row: the joint between two elements — a new one goes in between, one of the two gets narrower
+   * seam   a full row (every row has one): the joint between two elements — a new one goes in between, the row makes
+   *        room (one or more elements narrower); where nothing can, the new one takes an element's place (`replace`)
    */
   kind: "free" | "end" | "upper" | "island" | "seam";
   run: WallId | "isl";
@@ -355,6 +362,11 @@ export interface GapView {
   width_cm: number;
   /** the widest element that can go here (cm), counting the room the run can grow into */
   maxWidth_cm: number;
+  /**
+   * seam: the element (slot id) the new one takes the place of — a full row where nothing can make room (plan.ts PlanGap.replace);
+   * absent = the new element goes in beside the others
+   */
+  replace?: string;
   /** where the "+" goes (px, relative to the container) */
   anchor: { x: number; y: number };
   /** in front of the camera and on screen */

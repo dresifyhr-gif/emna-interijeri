@@ -508,7 +508,10 @@ describe('"+" and tall units', () => {
     assert.equal(planKitchen(t.cfg).runs.find((r) => r.wall === "b")!.runTalls.length, 1, "one column");
     const b = insertAtGap(c, g.id, "ladice", 45);
     assert.ok(b.ok, b.warning ?? "");
-    assert.deepEqual(b.cfg.runs?.b?.slice(0, 2), [B("ladice", 45), T("hladnjak", 60)]);
+    // (the 9 cm of bare floor it leaves at that end is a filler strip there: the column and the cabinets stay put)
+    assert.deepEqual(b.cfg.runs?.b?.slice(0, 3), [B("filer", 9), B("ladice", 45), T("hladnjak", 60)]);
+    const col = (p: KitchenPlan) => p.slots.find((s) => s.run === "b" && s.type === "hladnjak")!.x;
+    assert.equal(col(planKitchen(b.cfg)), col(planKitchen(c)));
   });
 
   it("a tall unit at a free end where a wall unit hangs over the bare floor: that wall unit makes way, with a note", () => {
@@ -687,6 +690,26 @@ describe("engine (headless scene graph)", () => {
     assert.equal(K0.runs.get(sink.run)!.worktopPieces?.length, 1);
     assert.equal(syncRunSurfaces(K0, env.mats, p, env.mats.top("mramor"), true), true);
     assert.equal(K0.runs.get(sink.run)!.worktopPieces?.length, 2);
+  });
+});
+
+describe("engine: columns sharing a cover panel (headless)", () => {
+  it("a column in the run against the column at the run's end builds finite geometry, no zero-width piece", () => {
+    const c0 = kitchen({ layout: "L" });
+    const dw = planKitchen(c0).slots.find((s) => s.run === "a" && s.type === "perilica")!;
+    const r = changeType(c0, dw.id, "hladnjak", "tall");
+    assert.ok(r.ok);
+    const p = planKitchen(r.cfg);
+    assert.ok(p.pieces.every((x) => x.width > 0.01), "no zero-width piece");
+    const K = buildKitchen(engineEnv(), p);
+    K.timeline.finish();
+    K.root.updateMatrixWorld(true);
+    K.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const pos = m.geometry.getAttribute("position");
+      for (let i = 0; i < pos.count * 3; i++) assert.ok(Number.isFinite((pos.array as ArrayLike<number>)[i]), `NaN in ${o.name}`);
+    });
   });
 });
 

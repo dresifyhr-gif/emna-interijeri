@@ -2,7 +2,7 @@
  * Static copy and small helpers for the studio UI.
  * Materials, prices and module types come from lib/studio/catalog.ts — this file only holds UI wording.
  */
-import { isPeninsula, stoolsWord, wallsFor, type ListId, type PlanGap, type PlanSlot, type RunId } from "@/lib/studio/plan";
+import { isPeninsula, stoolsWord, wallsFor, type KitchenPlan, type ListId, type PlanGap, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import type { FrontZone, Layout, WallId } from "@/lib/studio/types";
 
 /** the site-wide premium ease, as a framer-motion bezier */
@@ -170,6 +170,27 @@ export function rowSlots(slots: PlanSlot[], run: RunId, zone: RowZone): PlanSlot
   return isFlipped(run) ? out.reverse() : out;
 }
 
+/**
+ * The tall units of the column `s` belongs to (lib/studio/edit.ts removeColumn takes them all): a column at a run's end
+ * is its list ("tall", "tall:b-left"); a column standing in a wall's base run is the run's tall stretch (RunPlan.runTalls)
+ * around it. Empty for anything that is not a tall unit.
+ */
+export function columnSlots(plan: KitchenPlan, s: PlanSlot): PlanSlot[] {
+  if (s.zone !== "tall" || !s.list) return [];
+  if (!isInRunTall(s)) return plan.slots.filter((x) => x.zone === "tall" && x.list?.id === s.list?.id);
+  const t = plan.runs.find((r) => r.wall === s.run)?.runTalls.find((r) => s.x >= r.from - 0.5 && s.x < r.to - 0.5);
+  if (!t) return [s];
+  return plan.slots.filter((x) => isInRunTall(x) && x.run === s.run && x.x >= t.from - 0.5 && x.x + x.width <= t.to + 0.5);
+}
+
+/** "1 element", "2 elementa", "5 elemenata" */
+export function elementsCount(n: number): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return `${n} element`;
+  return `${n} ${m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "elementa" : "elemenata"}`;
+}
+
 /** the row a slot belongs to (a tall unit standing in a base run: the base row) */
 export const rowOf = (s: PlanSlot): { run: RunId; zone: RowZone } => ({ run: s.run, zone: isInRunTall(s) ? "base" : s.zone });
 
@@ -244,3 +265,13 @@ export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t:
 }
 
 export const easePremium = cubicBezier(0.2, 0.8, 0.2, 1);
+
+/**
+ * "Hladnjak je sužen. Gornji element iznad …" → ["Hladnjak je sužen.", "Gornji element iznad …"] — the phone's one line
+ * is the first sentence (a sentence ends at . ! ? before a capital letter or an opening quote; "cm." / "npr." do too,
+ * which is harmless: the rest is one tap away)
+ */
+export function firstSentence(text: string): [string, string] {
+  const m = /^(.+?[.!?])\s+(?=[A-ZČĆĐŠŽ„"(])/u.exec(text);
+  return m ? [m[1], text.slice(m[0].length)] : [text, ""];
+}

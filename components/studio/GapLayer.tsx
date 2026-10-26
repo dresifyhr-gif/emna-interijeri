@@ -4,10 +4,11 @@
  * "+" markers over the 3D view at every empty place something can go (the engine's ViewInfo.gaps = plan.ts planGaps):
  * an empty-space element, the free end of a kitchen run (bare floor, or bare wall the kitchen can grow into), bare wall
  * in the wall-unit row (beside the window, between wall units, beyond the kitchen), the ends of the island / peninsula —
- * and, on a row with none of these (full), the joints between its elements ("seam": a neighbour gets narrower).
- * Shown in every step — quiet (small, dimmed) outside "Elementi", full in it or while an element is selected (the joints
- * only then); hovering or focusing one says what it adds and how much room there is ("Dodaj gornji element · slobodno
- * 120 cm", "… · susjedni se suzi").
+ * and, on every row with none of these (full), one joint between its elements ("seam": neighbours get narrower, or —
+ * where nothing can — the new element takes one's place). Shown in every step — quiet (small, dimmed) outside
+ * "Elementi", full in it or while an element is selected (the joints only then); hovering or focusing one says what it
+ * adds and what happens ("Dodaj gornji element · slobodno 120 cm", "… · susjedni element suzit će se", "… · zamijenit
+ * će ladičar, 60 cm").
  *
  * A click opens the add picker anchored at the "+" (AddPicker: widths preselected to what fills the place, the common
  * elements as big tiles, "Više elemenata" for the rest — lib/studio/edit.ts gapOptions checks every width by planning
@@ -16,8 +17,9 @@
  *
  * Position: from ViewInfo (api.subscribe), written straight into the DOM — no React render per frame, and nothing here
  * asks the engine to render. React renders only when the plan changes (the set of gaps). A "+" that would sit on a
- * dimension label moves just off it. On a phone the markers are larger (48 px targets) and the picker docks at the
- * bottom, in front of the step sheet.
+ * dimension label moves just off it, two that would cover each other move apart (each stays clickable), and on a phone
+ * one under the element toolbar docked above the sheet sits just above it. On a phone the markers are larger (48 px
+ * targets) and the picker docks at the bottom, in front of the step sheet.
  *
  * Keyboard: the markers are buttons (Tab — the quiet ones are left out of the Tab order, "Elementi" has them all); in the
  * picker the arrows move between its options, Escape closes it and goes back to its "+".
@@ -25,13 +27,14 @@
 import { useIsPresent } from "framer-motion";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type KeyboardEvent, type RefObject } from "react";
 import { gapOptions, insertAtGap, type EditResult } from "@/lib/studio/edit";
+import { moduleDef } from "@/lib/studio/catalog";
 import { GAP_LABEL, planGaps, type KitchenPlan, type PlanGap } from "@/lib/studio/plan";
 import type { GapView, KitchenConfig, StudioEngineApi, ViewInfo } from "@/lib/studio/types";
 import { AddPicker, addItems, type AddItem } from "./AddPicker";
 import { gapStretch } from "./addModel";
 import { CloseIcon, PlusIcon } from "./icons";
 import { clamp, gapPlace, islandWord } from "./meta";
-import { areaOf, moveFocus, useEngineView, type Insets } from "./overlay";
+import { areaOf, moveFocus, spreadApart, useEngineView, type Insets } from "./overlay";
 import s from "./studio.module.css";
 
 const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
@@ -47,6 +50,12 @@ const LABEL = { hw: 58, hh: 15 } as const;
 const LABEL_PAD = { x: 6, y: 6 } as const;
 /** half the dot (desktop; the phone's is larger) */
 const DOT_R = 13;
+/** half the phone's dot */
+const DOT_R_DOCKED = 17;
+/** a marker's hit area (px, studio.module.css .gap) */
+const HIT = { desktop: 40, docked: 48 } as const;
+/** phone: the element toolbar docked above the step sheet (its height and the air above the sheet, Toast LIFT.toolbar) */
+const DOCKED_BAR = 74;
 
 /** where a "+" goes on screen: its anchor, moved off a dimension label it would cover */
 function spot(gv: GapView, v: ViewInfo, r: number): { x: number; y: number } {
@@ -80,6 +89,8 @@ export interface GapLayerProps {
   subtle: boolean;
   /** the first-visit coach mark points at the markers: they pulse once */
   pulse?: boolean;
+  /** phone: the element toolbar is docked above the sheet — a "+" under it sits just above it */
+  barDocked?: boolean;
   /** the gap whose picker is open (null: none) */
   openId: string | null;
   onOpen: (id: string | null) => void;
@@ -87,12 +98,39 @@ export interface GapLayerProps {
   onInsert: (r: EditResult, say: string) => void;
 }
 
-/** "slobodno 150 cm" (between two elements of a full row: one of them makes room) */
-const freeText = (g: PlanGap) => (g.kind === "seam" ? "susjedni se suzi" : `slobodno ${Math.floor(g.maxWidth)} cm`);
+/** the element a replace seam's new element takes the place of ("ladičar, 60 cm") */
+const replacedText = (g: PlanGap, plan: KitchenPlan): string | null => {
+  const r = g.replace ? plan.slots.find((x) => x.id === g.replace) : null;
+  if (!r) return null;
+  const name = moduleDef(r.zone === "island" ? "base" : r.zone, r.type)?.name ?? "element";
+  return `${lower(name)}, ${Math.round(r.width)} cm`;
+};
+/**
+ * a replace seam that would take the place of a sink / hob / dishwasher says so up front (the toast names it again after
+ * the insert): " Element za sudoper tada se uklanja — dodajte ga na drugo mjesto."
+ */
+const replacedFeature = (g: PlanGap, plan: KitchenPlan): string | null => {
+  const r = g.replace ? plan.slots.find((x) => x.id === g.replace) : null;
+  const d = r ? moduleDef(r.zone === "island" ? "base" : r.zone, r.type) : undefined;
+  if (!d?.feature) return null;
+  return `${d.name} tada se uklanja — dodajte ${d.feature === "sink" ? "ga" : "je"} na drugo mjesto.`;
+};
+/**
+ * what a "+" does, for its tooltip and label: "slobodno 150 cm"; a full row's joint: "susjedni element suzit će se"
+ * (neighbours make room) or "zamijenit će ladičar, 60 cm" (nothing can: the new element takes its place)
+ */
+const freeText = (g: PlanGap, plan: KitchenPlan) => {
+  if (g.kind !== "seam") return `slobodno ${Math.floor(g.maxWidth)} cm`;
+  if (g.replace) {
+    const r = replacedText(g, plan);
+    return r ? `zamijenit će ${r}` : "zamijenit će susjedni element";
+  }
+  return "susjedni element suzit će se";
+};
 /** "Dodaj gornji element" (plan.ts GAP_LABEL) */
 const addText = (g: PlanGap) => `Dodaj ${lower(g.label || GAP_LABEL.base)}`;
 
-export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, pulse = false, openId, onOpen, onInsert }: GapLayerProps) {
+export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, pulse = false, barDocked = false, openId, onOpen, onInsert }: GapLayerProps) {
   const all = useMemo(() => planGaps(plan), [plan]);
   // the joints of full rows ("seam") only where elements are being edited (and for the coach mark): elsewhere a "+" on
   // every joint would crowd a kitchen that has no free place at all
@@ -101,7 +139,17 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
   const popRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const lastView = useRef<ViewInfo | null>(null);
+  /** the "+" the last press began on (null: somewhere else) */
+  const downOn = useRef<Element | null>(null);
   const open = openId ? (gaps.find((g) => g.id === openId) ?? null) : null;
+
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      downOn.current = e.target instanceof Element ? e.target.closest("[data-gap-btn]") : null;
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, []);
 
   /* ---------------------------------------------------------------- placement (per frame, straight into the DOM) */
 
@@ -114,6 +162,12 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
       if (!v || !gv) return;
       const A = areaOf(v.size, insetsRef.current ?? { top: 0, right: 0, bottom: 0, left: 0 }, 8);
       const at = spot(gv, v, DOT_R);
+      const placed = document.querySelector<HTMLElement>(`[data-gap-btn="${CSS.escape(openId)}"]`)?.dataset;
+      if (placed?.x && placed.y) {
+        // where its "+" was put (moved off a neighbour)
+        at.x = Number(placed.x);
+        at.y = Number(placed.y);
+      }
       const w = card.offsetWidth;
       const h = card.scrollHeight;
       const above = at.y - POP_GAP - A.y0;
@@ -134,15 +188,37 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
     (v: ViewInfo | null) => {
       lastView.current = v;
       const ins = insetsRef.current ?? { top: 0, right: 0, bottom: 0, left: 0 };
+      const r = docked ? DOT_R_DOCKED : DOT_R;
       const A = v ? areaOf(v.size, ins, docked ? 22 : 14) : null;
+      // phone, with the element toolbar docked above the sheet: the lowest a "+" may sit (just above the toolbar)
+      const floorY = v && docked && barDocked ? v.size.h - Math.max(0, ins.bottom) - DOCKED_BAR - r - 4 : Infinity;
       const seen = new Set<string>();
+      const shown: { b: HTMLButtonElement; at: { x: number; y: number } }[] = [];
+      const hidden: { b: HTMLButtonElement; at: { x: number; y: number } }[] = [];
       for (const gv of v?.gaps ?? []) {
         const b = btns.current.get(gv.id);
-        if (!b || !A) continue;
+        if (!b || !A || !v) continue;
         seen.add(gv.id);
-        const at = v ? spot(gv, v, docked ? 17 : DOT_R) : gv.anchor;
+        const at = spot(gv, v, r);
         const on = gv.visible && at.x >= A.x0 && at.x <= A.x1 && at.y >= A.y0 && at.y <= A.y1;
-        b.style.transform = `translate3d(${Math.round(at.x)}px, ${Math.round(at.y)}px, 0)`;
+        if (on && at.y > floorY) at.y = Math.max(A.y0, floorY);
+        (on ? shown : hidden).push({ b, at });
+      }
+      // two "+" whose hit areas would overlap: apart, so each is pressed where it shows (shown ones only; the area
+      // stays the limit)
+      const pts = shown.map((x) => x.at);
+      spreadApart(pts, (docked ? HIT.docked : HIT.desktop) + 2);
+      for (const { b, at } of [...shown, ...hidden]) {
+        const on = shown.some((x) => x.b === b);
+        if (on && A) {
+          at.x = clamp(at.x, A.x0, A.x1);
+          at.y = clamp(at.y, A.y0, Math.min(A.y1, Math.max(A.y0, floorY)));
+        }
+        const x = Math.round(at.x);
+        const y = Math.round(at.y);
+        b.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        b.dataset.x = String(x);
+        b.dataset.y = String(y);
         if (on) b.dataset.on = "";
         else delete b.dataset.on;
         // out of reach while it is not shown (a focused one stays operable while it fades)
@@ -155,7 +231,7 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
       }
       placePop(v);
     },
-    [docked, insetsRef, placePop],
+    [docked, barDocked, insetsRef, placePop],
   );
 
   const present = useIsPresent();
@@ -258,6 +334,7 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
               }}
               type="button"
               className={s.gap}
+              data-gap-btn={g.id}
               data-docked={docked || undefined}
               data-subtle={(subtle && openId !== g.id) || undefined}
               // quiet markers stay out of the Tab order (they would come before the panel in every step); in
@@ -265,16 +342,22 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
               tabIndex={subtle && openId !== g.id ? -1 : undefined}
               data-zone={g.zone}
               data-open={openId === g.id || undefined}
-              aria-label={`${addText(g)}: ${where}, ${freeText(g)}`}
+              aria-label={`${addText(g)}: ${where}, ${freeText(g, plan)}`}
               aria-haspopup="dialog"
               aria-expanded={openId === g.id}
-              onClick={() => onOpen(openId === g.id ? null : g.id)}
+              onClick={(e) => {
+                // a tap that began elsewhere is not a press of this "+": on a phone, tapping a cabinet selects it and
+                // shows the joints' "+" — the tap's click then lands on one that just appeared under the finger
+                // (keyboard and programmatic clicks have detail 0)
+                if (e.detail > 0 && downOn.current !== e.currentTarget) return;
+                onOpen(openId === g.id ? null : g.id);
+              }}
             >
               <span aria-hidden="true" className={s.gapDot}>
                 <PlusIcon className="h-4 w-4" />
               </span>
               <span aria-hidden="true" className={s.gapTip}>
-                {addText(g)} · {freeText(g)}
+                {addText(g)} · {freeText(g, plan)}
               </span>
             </button>
           );
@@ -295,10 +378,18 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
                 <p className="font-display text-[16px] font-medium leading-tight">{addText(open)}</p>
                 <p className="mt-1 text-[11.5px] leading-snug text-mut">
                   {open.kind === "seam" ? (
-                    <>{gapPlace(open, cfg.layout)}. Nema slobodnog mjesta — susjedni element suzit će se koliko treba.</>
+                    open.replace ? (
+                      <>
+                        {gapPlace(open, cfg.layout)}. Nema mjesta — novi element zamijenit će susjedni
+                        {replacedText(open, plan) ? <> ({replacedText(open, plan)})</> : null}.
+                        {replacedFeature(open, plan) ? <> {replacedFeature(open, plan)}</> : null}
+                      </>
+                    ) : (
+                      <>{gapPlace(open, cfg.layout)}. Nema slobodnog mjesta — susjedni element suzit će se koliko treba.</>
+                    )
                   ) : (
                     <>
-                      {gapPlace(open, cfg.layout)} · <span className="tabular-nums">{freeText(open)}</span>.{grows(open)}
+                      {gapPlace(open, cfg.layout)} · <span className="tabular-nums">{freeText(open, plan)}</span>.{grows(open)}
                     </>
                   )}
                 </p>

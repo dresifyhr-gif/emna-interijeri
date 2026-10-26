@@ -126,3 +126,105 @@ export function moveFocus(root: HTMLElement, e: { key: string; target: EventTarg
   if (next !== cur) next.focus();
   return true;
 }
+
+const clampTo = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/**
+ * Two "+" closer than `min` px (centres) cover each other: the later one moves away from the earlier one (straight up
+ * when they coincide), a few passes, so every marker stays clickable. In place.
+ */
+export function spreadApart(pts: { x: number; y: number }[], min: number): void {
+  for (let pass = 0; pass < 3; pass++) {
+    let moved = false;
+    for (let i = 0; i < pts.length; i++)
+      for (let j = i + 1; j < pts.length; j++) {
+        const a = pts[i];
+        const b = pts[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const d = Math.hypot(dx, dy);
+        if (d >= min - 0.5) continue;
+        const ux = d > 0.5 ? dx / d : 0;
+        const uy = d > 0.5 ? dy / d : -1;
+        b.x = a.x + ux * min;
+        b.y = a.y + uy * min;
+        moved = true;
+      }
+    if (!moved) return;
+  }
+}
+
+/**
+ * Phone toast (Toast.tsx): its one line goes under the top bar instead of just above the sheet when the line there
+ * (`foot`: its bottom edge, px) would cover more than the top would (`top`: the top bar's bottom edge) — the middle of
+ * the 3D view (`mid`: where the kitchen is framed), the "+" (`dots`: their centres' y), and, with the element toolbar
+ * docked above the sheet (`raised`), the "+" lower down (GapLayer lifts them to just above the toolbar: under the line)
+ * and the selected element when it stands on the floor (`selLow`: low in the view; its rect is not known yet right after
+ * an edit — the engine rebuilds and selects it later).
+ */
+export function toastAtTop(o: { top: number; foot: number; mid: number; lineH: number; drop: number; dots: number[]; raised: boolean; selLow: boolean }): boolean {
+  const cost = (y0: number, y1: number) => (y0 <= o.mid && y1 >= o.mid ? 100 : 0) + o.dots.filter((y) => y >= y0 - 20 && y <= y1 + 20).length;
+  const low = o.raised ? o.dots.filter((y) => y > o.foot + 20).length + (o.selLow ? 3 : 0) : 0;
+  return cost(o.top + o.drop, o.top + o.drop + o.lineH) < cost(o.foot - o.lineH, o.foot) + low;
+}
+
+/** a coach card keeps this far from what it points at (CoachMarks) */
+const CARD_GAP = 16;
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+/** px² two rectangles share */
+export const overlapArea = (a: Rect, b: Rect) =>
+  Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+
+/**
+ * Where the card goes: below or above its target (`at`; centred on it, else shifted sideways while the caret still
+ * reaches it), else a waiting place (`rest`, in order). The first place that covers nothing in `keep` (the control in
+ * use: the selected element, its toolbar, the focused control) wins; among those, the one covering the fewest of `dots`
+ * (the other "+"). x / y are the card's top left; side: where the target is ("below": the card is below it); cost: how
+ * bad the place is (≥ 1e6: it covers something in `keep`), to compare targets.
+ */
+export function placeCard(
+  size: { w: number; h: number },
+  A: Area,
+  at: { x: number; y: number } | null,
+  rest: { x: number; y: number }[],
+  keep: Rect[],
+  dots: Rect[],
+): { x: number; y: number; side: "below" | "above" | "none"; cost: number } {
+  const { w, h } = size;
+  const fit = (x: number, y: number) => ({ x: clampTo(x, A.x0, Math.max(A.x0, A.x1 - w)), y: clampTo(y, A.y0, Math.max(A.y0, A.y1 - h)) });
+  const cands: { x: number; y: number; side: "below" | "above" | "none"; pref: number }[] = [];
+  if (at) {
+    const below = at.y + CARD_GAP + 14;
+    const above = at.y - CARD_GAP - 14 - h;
+    // below first when the labels sit high (mark 3) and there is room; the target must stay outside the card
+    const order: ("below" | "above")[] = below + h <= A.y1 || above < A.y0 ? ["below", "above"] : ["above", "below"];
+    order.forEach((side, k) => {
+      for (const [j, dx] of [0, -(w / 2 - 34), w / 2 - 34].entries()) {
+        const p = fit(at.x - w / 2 + dx, side === "below" ? below : above);
+        // a clamped card that now lies over its target, or whose caret no longer reaches it, is no place for it
+        if ((at.y >= p.y - 4 && at.y <= p.y + h + 4) || at.x - p.x < 18 || at.x - p.x > w - 18) continue;
+        cands.push({ ...p, side, pref: k * 3 + j });
+      }
+    });
+  }
+  rest.forEach((p, k) => cands.push({ ...fit(p.x, p.y), side: "none", pref: 10 + k }));
+  let best = cands[0] ?? { ...fit(rest[0]?.x ?? A.x0, rest[0]?.y ?? A.y0), side: "none" as const, pref: 0 };
+  let bestCost = Infinity;
+  for (const c of cands) {
+    const box = { x: c.x, y: c.y, w, h };
+    const hard = keep.reduce((n, r) => n + overlapArea(box, r), 0);
+    const soft = dots.filter((r) => overlapArea(box, r) > 0).length;
+    const cost = (hard > 0 ? 1e6 + hard : 0) + soft * 10 + c.pref;
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = c;
+    }
+  }
+  return { x: best.x, y: best.y, side: best.side, cost: bestCost };
+}

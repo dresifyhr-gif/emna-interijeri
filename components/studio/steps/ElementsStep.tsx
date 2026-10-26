@@ -5,12 +5,16 @@
  * A front-view drawing of the wall (clickable) and the rows below it open the element editor; pointing at a row
  * (or focusing it) lights the element up in 3D. A tall unit standing in a wall's base run is listed in the base row, in
  * its place between the cabinets ("visoki"); "Visoki stup" lists the columns at the run's ends.
+ *
+ * A tall column is an element like any other — there is no switch for it: a "+" (a run's end, between two cabinets),
+ * "Zamijeni" or the editor's "Dodaj lijevo / desno" adds one, "Ukloni" on one of its units takes the unit or the whole
+ * column away (ElementToolbar / ElementEditor), "Vrati sve elemente na zadano" brings the planner's column back.
  */
 import { useEffect } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
 import { isEdited } from "@/lib/studio/edit";
-import { planGaps, type PlanSlot, type RunId } from "@/lib/studio/plan";
-import { Notes, Segmented, SectionLabel, ToggleRow } from "../controls";
+import { planGaps, planKitchen, sanitizeConfig, type PlanSlot, type RunId } from "@/lib/studio/plan";
+import { Notes, Segmented, SectionLabel } from "../controls";
 import { ChevronRight, ModuleGlyph, PlusIcon, ResetIcon } from "../icons";
 import { isInRunTall, islandWord, rowName, rowSlots, runName, sideHint, type RowZone } from "../meta";
 import { RunElevation } from "../RunElevation";
@@ -32,16 +36,30 @@ export interface ElementsUi {
 
 const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 
-export function ElementsStep({ cfg, plan, update, compact, engine, elements }: StepProps & { elements: ElementsUi }) {
+export function ElementsStep({ cfg, plan, edit, compact, engine, elements }: StepProps & { elements: ElementsUi }) {
   const { selectedId, onOpen, onHover, onRunTab, onReset, onResetAll } = elements;
   // nothing stays lit when the step goes away
   useEffect(() => () => onHover(null), [onHover]);
   const runs: RunId[] = [...plan.walls, ...(plan.island ? (["isl"] as const) : [])];
   const run = runs.includes(elements.runTab) ? elements.runTab : runs[0];
-  // the main column at a run's end (the switch below); tall units standing in a base run are not it
+  // the main column at a run's end (named below when it stands on another wall); tall units standing in a base run are not it
   const tallSlot = plan.slots.find((s) => s.zone === "tall" && s.list?.id === "tall");
   const tallWall = tallSlot?.run ?? null;
-  const inRun = plan.slots.filter(isInRunTall);
+  const anyTall = plan.slots.some((s) => s.zone === "tall");
+  /**
+   * the planner's column was removed ("Ukloni stup"): one tap brings it back where the planner puts it (one undo step) —
+   * refused when it no longer fits (the "+" and "Zamijeni" still add tall units wherever one can stand)
+   */
+  const bringTallBack = () => {
+    const next = sanitizeConfig({ ...cfg, tall: true });
+    const fits = planKitchen(next).slots.some((s) => s.zone === "tall" && s.list?.id === "tall");
+    edit(
+      fits
+        ? { cfg: next, ok: true, warning: null, slotId: null }
+        : { cfg, ok: false, warning: "Zadani visoki stup uz ove mjere ne stane — visoki element dodajte znakom „+” ili s „Zamijeni”.", slotId: null },
+      { notify: true, say: "Zadani visoki stup je vraćen." },
+    );
+  };
 
   const rows: RowZone[] = run === "isl" ? ["island"] : ["upper", "base", "tall"];
   const wallEdited =
@@ -53,8 +71,8 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
   // what the kitchen label in 3D says: the cabinets (bare floor at an open end is not part of them)
   const cab = runPlan ? (runPlan.cabinets ?? runPlan.kitchen) : null;
   const kitchenLen = cab ? Math.round(cab.to - cab.from) : len;
-  // a "+" on a free place somewhere in 3D; else one between elements of a full row (a neighbour gets narrower); else
-  // the hint says how to make room
+  // a "+" on a free place somewhere in 3D; every full row has one between two elements too (neighbours get narrower,
+  // or the new element takes one's place); with none at all the hint says how to make room
   const gapsNow = planGaps(plan);
   const anyFree = gapsNow.some((g) => g.kind !== "seam");
   const anySeam = !anyFree && gapsNow.length > 0;
@@ -134,49 +152,52 @@ export function ElementsStep({ cfg, plan, update, compact, engine, elements }: S
         </button>
       )}
 
-      <div className="mt-7">
-        <ToggleRow
-          title="Visoki stup"
-          description={
-            <>
-              Hladnjak i pećnica u visini očiju. Aparati nisu u okvirnoj cijeni.
-              {inRun.length > 0 && " Visoki elementi u nizu između donjih ostaju i kad je stup isključen."}
-              {tallWall && tallWall !== run && (
-                <>
-                  {" "}
-                  <button
-                    type="button"
-                    onClick={() => onRunTab(tallWall)}
-                    className="text-fg underline decoration-white/30 underline-offset-4 transition-colors hover:decoration-accent"
-                  >
-                    Stoji uz {tallWall === "isl" ? islandWord(cfg.layout).toLowerCase() : `zid ${tallWall.toUpperCase()}`}
-                  </button>
-                  .
-                </>
-              )}
-            </>
-          }
-          checked={cfg.tall}
-          onChange={(v) => update({ tall: v })}
-        />
-      </div>
-
       {engine && (
-        <p className="mt-5 flex items-center gap-2.5 text-[12px] leading-snug text-mut">
+        <p className="mt-7 flex items-center gap-2.5 text-[12px] leading-snug text-mut">
           <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent/50 text-accent">
             <PlusIcon className="h-3.5 w-3.5" />
           </span>
           {anyFree
-            ? "Znak + u 3D prikazu dodaje element na slobodno mjesto — na zidu, na podu i na kraju kuhinje."
+            ? "Znak + u 3D prikazu dodaje element — na slobodno mjesto, na kraj kuhinje ili između dva elementa (susjedni se suzi)."
             : anySeam
-              ? "Sve je popunjeno: znak + između dva elementa dodaje novi, a susjedni se suzi i napravi mu mjesto."
+              ? "Sve je popunjeno: znak + između dva elementa dodaje novi — susjedni se suzi i napravi mu mjesto, a gdje ne može, novi ga zamijeni."
               : "Sve je popunjeno: kliknite element pa + lijevo ili + desno — element se suzi i napravi mjesto novome."}
         </p>
       )}
-      {engine && run !== "isl" && (
-        // the owner: "kako mogu ubaciti stup na drugi zid" — on any wall, also where no "+" is left
-        <p className="mt-2 pl-[34px] text-[12px] leading-snug text-mut">Visoki element (stup) ide na „+” ili umjesto postojećeg: kliknite element pa „Zamijeni”.</p>
-      )}
+      {/* the tall column: no switch — added and removed like any other element (the owner: "kako mogu ubaciti stup na drugi zid") */}
+      <p className={`text-[12px] leading-snug text-mut ${engine ? "mt-2 pl-[34px]" : "mt-7"}`}>
+        Visoki stup (hladnjak, pećnica u visini očiju) dodajete{" "}
+        {engine
+          ? "znakom „+” ili umjesto postojećeg elementa — kliknite ga pa „Zamijeni”."
+          : "s popisa: odaberite element pa „Visoki element umjesto ovoga” ili „Dodaj lijevo / desno”."}
+        {anyTall && " Uklanjate ga s „Ukloni” na njegovom elementu."} Aparati nisu u okvirnoj cijeni.
+        {!cfg.tall && (
+          <>
+            {" "}
+            <button
+              type="button"
+              onClick={bringTallBack}
+              className="text-fg underline decoration-white/30 underline-offset-4 transition-colors hover:decoration-accent"
+            >
+              Vrati zadani visoki stup
+            </button>
+            .
+          </>
+        )}
+        {tallWall && tallWall !== run && (
+          <>
+            {" "}
+            <button
+              type="button"
+              onClick={() => onRunTab(tallWall)}
+              className="text-fg underline decoration-white/30 underline-offset-4 transition-colors hover:decoration-accent"
+            >
+              Visoki stup stoji uz {tallWall === "isl" ? islandWord(cfg.layout).toLowerCase() : `zid ${tallWall.toUpperCase()}`}
+            </button>
+            .
+          </>
+        )}
+      </p>
 
       {isEdited(cfg) && (
         <button

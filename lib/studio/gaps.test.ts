@@ -122,69 +122,138 @@ describe('wall "+"', () => {
 });
 
 describe('a full row: "+" between its elements (the owner: "nema na zidu plus da dodam novi element")', () => {
-  it("every default kitchen has a '+' on the wall: between two wall units, one of them gets narrower", () => {
+  it("every row of every default kitchen has a '+': between two elements (the row makes room) or in an element's place", () => {
     for (const layout of LAYOUTS) {
       const c = kitchen({ layout });
       const p = planKitchen(c);
-      const seams = planGaps(p).filter((g) => g.kind === "seam");
-      assert.ok(seams.some((g) => g.zone === "upper"), `${layout}: ${planGaps(p).map((g) => g.id).join(", ")}`);
-      for (const g of seams) {
+      const gaps = planGaps(p);
+      // every wall base row, wall-unit row and the island / peninsula row (the owner: "nema na zidu plus")
+      for (const l of p.lists.filter((x) => x.zone !== "tall" && p.slots.some((s) => s.list?.id === x.id))) {
+        assert.ok(gaps.some((g) => g.list === l.id), `${layout} ${l.id}: no "+" (${gaps.map((g) => g.id).join(", ")})`);
+      }
+      for (const g of gaps.filter((x) => x.kind === "seam")) {
+        const where = `${layout} ${g.id}`;
         // between base cabinets of a wall run a tall unit can stand too (it says so when one fits); the island's own
         const tall = gapOptions(c, g.id)!.tall.some((t) => (t.fitting?.length ?? 0) > 0);
         const want =
           g.zone === "upper" ? GAP_LABEL.upper : g.zone === "island" ? (layout === "otok" ? GAP_LABEL.island : GAP_LABEL.peninsula) : tall ? GAP_LABEL.baseOrTall : GAP_LABEL.base;
-        assert.equal(g.label, want, `${layout} ${g.id}`);
+        assert.equal(g.label, want, where);
         if (g.zone === "island") assert.ok(!tall, "no tall unit on the island");
-        assert.ok(g.maxWidth >= 30, `${layout} ${g.id}: ${g.maxWidth}`);
+        assert.ok(g.maxWidth >= (g.replace ? 15 : 30), `${where}: ${g.maxWidth}`);
         assert.ok(g.split && g.split <= g.maxWidth);
-        const [l, r] = g.between!.map((id) => p.slots.find((s) => s.id === id)!);
-        assert.ok(Math.abs(l.x + l.width - r.x) < 0.5 && g.at.x === r.x, `${g.id}: at the joint`);
         assert.equal(g.at.z, (g.zone === "upper" ? 35 : 60) + 0.5, "on the fronts");
-        assert.equal(firstInsertWorks(c, g), null, `${layout} ${g.id}`);
-        // what the picker starts with goes in between the two, the others keep their widths
+        const [l, r] = g.between!.map((id) => p.slots.find((s) => s.id === id));
+        // at the joint of the two (one of them may stand outside the row, or be nothing: the wall, the window)
+        if (l && r) assert.ok(Math.abs(l.x + l.width - r.x) < 2.5 && g.at.x >= l.x + l.width - 0.5 && g.at.x <= r.x + 0.5, `${where}: at the joint`);
+        assert.equal(firstInsertWorks(c, g), null, where);
+        // a 30 cm element (else the narrowest that fits) goes in
         const o = gapOptions(c, g.id)!;
-        const t = o.types.find((x) => (x.fitting ?? []).includes(30))!;
-        const res = insertAtGap(c, g.id, t.id, 30);
-        assert.ok(res.ok, `${layout} ${g.id}: ${res.warning}`);
+        const t = o.types.find((x) => (x.fitting ?? []).includes(30)) ?? o.types.find((x) => (x.fitting?.length ?? 0) > 0)!;
+        const w = (t.fitting ?? []).includes(30) ? 30 : t.fitting![0];
+        const res = insertAtGap(c, g.id, t.id, w);
+        assert.ok(res.ok, `${where}: ${res.warning}`);
         const q = planKitchen(res.cfg);
         const row = q.slots.filter((s) => s.list?.id === g.list).sort((m, n) => m.x - n.x);
-        const at = row.findIndex((s) => s.id === res.slotId);
-        assert.ok(at > 0 && at < row.length - 1, `${g.id}: between two elements`);
-        assert.equal(row[at - 1].type, l.type);
-        assert.equal(row[at + 1].type, r.type);
         const before = p.slots.filter((s) => s.list?.id === g.list).sort((m, n) => m.x - n.x);
-        assert.equal(row.length, before.length + 1);
+        const at = row.findIndex((s) => s.id === res.slotId);
+        assert.ok(at >= 0, `${where}: the new element is selected`);
+        if (g.replace) {
+          // nothing could make room: it took that element's place, the others are as they were
+          const gone = before.findIndex((s) => s.id === g.replace);
+          assert.equal(at, gone, `${where}: in the replaced element's place`);
+          assert.ok(row.length <= before.length + 1, where);
+          assert.match(res.warning ?? "", /stoji umjesto susjednog/, where);
+          continue;
+        }
+        assert.equal(row.length, before.length + 1, where);
+        if (l?.list?.id === g.list) assert.equal(row[at - 1].type, l.type, `${where}: after ${l.id}`);
+        if (r?.list?.id === g.list) assert.equal(row[at + 1].type, r.type, `${where}: before ${r.id}`);
+        // who got narrower: only those the gap says may, never below 30 cm, never a corner unit or the hood
         const narrower = before.filter((s, i) => row[i < at ? i : i + 1].width !== s.width);
-        assert.ok(narrower.length <= 1 && narrower.every((s) => s.id === l.id || s.id === r.id), `${g.id}: only a neighbour gets narrower`);
-        if (narrower.length) assert.match(res.warning ?? "", /napravljeno je mjesto: .* sada je \d+ cm umjesto \d+ cm/);
+        for (const s of narrower) {
+          assert.ok(g.narrow?.includes(s.id), `${where}: ${s.id} got narrower`);
+          assert.ok(!s.corner && !s.anchored && row[before.indexOf(s) < at ? before.indexOf(s) : before.indexOf(s) + 1].width >= 30, `${where}: ${s.id}`);
+        }
+        // one element that can make room alone is the only one that gets narrower
+        if (narrower.length > 1) {
+          const need = 30 - (g.room ?? 0);
+          const alone = (g.narrow ?? []).some((id) => {
+            const s = p.slots.find((x) => x.id === id)!;
+            const d = catalog.modules.find((m) => m.zone === (g.zone === "upper" ? "upper" : "base") && m.id === s.type)!;
+            return d.widths.some((x) => x >= 30 && x < s.width && s.width - x >= need - 0.5);
+          });
+          assert.ok(!alone, `${where}: ${narrower.map((s) => s.id).join(", ")} narrower where one would do`);
+        }
+        if (narrower.length) assert.match(res.warning ?? "", /napravljeno je mjesto/);
       }
     }
   });
 
-  it("only rows with no other '+'; never beside a corner unit, and a hood never gets narrower", () => {
-    // the owner's wall B has bare floor (its own "+"): no joints there; wall A is full
-    const p = planKitchen(ownerB());
-    const gaps = planGaps(p);
-    assert.ok(!gaps.some((g) => g.kind === "seam" && g.run === "b"), gaps.map((g) => g.id).join(", "));
-    for (const c of [...LAYOUTS.map((layout) => kitchen({ layout })), kitchen({ layout: "U", walls: { a: 400, b: 350, c: 350 } })]) {
-      const q = planKitchen(c);
-      const lists = planGaps(q)
-        .filter((x) => x.kind === "seam")
-        .map((x) => x.list);
-      assert.equal(new Set(lists).size, lists.length, `one "+" per full row: ${lists.join(", ")}`);
-      for (const g of planGaps(q).filter((x) => x.kind === "seam")) {
-        const pair = g.between!.map((id) => q.slots.find((s) => s.id === id)!);
-        assert.ok(pair.every((s) => !s.corner), `${g.id}: beside a corner unit`);
-        const o = gapOptions(c, g.id)!;
-        for (const t of o.types.filter((x) => x.width !== null)) {
-          const r = insertAtGap(c, g.id, t.id, t.width!);
-          if (!r.ok) continue;
-          const hood0 = q.slots.find((s) => s.anchored);
-          const hood1 = planKitchen(r.cfg).slots.find((s) => s.anchored);
-          if (hood0) assert.equal(hood1?.width, hood0.width, `${g.id} ${t.id}: the hood kept its width`);
-        }
-      }
+  it("default ravna / U and wall B of the default L show a base '+'; a row nothing can make room in replaces an element", () => {
+    for (const [layout, wall] of [
+      ["ravna", "a"],
+      ["U", "a"],
+      ["U", "b"],
+      ["L", "b"],
+    ] as [Layout, WallId][]) {
+      const g = planGaps(planKitchen(kitchen({ layout }))).find((x) => x.list === wall && x.zone === "base");
+      assert.ok(g && g.kind === "seam" && !g.replace, `${layout} ${wall}`);
     }
+    // U wall C: one 30 cm cabinet between the corner unit and the tall column — it is replaced, never squeezed
+    const u = kitchen({ layout: "U" });
+    const gc = planGaps(planKitchen(u)).find((x) => x.list === "c")!;
+    assert.ok(gc.replace, gc.id);
+    const old = planKitchen(u).slots.find((s) => s.id === gc.replace)!;
+    const o = gapOptions(u, gc.id)!;
+    assert.ok(!o.types.find((t) => t.id === old.type)?.fitting?.includes(old.width), "not itself again");
+    const t = o.types.find((x) => x.id === "ladice" && x.fitting?.includes(30))!;
+    const r = insertAtGap(u, gc.id, t.id, 30);
+    assert.ok(r.ok, r.warning ?? "");
+    assert.deepEqual(r.cfg.runs?.c?.filter((e) => e.type !== "filer"), [{ type: "ladice", width: 30 }]);
+    // the default L's wall B wall units (a 45 / 30 cm pair beside the hood): the "+" replaces one of them
+    const l = kitchen({ layout: "L" });
+    const gu = planGaps(planKitchen(l)).find((x) => x.list === "b:u")!;
+    assert.ok(gu.replace, gu.id);
+    const ru = insertAtGap(l, gu.id, "polica", 30);
+    assert.ok(ru.ok, ru.warning ?? "");
+    const hood = (c: KitchenConfig) => planKitchen(c).slots.find((s) => s.run === "b" && s.anchored)!;
+    assert.deepEqual([hood(ru.cfg).x, hood(ru.cfg).width], [hood(l).x, hood(l).width], "the hood stays");
+    // a row at MAX_LIST (30 elements) has no room for one more: its "+" replaces
+    const many = kitchen({ layout: "ravna", walls: { a: 800, b: 220, c: 220 }, tall: false, upperRuns: { a: Array.from({ length: 30 }, () => ({ type: "nisa", width: 20 })) } });
+    const gm = planGaps(planKitchen(many)).find((x) => x.list === "a:u");
+    assert.ok(gm?.replace, gm?.id);
+    assert.ok(insertAtGap(many, gm.id, "vrata", 30).ok || insertAtGap(many, gm.id, "nisa", 15).ok);
+  });
+
+  it("a full base row makes room for a 30 cm cabinet with several cabinets narrower, plain ones first", () => {
+    // ravna: dishwasher 60, sink 60, drawers 40, hob 60, drawers 30 — no one cabinet gives 26 cm: two of them do
+    const c = kitchen({ layout: "ravna" });
+    const g = planGaps(planKitchen(c)).find((x) => x.list === "a")!;
+    const r = insertAtGap(c, g.id, "vrata", 30);
+    assert.ok(r.ok, r.warning ?? "");
+    assert.match(r.warning ?? "", /napravljeno je mjesto, uži su: /);
+    const widths = (r.cfg.runs?.a ?? []).filter((e) => e.type !== "filer").map((e) => `${e.type}:${e.width}`);
+    assert.ok(widths.includes("vrata:30"), widths.join(" "));
+    assert.ok(widths.every((x) => Number(x.split(":")[1]) >= 30), widths.join(" "));
+    // U wall B: drawers 45, the hob, drawers 50 and 3 cm free — neither drawer alone gives 27 cm, both go to 30 (the hob stays)
+    const u = kitchen({ layout: "U" });
+    const gb = planGaps(planKitchen(u)).find((x) => x.list === "b")!;
+    const rb = insertAtGap(u, gb.id, "vrata", 30);
+    assert.ok(rb.ok, rb.warning ?? "");
+    assert.deepEqual(
+      (rb.cfg.runs?.b ?? []).filter((e) => e.type !== "filer").map((e) => `${e.type}:${e.width}`),
+      ["ladice:30", "ploca:60", "vrata:30", "ladice:30"],
+    );
+    // the default L's wall A: the sink (80 cm) alone makes room beside the dishwasher — nothing else changes
+    const l = kitchen({ layout: "L" });
+    const ga = planGaps(planKitchen(l)).find((x) => x.list === "a")!;
+    const ra = insertAtGap(l, ga.id, "vrata", 30);
+    assert.ok(ra.ok, ra.warning ?? "");
+    assert.deepEqual(
+      (ra.cfg.runs?.a ?? []).filter((e) => e.type !== "filer").map((e) => `${e.type}:${e.width}`),
+      ["sudoper:50", "vrata:30", "perilica:60"],
+    );
+    assert.match(ra.warning ?? "", /element za sudoper sada je 50 cm umjesto 80 cm/);
   });
 
   it("a plain cabinet gives way before the sink; base runs use their free cm first", () => {

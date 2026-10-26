@@ -6,8 +6,9 @@
  * units too, beside a base cabinet of a wall run), the width, another type in the same place (on a base cabinet or a
  * wall unit of a wall run also a tall unit: it takes the place of both, and when that takes another element away a
  * short line asks first — "Ukloniti donji i gornji element i staviti visoki?"; a tall unit standing in the run can
- * become a base cabinet again), remove (with a 3 s "Poništi" toast), the mechanism demo, and "Više" for the full
- * element editor in the panel.
+ * become a base cabinet again), remove (with a 3 s "Poništi" toast; on a unit of a tall column with more units in it a
+ * short choice: this unit or the whole column — there is no "Visoki stup" switch), the mechanism demo, and "Više" for
+ * the full element editor in the panel.
  *
  * Position: from the engine's ViewInfo (api.subscribe), written straight into the DOM — no React render per frame,
  * and nothing here asks the engine to render. It sits above the element and clear of the engine's "60 cm" tag,
@@ -42,13 +43,13 @@ import { AddPicker, addItems, type AddItem } from "./AddPicker";
 import { gapStretch } from "./addModel";
 import type { ApplyOptions } from "./ElementEditor";
 import { ChevronDown, CloseIcon, InsertIcon, ModuleGlyph, MoreIcon, PlayIcon, SwapIcon, TrashIcon } from "./icons";
-import { clamp, isFlipped, isInRunTall, islandWord, noRoomText, rowOf, rowSlots } from "./meta";
+import { clamp, columnSlots, elementsCount, isFlipped, isInRunTall, islandWord, noRoomText, rowOf, rowSlots } from "./meta";
 import { areaOf, keepAbove, moveFocus, useEngineView, type Area, type Insets } from "./overlay";
 import s from "./studio.module.css";
 import { baseChoices, tallSwap } from "./tallSwap";
 
 type Side = "left" | "right";
-type PopKind = "add-left" | "add-right" | "width" | "type";
+type PopKind = "add-left" | "add-right" | "width" | "type" | "remove";
 
 /** gap between the element (or its width tag) and the bar */
 const GAP = 12;
@@ -88,6 +89,8 @@ export interface ElementToolbarProps {
   onEdit: (r: EditResult, opts?: ApplyOptions) => boolean;
   onRefuse: (text: string) => void;
   onRemove: () => void;
+  /** the whole tall column the selected unit stands in goes ("Ukloni cijeli stup") */
+  onRemoveColumn?: () => void;
   onDemo: () => void;
   onMore: () => void;
   /** Escape with no picker open: clear the selection */
@@ -110,6 +113,7 @@ export function ElementToolbar({
   onEdit,
   onRefuse,
   onRemove,
+  onRemoveColumn,
   onDemo,
   onMore,
   onClose,
@@ -167,7 +171,10 @@ export function ElementToolbar({
   const inRunTall = isInRunTall(slot);
   // a tall unit standing in the run: the base cabinets it can become again (planned only while "Zamijeni" is open)
   const backTypes = useMemo(() => (kind === "type" && inRunTall ? baseChoices(cfg, slot) : []), [kind, inRunTall, cfg, slot]);
-  const removeLabel = spacer ? "Zatvori razmak" : slot.zone === "upper" ? "Ukloni (zid ostaje prazan)" : "Ukloni element";
+  /** a unit of a tall column with more units in it: "Ukloni" asks — this unit, or the whole column */
+  const column = useMemo(() => columnSlots(plan, slot), [plan, slot]);
+  const wholeColumn = column.length > 1 && Boolean(onRemoveColumn);
+  const removeLabel = spacer ? "Zatvori razmak" : slot.zone === "upper" ? "Ukloni (zid ostaje prazan)" : wholeColumn ? "Ukloni element ili cijeli stup" : "Ukloni element";
   const removeReason = () => remove(cfg, slot.id).warning ?? "Ovaj element se ne može ukloniti.";
   const widthNote = spacer
     ? `Slobodan prostor od ${width} cm. Pod „Zamijeni” odaberite element koji će ga zauzeti.`
@@ -445,8 +452,12 @@ export function ElementToolbar({
     const w = widthOf(r);
     after(onEdit(r, { toast: `Element je sada ${lower(t.name)}${w ? `, ${Math.round(w)} cm` : ""}.` }), "type");
   };
-  const typeOrRefuse = (t: TypeChoice) =>
-    t.width === null ? setReason({ id: slot.id, kind: "type", text: changeType(cfg, slot.id, t.id).warning ?? `${t.name} ovdje ne stane.` }) : doType(t);
+  const typeOrRefuse = (t: TypeChoice) => {
+    // another pick: a tall unit's open question is no longer the current one
+    setAsk(null);
+    if (t.width === null) setReason({ id: slot.id, kind: "type", text: changeType(cfg, slot.id, t.id).warning ?? `${t.name} ovdje ne stane.` });
+    else doType(t);
+  };
   /** the tall unit in this element's place; when that takes another element away, ask first (a second press confirms) */
   const doTall = (t: TypeChoice, confirmed = false) => {
     if (t.width === null) {
@@ -468,7 +479,7 @@ export function ElementToolbar({
     const w = widthOf(sw.result);
     after(onEdit(sw.result, { toast: `${t.name}${w ? `, ${Math.round(w)} cm` : ""}.` }), "type");
   };
-  const doRemove = () => (info.canRemove ? onRemove() : onRefuse(removeReason()));
+  const doRemove = () => (wholeColumn ? open("remove") : info.canRemove ? onRemove() : onRefuse(removeReason()));
   const addOrRefuse = (sd: Side) => (canAdd(sd) ? open(sd === "left" ? "add-left" : "add-right") : onRefuse(addReason(sd)));
 
   /** the neighbouring element in the drawing (← →), or the wall unit above / base cabinet below (↑ ↓) */
@@ -530,6 +541,7 @@ export function ElementToolbar({
     "add-right": "Novi element desno",
     width: "Širina",
     type: "Zamijeni element",
+    remove: "Ukloni",
   };
   /**
    * the last element before a free end of the run on that side: the "+" there (bare floor, bare wall the kitchen can
@@ -565,6 +577,7 @@ export function ElementToolbar({
       return info.free >= 1 ? `Slobodno je još ${Math.floor(info.free)} cm.` : "Novi element zauzima slobodan prostor do njega.";
     }
     if (k === "width") return widthNote ?? `${name} · sada ${width} cm`;
+    if (k === "remove") return `${name} stoji u visokom stupu (${elementsCount(column.length)}: ${column.map((x) => lower(moduleDef(x.zone, x.type)?.name ?? "element")).join(", ")}).`;
     if (inRunTall) return `${name}, ${width} cm — drugi visoki element ili opet donji element na ovom mjestu.`;
     return `${name}, ${width} cm — odaberite što će stajati na ovom mjestu.`;
   };
@@ -599,7 +612,7 @@ export function ElementToolbar({
           Strelice lijevo i desno biraju susjedni element, gore i dolje gornji ili donji element. Delete uklanja, Escape zatvara.
         </p>
         <div className={s.tbInner}>
-          <div ref={barRef} className={s.tbBar}>
+          <div ref={barRef} className={s.tbBar} data-tb-bar="">
             {!docked && (
               <span aria-hidden="true" className="max-w-[150px] truncate pl-2.5 pr-1.5 text-[12px] font-medium text-fg/85">
                 {name}
@@ -674,7 +687,11 @@ export function ElementToolbar({
               tip={`${removeLabel} · Delete`}
               caption="ukloni"
               danger
-              disabledWhy={info.canRemove ? undefined : removeReason()}
+              disabledWhy={info.canRemove || wholeColumn ? undefined : removeReason()}
+              expanded={wholeColumn ? kind === "remove" : undefined}
+              btnRef={(el) => {
+                triggers.current.remove = el;
+              }}
               keys="Delete"
               onClick={doRemove}
             >
@@ -737,6 +754,34 @@ export function ElementToolbar({
                     onPick={(w, fits, why) => (fits ? doWidth(w) : setReason({ id: slot.id, kind: "width", text: why ?? `Za ${w} cm nema mjesta.` }))}
                     onPeek={(why) => setReason(why ? { id: slot.id, kind: "width", text: why } : null)}
                   />
+                )}
+                {kind === "remove" && (
+                  <div className="grid gap-1.5 px-2 pb-1.5 pt-0.5">
+                    <RemoveChoice
+                      row={0}
+                      docked={docked}
+                      title={`Samo ${lower(name)}, ${width} cm`}
+                      sub="Ostali elementi stupa ostaju."
+                      why={info.canRemove ? null : removeReason()}
+                      onClick={() => {
+                        setPop(null);
+                        onRemove();
+                      }}
+                      onRefuse={onRefuse}
+                    />
+                    <RemoveChoice
+                      row={1}
+                      docked={docked}
+                      title="Cijeli visoki stup"
+                      sub={`${elementsCount(column.length)} · ${Math.round(column.reduce((n, x) => n + x.width, 0))} cm`}
+                      why={null}
+                      onClick={() => {
+                        setPop(null);
+                        onRemoveColumn?.();
+                      }}
+                      onRefuse={onRefuse}
+                    />
+                  </div>
                 )}
                 {kind === "type" && (
                   <TypeGrid
@@ -931,6 +976,45 @@ function ToolButton({
       </span>
       {docked && <span className={s.tbCap}>{caption}</span>}
       {!docked && <Tip>{off ? disabledWhy : (tip ?? label)}</Tip>}
+    </button>
+  );
+}
+
+/** one way of removing in the "Ukloni" picker of a tall unit (this unit / the whole column) */
+function RemoveChoice({
+  row,
+  docked,
+  title,
+  sub,
+  why,
+  onClick,
+  onRefuse,
+}: {
+  row: number;
+  docked: boolean;
+  title: string;
+  sub: string;
+  /** why it cannot be done (the press says it); null: it can */
+  why: string | null;
+  onClick: () => void;
+  onRefuse: (text: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-row={row}
+      data-col={0}
+      aria-disabled={why ? true : undefined}
+      onClick={() => (why ? onRefuse(why) : onClick())}
+      className={`flex w-full items-center gap-3 rounded-xl border px-3 text-left transition-[border-color,background-color,color] duration-300 ease-premium ${
+        docked ? "min-h-[52px]" : "min-h-11"
+      } ${why ? "border-white/[0.05] text-fg/35" : "border-white/10 text-fg/85 hover:border-[#E39A84]/50 hover:text-[#E9AE9C]"}`}
+    >
+      <TrashIcon aria-hidden="true" className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[12.5px] font-medium leading-tight">{title}</span>
+        <span className="mt-0.5 block text-[11px] leading-snug text-mut">{sub}</span>
+      </span>
     </button>
   );
 }

@@ -14,12 +14,14 @@
  * Editing on the kitchen itself — a click does the obvious thing: an element selects it and shows the element toolbar
  * over it (ElementToolbar — add left / right, width, replace, remove, mechanism, "Više" for the full ElementEditor in the
  * panel); a dimension label opens the length editor there (DimEditor — the room's wall, or the kitchen run on it, or the
- * island); a "+" (GapLayer: in every step, quiet outside "Elementi"; on a full row one between two elements, where a
- * neighbour gets narrower — only in "Elementi" / while editing) opens the add picker (AddPicker, tall units wherever
- * one can stand in a wall's base row); a wall or the floor, when nothing else is hit and nothing was open, opens its
- * finishes (SurfacePicker). "Zamijeni" turns a base cabinet or a wall unit into a tall unit (both go — asked first
- * when that takes another element away).
- * Those edits say what they did in a toast with "Poništi" (Ctrl / ⌘ + Z works too). Rows of the "Elementi" list light
+ * island); a "+" (GapLayer: in every step, quiet outside "Elementi"; every full row has one between two elements, where
+ * neighbours get narrower or the new element takes one's place — only in "Elementi" / while editing) opens the add
+ * picker (AddPicker, tall units wherever one can stand in a wall's base row); a wall or the floor, when nothing else is
+ * hit and nothing was open, opens its finishes (SurfacePicker). "Zamijeni" turns a base cabinet or a wall unit into a
+ * tall unit (both go — asked first when that takes another element away). A tall column is an element like any other
+ * (no "Visoki stup" switch): a "+" or "Zamijeni" adds one, "Ukloni" on one of its units offers the whole column too.
+ * Those edits say what they did in a toast with "Poništi" (Ctrl / ⌘ + Z works too; on a phone one line, the planner's
+ * note behind "Detalji"). Rows of the "Elementi" list light
  * their element up in 3D. Overlays follow the view through the engine's ViewInfo (overlay.ts) and never make the engine
  * render.
  *
@@ -30,7 +32,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
-import { isEdited, remove, resetAll, resetRun, slotEditInfo, type EditResult, type RunRef } from "@/lib/studio/edit";
+import { isEdited, remove, removeColumn, resetAll, resetRun, slotEditInfo, type EditResult, type RunRef } from "@/lib/studio/edit";
 import { geometryKey, planKitchen, sanitizeConfig, wallsFor, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { estimate } from "@/lib/studio/price";
 import { configFromQuery, encodeConfig, studioPath } from "@/lib/studio/share";
@@ -44,7 +46,7 @@ import { CoachMarks } from "./CoachMarks";
 import { readCoach, setCoach, setStudioMode, useCoach, useMediaQuery, useOrigin, useStudioMode, useViewport } from "./hooks";
 import { OrbitIcon } from "./icons";
 import { fitToPlanner } from "./limits";
-import { EASE, LAST_STEP, STEPS, clamp, eur, islandWord, resetTarget, runName, stepIndex } from "./meta";
+import { EASE, LAST_STEP, STEPS, clamp, columnSlots, eur, islandWord, resetTarget, runName, stepIndex } from "./meta";
 import { isTyping, type Insets } from "./overlay";
 import { DesktopPanel, MobileSheet, MobileSummary, PANEL_GAP, PANEL_W } from "./Panel";
 import { Segmented } from "./controls";
@@ -317,6 +319,8 @@ export function Studio() {
       }
       const run = runOfSlot(id, slotsRef.current);
       if (run) setRunTab(run);
+      // the first coach mark ("Kliknite element") is done — picked from the "Elementi" list or the drawing too
+      if (readCoach() === "0") setCoach("1");
       setSelId(id);
       if (opts.editor) setEditorOpen(true);
       setNote(null);
@@ -530,10 +534,12 @@ export function Studio() {
       const used = wallsFor(layout);
       const win = cfg.window && !used.includes(cfg.window.wall) ? { ...cfg.window, wall: "a" as const } : cfg.window;
       // edited runs, corners and the tall columns' places belong to the old shape's walls; where the kitchen stands on
-      // the room's walls (extents) is a room measure and stays (sanitizeConfig applies the new shape's corner rules)
-      const next = fitToPlanner(resetAll({ ...cfg, layout, window: win }));
+      // the room's walls (extents) is a room measure and stays (sanitizeConfig applies the new shape's corner rules).
+      // A kitchen without its tall column ("Ukloni stup") stays without one: that is no wall's edit (resetAll alone
+      // would bring the column back)
+      const next = fitToPlanner(sanitizeConfig({ ...resetAll({ ...cfg, layout, window: win }), tall: cfg.tall }));
       // the last shape that had edited elements can be brought back from the "Oblik" step
-      setLayoutUndo(isEdited(cfg) ? cfg : layoutUndo);
+      setLayoutUndo(isEdited({ ...cfg, tall: true }) ? cfg : layoutUndo);
       setCfg(next);
       setUndoStack([]);
       setRunTab("a");
@@ -576,6 +582,8 @@ export function Studio() {
       }
       const nextSel = opts.select !== undefined ? opts.select : r.slotId;
       const next = fitToPlanner(r.cfg);
+      // an edit of a selected element (a swap, a width …): the first coach mark ("Kliknite element") is done
+      if (selId && !opts.quiet && readCoach() === "0") setCoach("1");
       undoSeq.current += 1;
       const id = undoSeq.current;
       const now = performance.now();
@@ -599,7 +607,7 @@ export function Studio() {
       }
       if (opts.toast) {
         // an edit on the kitchen itself: the toast says it (its live region reads it out) and offers "Poništi"
-        showToast({ text: r.warning ? `${opts.toast} ${r.warning}` : opts.toast, tone: "info", undoId: id, ms: r.warning ? TOAST_MS.note : TOAST_MS.undo });
+        showToast({ text: opts.toast, detail: r.warning ?? undefined, tone: "info", undoId: id, ms: r.warning ? TOAST_MS.note : TOAST_MS.undo });
         setNote(null);
         setAnnounce("");
         return true;
@@ -672,13 +680,41 @@ export function Studio() {
     const spacer = Boolean(moduleDef(sl.zone, sl.type)?.spacer);
     const bar = document.querySelector("[data-studio-toolbar]");
     const hadFocus = Boolean(bar && bar.contains(document.activeElement));
+    // the last unit of a tall column: the column goes with it (say so — there is no switch that would show it)
+    const lastOfColumn = sl.zone === "tall" && columnSlots(plan, sl).length === 1;
     applyEdit(r, {
       select: null,
-      toast: spacer ? "Razmak je zatvoren." : `Uklonjeno: ${lower(slotName(sl))}, ${Math.round(sl.width)} cm${sl.zone === "upper" ? " (zid ostaje prazan)" : ""}.`,
+      toast: spacer
+        ? "Razmak je zatvoren."
+        : lastOfColumn
+          ? `Uklonjen je visoki stup: ${lower(slotName(sl))}, ${Math.round(sl.width)} cm.`
+          : `Uklonjeno: ${lower(slotName(sl))}, ${Math.round(sl.width)} cm${sl.zone === "upper" ? " (zid ostaje prazan)" : ""}.`,
     });
     // the toolbar goes with the element: keyboard users carry on from the 3D view
     if (hadFocus) window.setTimeout(focusCanvas, 0);
-  }, [selSlot, cfg, refuse, applyEdit, focusCanvas]);
+  }, [selSlot, plan, cfg, refuse, applyEdit, focusCanvas]);
+
+  /**
+   * "Ukloni cijeli stup" (toolbar, editor): the tall column the selected unit belongs to goes, every unit of it (there is
+   * no "Visoki stup" switch — a column comes back with a "+", "Zamijeni" or "Vrati sve elemente na zadano")
+   */
+  const removeColumnSelected = useCallback(() => {
+    const sl = selSlot;
+    if (!sl) return;
+    const col = columnSlots(plan, sl);
+    const r = removeColumn(cfg, sl.id);
+    if (!r.ok) {
+      refuse(r.warning ?? "Visoki stup se ne može ukloniti.");
+      return;
+    }
+    const bar = document.querySelector("[data-studio-toolbar]");
+    const hadFocus = Boolean(bar && bar.contains(document.activeElement));
+    // opened from the list: focus goes back there (the row is gone: the step's tab)
+    if (editorOpen && openedFrom.current === "list") restoreRow.current = sl.id;
+    const names = col.map((x) => lower(slotName(x)));
+    applyEdit(r, { select: null, toast: `Uklonjen je visoki stup${names.length > 1 ? `: ${names.join(", ")}` : ""}.` });
+    if (hadFocus) window.setTimeout(focusCanvas, 0);
+  }, [selSlot, plan, cfg, editorOpen, refuse, applyEdit, focusCanvas]);
 
   /**
    * an edit.ts result from a step (the heights in "Zidovi"): one undo step (Ctrl / ⌘ + Z), a selected element stays
@@ -937,6 +973,7 @@ export function Studio() {
       onHover={hoverElement}
       onDemo={() => apiRef.current?.demo(selSlot.id)}
       onResetRun={(sl) => resetRunTo(sl.zone === "tall" ? resetTarget(sl).run : sl.run)}
+      onRemoveColumn={removeColumnSelected}
       onUndo={undoStack.length ? undo : null}
       onClose={() => closeEditor(true)}
     />
@@ -1021,6 +1058,7 @@ export function Studio() {
             docked={!desktop}
             touch={touch}
             insetsRef={insetsRef}
+            selKey={selKey}
             onNext={() => setCoach(coach === "0" ? "1" : coach === "1" ? "2" : "done")}
             onSkip={() => setCoach("done")}
           />
@@ -1051,6 +1089,7 @@ export function Studio() {
                 insetsRef={insetsRef}
                 subtle={gapsQuiet}
                 pulse={coachOn && coach === "1"}
+                barDocked={!desktop && toolbarOn && !toolbarHidden}
                 openId={gapOpen}
                 onOpen={openGap}
                 onInsert={insertAtGapDone}
@@ -1088,6 +1127,7 @@ export function Studio() {
                 onEdit={applyEdit}
                 onRefuse={refuse}
                 onRemove={removeSelected}
+                onRemoveColumn={removeColumnSelected}
                 onDemo={() => selSlot && apiRef.current?.demo(selSlot.id)}
                 onMore={toggleDetails}
                 onClose={() => closeEditor(true)}
@@ -1125,6 +1165,10 @@ export function Studio() {
           onDismiss={dismissToast}
           desktop={desktop}
           raised={toolbarOn && !toolbarHidden}
+          // phone: a picker docked at the bottom (add, length, finishes) is in front of the sheet — the toast goes up
+          top={!desktop && Boolean(gapOpen || dimEdit || surface)}
+          selLow={Boolean(selSlot && selSlot.zone !== "upper")}
+          insetsRef={insetsRef}
         />
 
         {desktop ? (

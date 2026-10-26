@@ -42,10 +42,16 @@
  *                             column at a run's end puts a base cabinet there — beyond it (the column joins the run).
  *                             Never on the island, under the window or in a corner square
  *   "+" places:               gapOptions / insertAtGap on plan.ts planGaps (ViewInfo.gaps): empty space, the free end of
- *                             a run (bare floor, the bare wall beyond the kitchen it grows into), bare wall in the
- *                             wall-unit row (beside the window, between wall units, over bare floor and beyond the
- *                             kitchen at a free end of the row), the ends of the island. planGaps lists only places
- *                             where something fits (gapHasOption, registered with plan.ts registerGapCheck)
+ *                             a run (bare floor, the bare wall beyond the kitchen it grows into — the note says how much
+ *                             longer it got), bare wall in the wall-unit row (beside the window, between wall units, over
+ *                             bare floor and beyond the kitchen at a free end of the row), the ends of the island, and on
+ *                             every full row one "+" between its elements (insertSeam: the row makes room, several
+ *                             elements narrower when one is not enough — or, where nothing can, it replaces an element:
+ *                             PlanGap.replace). planGaps lists only places where something fits (gapHasOption, registered
+ *                             with plan.ts registerGapCheck). An insert that leaves a sliver of bare floor at a free end
+ *                             absorbs it there (keepSliver): the cabinets never slide by it
+ *   tall columns as elements: removeColumn ("Ukloni stup") takes a whole column away; with the "+" that starts one the
+ *                             studio needs no "Visoki stup" switch (KitchenConfig.tall is legacy as a switch)
  *   room surfaces:            setRoomFinish / roomFinishes (StudioEngineOptions.onSurfaceClick)
  *   ceiling:                  raiseCeilingFor ("Podigni strop na X cm"; heightChoices().tallTop.maxReason says the limit)
  *   island / peninsula:       setIsland (any KitchenConfig.islandSpec field) and its shorthands setIslandFunctions (hob /
@@ -58,6 +64,7 @@
 
 import { FINISH_DEFAULTS, catalog, cornerFoot, cornerTypes, moduleDef, moduleTypes, roomFloorDef, roomWallDef, widthAllowed, type ModuleGroup, type ModuleTypeDef } from "./catalog";
 import {
+  FREE_MIN,
   GAP_LABEL,
   GAP_MIN,
   HOB_BESIDE_TALL,
@@ -79,6 +86,7 @@ import {
   parseRunEnd,
   planGaps,
   planKitchen,
+  plannerFeaturesLost,
   registerGapCheck,
   runEnd,
   SEAM_MIN,
@@ -297,7 +305,8 @@ function commitPlan(
   const came = [...c1].filter((x) => !c0.has(x)).length;
   // an edited tall column must still stand somewhere (the planner leaves a column out that does not fit)
   const lostColumn = isTallList(id) && !plan.slots.some((s) => s.list?.id === id);
-  if ((l && l.dropped.length) || lostColumn || lost > came || cutCount(plan) > cutCount(before.plan)) {
+  // nor may it push the planner's own sink / hob / dishwasher out of a run the planner fills (a wider column on its wall)
+  if ((l && l.dropped.length) || lostColumn || lost > came || cutCount(plan) > cutCount(before.plan) || plannerFeaturesLost(before.plan, plan)) {
     return fail(before.cfg, refuse, failSlot);
   }
   const slotId = focus === null ? null : (plan.slots.find((s) => s.list?.id === id && s.list.index === placedIndex(listOf(cfg, id), l, focus))?.id ?? null);
@@ -424,17 +433,39 @@ const entryOf = (zone: ListZone, ez: ListZone, type: string, width: number): Cab
   zone === "base" && ez === "tall" ? { type, width, tall: true } : { type, width };
 
 /**
- * cm a wall's base list takes along its run: its entries, and a cover panel on each side of every tall column in it
- * (the planner decides the rest: a column at an open end needs no extra end panel)
+ * cm a wall's base list takes along its run: its entries, and a cover panel on each side of every tall column in it —
+ * as plan.ts withTallPanels places them: columns with only filler strips between them are one column, and a column at an
+ * end of the list shares the cover panel of a column standing at that end of the run (`share`, endColumns). The planner
+ * decides the rest (a column at an open end needs no extra end panel).
  */
-function footOf(list: CabinetSpec[]): number {
+function footOf(list: CabinetSpec[], share: { left: boolean; right: boolean } = { left: false, right: false }): number {
+  const beyond = (i: number, d: -1 | 1) => {
+    let j = i + d;
+    while (j >= 0 && j < list.length && isFillerEntry(list[j])) j += d;
+    return list[j];
+  };
   let n = 0;
   list.forEach((e, i) => {
     n += e.width;
-    if (e.tall && !list[i - 1]?.tall) n += 2 * DIM.panel;
+    if (!e.tall) return;
+    const prev = beyond(i, -1);
+    const next = beyond(i, 1);
+    if (!prev?.tall) n += !prev && share.left ? 0 : DIM.panel;
+    if (!next?.tall) n += !next && share.right ? 0 : DIM.panel;
   });
   return n;
 }
+
+/** the ends of `wall`'s base run where a tall column stands at the run's end (its cover panel is shared: footOf) */
+function endColumns(plan: KitchenPlan, wall: WallId): { left: boolean; right: boolean } {
+  const r = plan.runs.find((x) => x.wall === wall);
+  if (!r) return { left: false, right: false };
+  const ends = r.talls.filter((t) => !r.runTalls.some((x) => Math.abs(x.from - t.from) < 0.5 && Math.abs(x.to - t.to) < 0.5));
+  return { left: ends.some((t) => Math.abs(t.from - r.kitchen.from) < 0.5), right: ends.some((t) => Math.abs(t.to - r.kitchen.to) < 0.5) };
+}
+
+/** footOf `list` on `wall` as `plan` places that run (with the end columns it stands against) */
+const runFoot = (plan: KitchenPlan, wall: WallId, list: CabinetSpec[]) => footOf(list, endColumns(plan, wall));
 
 // ---------------------------------------------------------------- room
 
@@ -552,6 +583,12 @@ function changeTypeIn(ctx: Ctx, type: string, tallCap?: number, want?: "tall"): 
     } else if (w < cur.width) keepRoom(next, ls.index, cur.width - w, ls.zone);
     else if (w > cur.width) growInto(next, ls.index, w - cur.width, ls.zone);
     const final = tidy(next, ls.zone, el);
+    // the hood above the hob turned into a wall unit: it stays where the hood hung (keepHoodPlace)
+    const kept = slot.anchored && ls.zone === "upper" && !def.hood ? keepHoodPlace(cfg, ls.id, final, el, slot.x) : final;
+    if (kept !== final) {
+      const r = commit(ctx, withList(cfg, ls.id, kept), ls.id, kept.indexOf(el), "");
+      if (r.ok) return r;
+    }
     last = commit(ctx, withList(cfg, ls.id, final), ls.id, final.indexOf(el), "");
     if (last.ok) return last;
   }
@@ -585,11 +622,16 @@ function uppersGone(n: number, where: string): string {
  * the run that grew into the bare wall push the elements beside a new tall unit along. Empty space, filler strips and
  * corner units are not matched. Empty when the two do not line up.
  *
- * A new element of the same type as its neighbour (a 45 cm "ormar" added beside a 60 cm one) could pair with either:
- * of the ways the two line up, the one where the elements change width the least and then move the least wins (a
- * first-come pairing judged the wall units by the new element and kept one over it — the column was then left out).
+ * With `src` (the edit says where each entry of the new base list came from: `src[k]` = its index in plan0's entries of
+ * that list, -1 for a new one) the elements are paired by that identity — robust when neighbours share type and width
+ * (two 60 cm "ormar" beside a new 60 cm one). Without it (or when the lists no longer line up: an entry left out, the
+ * planner filling the run anew) they are paired by type: of the ways the two line up, the one where the elements
+ * change width the least and then move the least wins (a first-come pairing judged the wall units by the new element and
+ * kept one over it — the column was then left out).
  */
-function baseShift(plan0: KitchenPlan, p1: KitchenPlan, wall: WallId, skip?: string): Map<string, number> {
+function baseShift(plan0: KitchenPlan, p1: KitchenPlan, wall: WallId, skip?: string, src?: number[]): Map<string, number> {
+  const bySrc = src ? shiftBySource(plan0, p1, wall, src, skip) : null;
+  if (bySrc) return bySrc;
   const seq = (p: KitchenPlan, without?: string) =>
     p.slots
       .filter((s) => s.run === wall && s.list?.id === wall && !s.corner && s.id !== without && !defOf(s.zone === "tall" ? "tall" : "base", s.type)?.spacer && !defOf("base", s.type)?.filler)
@@ -623,20 +665,58 @@ function baseShift(plan0: KitchenPlan, p1: KitchenPlan, wall: WallId, skip?: str
 }
 
 /**
+ * baseShift by identity: `src[k]` = where entry k of p1's stored base list of `wall` stood in plan0's entries (-1: new).
+ * null when that cannot be trusted (p1 has no explicit list there, left entries out, or `src` does not match its length)
+ * — baseShift then pairs by type. Empty space is paired too (a wall unit above it moves with it); filler strips have no
+ * slot.
+ */
+function shiftBySource(plan0: KitchenPlan, p1: KitchenPlan, wall: WallId, src: number[], skip?: string): Map<string, number> | null {
+  const stored = listOf(p1.cfg, wall);
+  const l1 = planList(p1, wall);
+  if (!stored || !l1 || l1.dropped.length || stored.length !== src.length) return null;
+  const at0 = new Map<number, PlanSlot>();
+  for (const s of plan0.slots) if (s.run === wall && s.list?.id === wall && !s.corner) at0.set(s.list.index, s);
+  const at1 = new Map<number, PlanSlot>();
+  for (const s of p1.slots) if (s.run === wall && s.list?.id === wall && !s.corner) at1.set(s.list.index, s);
+  const map = new Map<string, number>();
+  src.forEach((i0, k) => {
+    if (i0 < 0) return;
+    const a = at0.get(i0);
+    if (!a || a.id === skip || isFillerEntry(stored[k])) return;
+    const b = at1.get(placedIndex(stored, l1, k));
+    if (b) map.set(a.id, b.x - a.x);
+  });
+  return map;
+}
+
+/** the identity `src` (baseShift) when `next` holds `wall`'s base list exactly as plan0 placed it; else undefined */
+function sameList(plan0: KitchenPlan, next: KitchenConfig, wall: WallId): number[] | undefined {
+  const a = planList(plan0, wall)?.entries;
+  const b = listOf(next, wall);
+  if (!a || !b || a.length !== b.length) return undefined;
+  const same = a.every((e, i) => e.type === b[i].type && Math.abs(e.width - b[i].width) < 0.05 && Boolean(e.tall) === Boolean(b[i].tall));
+  return same ? a.map((_, i) => i) : undefined;
+}
+
+/** `src` for a base list edited by an insert at `at` (baseShift): every old entry keeps its index, shifted past the new one */
+const srcInsert = (n: number, at: number): number[] => [...Array.from({ length: at }, (_, i) => i), -1, ...Array.from({ length: n - at }, (_, i) => at + i)];
+
+/**
  * The wall units of `wall` that would hang where a tall unit stands in `next`: out of an edited wall-unit list (the
  * planner's own wall units make way by themselves). Wall units that only graze the column (less than a third of their
  * width, at most 20 cm) are kept when the row can shift them aside; whatever the row then no longer fits goes too.
  * `force` = wall-unit slots (of plan0) that go anyway (the one a tall unit replaces); `skip` = the base slot of plan0 the
  * tall unit replaces (or the tall unit that moves) — a wall unit is judged where it hangs after the edit, above the base
- * cabinet it hung above (baseShift), so one above a cabinet that only moved aside stays. `gone` = wall units that no
- * longer hang there (empty space not counted).
+ * cabinet it hung above (baseShift), so one above a cabinet that only moved aside stays. `src`: where each entry of the
+ * new base list came from (baseShift; absent = the base list is unchanged, or paired by type when it changed). `gone` =
+ * wall units that no longer hang there (empty space not counted).
  */
-function clearAbove(plan0: KitchenPlan, next: KitchenConfig, wall: WallId, force: string[] = [], skip?: string): { cfg: KitchenConfig; gone: number } {
+function clearAbove(plan0: KitchenPlan, next: KitchenConfig, wall: WallId, force: string[] = [], skip?: string, src?: number[]): { cfg: KitchenConfig; gone: number } {
   const upId = `${wall}:u` as ListId;
   const p1 = planKitchen(sanitizeConfig(next));
   const cols = p1.runs.find((r) => r.wall === wall)?.talls ?? [];
   const olds = plan0.slots.filter((s) => s.run === wall && s.zone === "upper" && !s.corner);
-  const moved = baseShift(plan0, p1, wall, skip);
+  const moved = baseShift(plan0, p1, wall, skip, src ?? sameList(plan0, next, wall));
   const run0 = plan0.runs.find((r) => r.wall === wall);
   const under = plan0.slots.filter((s) => s.run === wall && s.list?.id === wall && !s.corner).sort((a, b) => a.x - b.x);
   /** where a wall unit of plan0 hangs after the edit: moved along with the base element below its centre */
@@ -712,10 +792,12 @@ interface TallCommit {
   replacedSlot?: string;
   /** the wall unit the tall unit replaces (changeType on a wall unit) */
   fromUpper?: boolean;
-  /** list indices (in `next`) that may get narrower to make room — the neighbours by default */
+  /** list indices (in `next`) that may get narrower to make room, asked first — the neighbours by default */
   shrink?: number[];
-  /** only one of them may get narrower (a "+" between two elements: as for a cabinet there) */
-  one?: boolean;
+  /** the run's other cabinets may get narrower too (after the `shrink` ones; as a seam "+" makes room for a cabinet) */
+  wide?: boolean;
+  /** where each entry of `next` came from (its index in plan0's entries of the wall, -1 = new): clearAbove / baseShift */
+  src?: number[];
 }
 
 /**
@@ -739,16 +821,26 @@ function growForTall(plan0: KitchenPlan, c1: KitchenConfig, wall: WallId, need: 
 /**
  * Commit a wall's base list `next` with a tall unit at `at` (its other entries as in `list0`, the materialized list in
  * `c1`): the room it needs comes from the run's free cm, then from empty space beside it, then from the bare wall beyond
- * a free end of the kitchen run (the run grows: growForTall), then from a neighbour that gets narrower (a plain cabinet
- * before the sink / hob / dishwasher, the wider one first); the wall units that hang where it now stands go (clearAbove).
- * The notes say what it replaced and what that took away.
+ * a free end of the kitchen run (the run grows: growForTall), then from cabinets that get narrower — as a seam "+" makes
+ * room (narrowings): one alone first (the neighbours, `o.shrink`, then with `o.wide` the run's other cabinets nearest
+ * first; plain cabinets before the sink / hob / dishwasher, each as little as it can), else several; the wall units that
+ * hang where it now stands go (clearAbove). The notes say what it replaced, what got narrower and what that took away.
  */
 function commitTall(cfg0: KitchenConfig, plan0: KitchenPlan, failSlot: string | null, c1: KitchenConfig, wall: WallId, list0: CabinetSpec[], next0: CabinetSpec[], at: number, o: TallCommit): EditResult {
   let next = next0.map((e) => ({ ...e }));
   const el = next[at];
   const notes: string[] = [];
-  let need = footOf(next) - footOf(list0) - freeOf(plan0, wall);
-  if (need > 0.5) {
+  let need = runFoot(plan0, wall, next) - runFoot(plan0, wall, list0) - freeOf(plan0, wall);
+  // it fits into the run's free cm: a sliver of bare floor it leaves at a free end is absorbed there (a filler strip, or
+  // the kitchen run ends at a column), so the cabinets do not slide (keepSliver)
+  if (need <= 0.5) {
+    const ks = keepSliver(plan0, c1, wall, next, runFoot(plan0, wall, next) - runFoot(plan0, wall, list0));
+    const src = o.src && ks.filer !== null ? [...o.src.slice(0, ks.filer), -1, ...o.src.slice(ks.filer)] : o.src;
+    const r = finishTall(cfg0, plan0, failSlot, ks.cfg, wall, ks.list, el, { ...o, src }, notes);
+    if (r.ok || (ks.cfg === c1 && ks.list === next)) return r;
+    return finishTall(cfg0, plan0, failSlot, c1, wall, next, el, o, notes);
+  }
+  {
     // empty space beside it gives way first
     for (const j of [at + 1, at - 1]) {
       const e = next[j];
@@ -757,7 +849,9 @@ function commitTall(cfg0: KitchenConfig, plan0: KitchenPlan, failSlot: string | 
       e.width -= take;
       need -= take;
     }
-    next = next.filter((e) => e === el || e.tall || !isSpacer("base", e.type) || e.width >= 5);
+    const keep = next.map((e) => e === el || Boolean(e.tall) || !isSpacer("base", e.type) || e.width >= 5);
+    next = next.filter((_, k) => keep[k]);
+    if (o.src) o = { ...o, src: o.src.filter((_, k) => keep[k]) };
   }
   if (need > 0.5) {
     // bare wall beyond the kitchen: the run grows into it and every cabinet keeps its width
@@ -774,29 +868,44 @@ function commitTall(cfg0: KitchenConfig, plan0: KitchenPlan, failSlot: string | 
   }
   if (need > 0.5) {
     const idx = next.indexOf(el);
-    const cand = (o.shrink ?? [idx - 1, idx + 1])
-      .map((j) => ({ j, e: next[j], d: next[j] && !next[j].tall ? seamDef("base", next[j].type) : null }))
-      .filter((c): c is { j: number; e: CabinetSpec; d: ModuleTypeDef } => Boolean(c.e && c.d))
-      .sort((p, q) => Number(Boolean(p.d.feature)) - Number(Boolean(q.d.feature)) || q.e.width - p.e.width);
-    const say = (c: (typeof cand)[number], w: number) =>
-      notes.push(`Za visoki element napravljeno je mjesto: ${c.d.name.charAt(0).toLowerCase()}${c.d.name.slice(1)} sada je ${w} cm umjesto ${c.e.width} cm.`);
-    /** the widest width of `c` that gives up at least `n` cm (undefined: none) */
-    const narrower = (c: (typeof cand)[number], n: number) => c.d.widths.filter((x) => x < c.e.width - 0.5 && c.e.width - x >= n - 0.5).sort((p, q) => q - p)[0];
-    const one = cand.map((c) => ({ c, w: narrower(c, need) })).find((x) => x.w !== undefined);
-    if (one && one.w !== undefined) {
-      say(one.c, one.w);
-      next[one.c.j] = { ...one.c.e, width: one.w };
-    } else if (cand.length === 2 && !o.one) {
-      // one neighbour alone cannot give enough: both get narrower (the first as little as it can)
-      const [a, b] = cand;
-      const opts = a.d.widths.filter((x) => x < a.e.width - 0.5).sort((p, q) => q - p);
-      const pair = opts.map((wa) => ({ wa, wb: narrower(b, need - (a.e.width - wa)) })).find((x) => x.wb !== undefined);
-      if (!pair || pair.wb === undefined) return fail(cfg0, o.refuse, failSlot);
-      say(a, pair.wa);
-      say(b, pair.wb);
-      next[a.j] = { ...a.e, width: pair.wa };
-      next[b.j] = { ...b.e, width: pair.wb };
-    } else return fail(cfg0, o.refuse, failSlot);
+    const near = (o.shrink ?? [idx - 1, idx + 1]).filter((j) => j !== idx);
+    /** an entry that may get narrower (never a tall unit, a corner unit, empty space or a filler strip), down to `floor` */
+    const cand = (j: number, floor: number): (SeamCand & { d: ModuleTypeDef }) | null => {
+      const e = next[j];
+      const d = e && !e.tall && !isFillerEntry(e) ? seamDef("base", e.type) : null;
+      const widths = d ? d.widths.filter((x) => x < e.width - 0.5 && x >= floor).sort((p, q) => q - p) : [];
+      return d && widths.length ? { i: j, e, d, widths, feature: Boolean(d.feature) } : null;
+    };
+    // who gives way, in this order: the neighbours (plain cabinets before the sink / hob / dishwasher, the wider first),
+    // then (`wide`) the run's other cabinets, nearest first, none below SEAM_MIN — a plain cabinet anywhere in the run
+    // before the hob beside the unit, each as little as it can (a narrowed 80 cm hob left a 19 cm strip for 2 cm)
+    const first = near
+      .map((j) => cand(j, 0))
+      .filter((c): c is NonNullable<typeof c> => Boolean(c))
+      .sort((p, q) => Number(p.feature) - Number(q.feature) || q.e.width - p.e.width);
+    const rest = o.wide
+      ? next
+          .map((_, j) => j)
+          .filter((j) => j !== idx && !near.includes(j))
+          .sort((p, q) => Math.abs(p - idx) - Math.abs(q - idx))
+          .map((j) => cand(j, SEAM_MIN))
+          .filter((c): c is NonNullable<typeof c> => Boolean(c))
+      : [];
+    const cands = [...first, ...rest];
+    const name = (c: (typeof cands)[number]) => `${c.d.name.charAt(0).toLowerCase()}${c.d.name.slice(1)}`;
+    let last: EditResult = fail(cfg0, o.refuse, failSlot);
+    // (each way is planned: a few at most, the best first — a place the unit cannot stand at fails them all alike)
+    for (const ways of narrowings(cands, need).slice(0, 4)) {
+      const told = cands.filter((c) => ways.has(c.i)).sort((p, q) => p.i - q.i);
+      const made =
+        told.length === 1
+          ? `Za visoki element napravljeno je mjesto: ${name(told[0])} sada je ${ways.get(told[0].i)} cm umjesto ${told[0].e.width} cm.`
+          : `Za visoki element napravljeno je mjesto, uži su: ${told.map((c) => `${name(c)} ${ways.get(c.i)} cm umjesto ${c.e.width} cm`).join(", ")}.`;
+      const narrowed = next.map((e, j) => (ways.has(j) ? { ...e, width: ways.get(j)! } : e));
+      last = finishTall(cfg0, plan0, failSlot, c1, wall, narrowed, el, o, [...notes, made]);
+      if (last.ok) return last;
+    }
+    return last;
   }
   return finishTall(cfg0, plan0, failSlot, c1, wall, next, el, o, notes);
 }
@@ -807,7 +916,7 @@ function commitTall(cfg0: KitchenConfig, plan0: KitchenPlan, failSlot: string | 
  */
 function finishTall(cfg0: KitchenConfig, plan0: KitchenPlan, failSlot: string | null, c1: KitchenConfig, wall: WallId, next: CabinetSpec[], el: CabinetSpec, o: TallCommit, made: string[]): EditResult {
   const notes = [...made];
-  const cl = clearAbove(plan0, withList(c1, wall, next), wall, o.force ?? [], o.replacedSlot);
+  const cl = clearAbove(plan0, withList(c1, wall, next), wall, o.force ?? [], o.replacedSlot, o.src?.length === next.length ? o.src : undefined);
   const r = commitPlan(cfg0, plan0, failSlot, cl.cfg, wall, next.indexOf(el), o.refuse);
   if (!r.ok) {
     // the one reason worth naming: the planner keeps tall units out from under the window
@@ -849,7 +958,7 @@ function finishTall(cfg0: KitchenConfig, plan0: KitchenPlan, failSlot: string | 
  */
 function tallForBase(cfg0: KitchenConfig, plan0: KitchenPlan, base: PlanSlot, def: ModuleTypeDef, o: { force?: string[]; fromUpper?: boolean; widths?: number[] }): EditResult {
   const wall = base.run as WallId;
-  const refuse = `${def.name} ovdje ne stane — slobodno je još ${Math.floor(freeOf(plan0, wall))} cm, a susjedni element ne može biti uži.`;
+  const refuse = `${def.name} ovdje ne stane — slobodno je još ${Math.floor(freeOf(plan0, wall))} cm, a nijedan element u nizu ne može biti dovoljno uži.`;
   if (!base.list || listZone(base.list.id) !== "base") return fail(cfg0, "Ovdje ne može stajati visoki element.", base.id);
   const { cfg: c1, list } = editableIn(cfg0, plan0, wall);
   const i = base.list.index;
@@ -863,11 +972,16 @@ function tallForBase(cfg0: KitchenConfig, plan0: KitchenPlan, base: PlanSlot, de
     const el: CabinetSpec = { type: def.id, width: w, tall: true };
     const next = list.map(copyEntry);
     next[i] = el;
+    // (baseShift: every other entry is the one that stood there)
+    const src = list.map((_, k) => (k === i ? -1 : k));
     // what the column does not take of the cabinet's place stays free beside it ("Slobodno mjesto", with its own "+"),
     // so the other cabinets stay where they are; a sliver no element fits in closes up instead
-    const rest = cur.width - (footOf(next) - footOf(list) + cur.width);
-    if (rest >= (spacer ? 5 : GAP_MIN)) next.splice(i + 1, 0, { type: spacer ? cur.type : SPACER.base, width: rest });
-    last = commitTall(cfg0, plan0, base.id, c1, wall, list, next, i, { refuse, force: o.force, replaced: cur, replacedSlot: base.id, fromUpper: o.fromUpper });
+    const rest = cur.width - (runFoot(plan0, wall, next) - runFoot(plan0, wall, list) + cur.width);
+    if (rest >= (spacer ? 5 : GAP_MIN)) {
+      next.splice(i + 1, 0, { type: spacer ? cur.type : SPACER.base, width: rest });
+      src.splice(i + 1, 0, -1);
+    }
+    last = commitTall(cfg0, plan0, base.id, c1, wall, list, next, i, { refuse, force: o.force, replaced: cur, replacedSlot: base.id, fromUpper: o.fromUpper, src, wide: true });
     if (last.ok) return last;
   }
   return last;
@@ -1050,7 +1164,7 @@ function insertGrowColumn(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id:
  */
 function insertTallWays(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id: ListId, at: number, el: CabinetSpec): EditResult {
   const next = [...list.slice(0, at).map(copyEntry), el, ...list.slice(at).map(copyEntry)];
-  if (footOf(next) - footOf(list) > freeOf(ctx.plan, id) + 0.5) {
+  if (runFoot(ctx.plan, id as WallId, next) - runFoot(ctx.plan, id as WallId, list) > freeOf(ctx.plan, id) + 0.5) {
     const eg = endGapFor(ctx, id, at, list.length);
     if (eg && eg.kind === "end") {
       const r = insertGapIn(ctx.cfg, ctx.plan, eg, el.type, el.width, "tall", { beside: true });
@@ -1059,11 +1173,12 @@ function insertTallWays(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id: L
   }
   const sel = listSlot(ctx);
   const selAt = sel && sel.id === id ? (sel.index >= at ? sel.index + 1 : sel.index) : -1;
-  return commitTall(ctx.cfg, ctx.plan, ctx.slot.id, cfg, id as WallId, list, next, at, { refuse: "", shrink: selAt >= 0 ? [selAt] : [] });
+  return commitTall(ctx.cfg, ctx.plan, ctx.slot.id, cfg, id as WallId, list, next, at, { refuse: "", shrink: selAt >= 0 ? [selAt] : [], src: srcInsert(list.length, at) });
 }
 
-/** an insert at a run's free end that made the kitchen run (or the island) longer says so */
+/** an insert at a run's free end that made the kitchen run (or the island) longer says so (once) */
 function grewNote(cfg0: KitchenConfig, r: EditResult, gap: PlanGap): EditResult {
+  if (!r.ok) return r;
   let note: string | null = null;
   if (gap.run === "isl") {
     const d = Math.round(r.cfg.island - cfg0.island);
@@ -1076,7 +1191,8 @@ function grewNote(cfg0: KitchenConfig, r: EditResult, gap: PlanGap): EditResult 
     const d = Math.round(len(r.cfg) - len(cfg0));
     if (d > 0) note = `Kuhinja na zidu ${gap.run.toUpperCase()} duža je za ${d} cm.`;
   }
-  return note ? { ...r, warning: r.warning ? `${note} ${r.warning}` : note } : r;
+  if (!note || r.warning?.includes(note)) return r;
+  return { ...r, warning: r.warning ? `${note} ${r.warning}` : note };
 }
 
 /** insertAt with the element beside the spot made narrower first (shrinkFor), saying so */
@@ -1173,15 +1289,93 @@ export function remove(input: KitchenConfig, slotId: string): EditResult {
   const next = list.map((e) => ({ ...e }));
   if (ls.zone === "upper" && !isSpacer(ls.zone, cur.type)) next[ls.index] = { type: SPACER.upper, width: cur.width };
   else next.splice(ls.index, 1);
-  let c2 = withList(cfg, ls.id, tidy(next, ls.zone));
-  // the last unit of a column standing in the run: the wall units beside it stay where they hang
-  if (cur.tall && slot.run !== "isl" && !list[ls.index - 1]?.tall && !list[ls.index + 1]?.tall) c2 = keepUppers(ctx.plan, c2, slot);
+  if (slot.anchored && ls.zone === "upper") {
+    // the hood above the hob: the wall units after it stay where they hang (keepHoodPlace)
+    const gap = next[ls.index];
+    const kept = tidy(keepHoodPlace(cfg, ls.id, next, gap, slot.x), ls.zone);
+    const r = commit(ctx, withList(cfg, ls.id, kept), ls.id, null, "Element se ne može ukloniti.");
+    if (r.ok) return r;
+  }
+  const c2 = withList(cfg, ls.id, tidy(next, ls.zone));
+  // the last unit of a column standing in the run: the wall units beside it stay where they hang (when they can)
+  if (cur.tall && slot.run !== "isl" && !list[ls.index - 1]?.tall && !list[ls.index + 1]?.tall) {
+    const kept = commit(ctx, keepUppers(ctx.plan, c2, slot), ls.id, null, "Element se ne može ukloniti.");
+    if (kept.ok) return kept;
+  }
   return commit(ctx, c2, ls.id, null, "Element se ne može ukloniti.");
 }
 
 /**
+ * The hood above the hob hangs where the hob is (PlanSlot.anchored); a wall unit in its place (changeType) or empty space
+ * (remove) is not anchored — it flows with its stretch (after the unit before it, or against the window), and the wall
+ * units beside it with it. Empty space on the side it would move away from keeps it, and them, where the hood hung —
+ * when the plan then really has it there. `list` as edited (entry objects kept), `el` the entry in the hood's place, `x0`
+ * where the hood hung; `list` itself when nothing would move (or a move under 5 cm: empty space is never narrower).
+ */
+function keepHoodPlace(cfg: KitchenConfig, id: ListId, list: CabinetSpec[], el: CabinetSpec, x0: number): CabinetSpec[] {
+  const placed = (l: CabinetSpec[]) => {
+    const p = planKitchen(sanitizeConfig(withList(cfg, id, l)));
+    return (j: number) => p.slots.find((x) => x.list?.id === id && x.list.index === j);
+  };
+  const i = list.indexOf(el);
+  const at = placed(list);
+  const x = i < 0 ? undefined : at(i)?.x;
+  if (x === undefined) return list;
+  const pad = Math.floor(Math.abs(x0 - x) + 1e-6);
+  if (pad < 5) return list;
+  // moved left: empty space before it; moved right (a stretch that ends at the window): empty space after the last unit
+  // of its stretch (those right after it moved along)
+  let k = i;
+  if (x > x0) {
+    for (let a = at(k), b = at(k + 1); a && b && Math.abs(b.x - (a.x + a.width)) < 0.5; a = b, b = at(k + 1)) k++;
+  }
+  const out = [...list];
+  const n = x < x0 ? i - 1 : k + 1;
+  if (out[n] && isSpacer("upper", out[n].type)) out[n] = { ...out[n], width: out[n].width + pad };
+  else out.splice(x < x0 ? i : k + 1, 0, { type: SPACER.upper, width: pad });
+  const y = placed(out)(out.indexOf(el))?.x;
+  return y !== undefined && Math.abs(y - x0) < Math.abs(x - x0) - 0.5 ? out : list;
+}
+
+/**
+ * Remove a whole tall column — the one `slotId` (any of its units) belongs to: the main column (the kitchen then has none:
+ * KitchenConfig.tall off, its units and place forgotten), a column at another run end (its KitchenConfig.tallRuns entry),
+ * or a column standing in a wall's base run (its tall entries, and filler strips between them; the run closes up, an
+ * edited wall-unit list keeps its wall units where they hang). The UI's "Ukloni stup" — with it (and the "+" at a run's
+ * end that starts a new column) the studio needs no "Visoki stup" switch. Refused for anything that is not a tall unit.
+ */
+export function removeColumn(input: KitchenConfig, slotId: string): EditResult {
+  const ctx = context(input, slotId);
+  if (!ctx) return fail(sanitizeConfig(input), "Element više ne postoji.");
+  const { slot } = ctx;
+  if (slot.zone !== "tall" || !slot.list) return fail(ctx.cfg, "Ovo nije visoki element.", slot.id);
+  const id = slot.list.id;
+  if (id === "tall") {
+    const next = { ...withList(ctx.cfg, "tall", undefined), tall: false };
+    delete next.tallAt;
+    return { cfg: sanitizeConfig(next), ok: true, warning: null, slotId: null };
+  }
+  if (tallListEnd(id)) return { cfg: sanitizeConfig(withList(ctx.cfg, id, undefined)), ok: true, warning: null, slotId: null };
+  if (listZone(id) !== "base") return fail(ctx.cfg, "Ovaj element se ne može ukloniti.", slot.id);
+  const { cfg, list } = editable(ctx, id);
+  // its column: the tall entries around it (filler strips between two of them stand in it too: plan.ts withTallPanels)
+  const inCol = (i: number, d: -1 | 1) => Boolean(list[i]?.tall || (isFillerEntry(list[i]) && list[i + d]?.tall));
+  let a = slot.list.index;
+  let b = slot.list.index;
+  if (!list[a]?.tall) return fail(ctx.cfg, "Element više ne postoji.", slot.id);
+  while (a > 0 && inCol(a - 1, -1)) a--;
+  while (b < list.length - 1 && inCol(b + 1, 1)) b++;
+  const next = tidy([...list.slice(0, a), ...list.slice(b + 1)].map(copyEntry), "base");
+  const kept = commit(ctx, keepUppers(ctx.plan, withList(cfg, id, next), slot), id, null, "Visoki stup se ne može ukloniti.");
+  // (wall units that cannot keep their places — the run's wall-unit row closes up — never stop the column going)
+  return kept.ok ? kept : commit(ctx, withList(cfg, id, next), id, null, "Visoki stup se ne može ukloniti.");
+}
+
+/**
  * A tall column standing in the run went (its last unit `slot`): an edited wall-unit list keeps its wall units where they
- * hang — bare wall ("Bez gornjeg elementa") takes the wall the column leaves, so the row does not close up over it.
+ * hang — bare wall ("Bez gornjeg elementa") takes the wall the column leaves, so the row does not close up over it. The
+ * bare wall ends where the stretch does (the window, the next column) when that comes first, and the result is planned:
+ * when the wall units beyond would still move (or one would be left out), the list stays as it was (`next`).
  */
 function keepUppers(plan0: KitchenPlan, next: KitchenConfig, slot: PlanSlot): KitchenConfig {
   const wall = slot.run as WallId;
@@ -1201,11 +1395,23 @@ function keepUppers(plan0: KitchenPlan, next: KitchenConfig, slot: PlanSlot): Ki
     ...(plan0.window && plan0.window.wall === wall ? [plan0.window.offset + plan0.window.width + DIM.windowMargin] : []),
   ].filter((e) => e <= col.from + 0.5);
   if (!ends.length) return next;
-  const pad = Math.min(...right.map((s) => s.x)) - Math.max(...ends);
-  if (pad < 5) return next;
-  const list = l0.entries.map(copyEntry);
-  list.splice(ups.length - right.length, 0, { type: SPACER.upper, width: Math.round(pad) });
-  return withList(next, upId, tidy(list, "upper"));
+  const from = Math.max(...ends);
+  const first = Math.min(...right.map((s) => s.x));
+  // where the stretch the column leaves ends before the wall units beyond: the window (its opening, an end panel before
+  // it), the next column
+  const win = plan0.window && plan0.window.wall === wall ? plan0.window.offset - DIM.windowMargin : Infinity;
+  const stops = [first, ...(win >= from - 0.5 && win < first ? [win, win - DIM.panel] : []), ...run.talls.map((t) => t.from).filter((x) => x >= col.to - 0.5 && x < first)];
+  const pads = [...new Set(stops.map((x) => Math.floor(x - from)))].filter((p) => p >= 5).sort((p, q) => q - p);
+  for (const pad of pads) {
+    const list = l0.entries.map(copyEntry);
+    list.splice(ups.length - right.length, 0, { type: SPACER.upper, width: pad });
+    const cfg = withList(next, upId, tidy(list, "upper"));
+    const p = planKitchen(sanitizeConfig(cfg));
+    // (bare wall beyond merges with the new stretch of it: tidy)
+    const stay = right.filter((s) => !isSpacer("upper", s.type)).every((s) => p.slots.some((x) => x.zone === "upper" && x.run === wall && x.type === s.type && Math.abs(x.x - s.x) < 0.6 && Math.abs(x.width - s.width) < 0.6));
+    if (stay && !(planList(p, upId)?.dropped.length ?? 0)) return cfg;
+  }
+  return next;
 }
 
 function move(input: KitchenConfig, slotId: string, dir: -1 | 1): EditResult {
@@ -1228,7 +1434,8 @@ function move(input: KitchenConfig, slotId: string, dir: -1 | 1): EditResult {
   const refuse = "Na tom mjestu element ne stane.";
   if (ls.zone !== "base" || !(next[j].tall || next[ls.index].tall) || slot.run === "isl") return commit(ctx, withList(cfg, ls.id, next), ls.id, j, refuse);
   // a tall unit moves along the run: the wall units that would hang where it now stands make way
-  const cl = clearAbove(ctx.plan, withList(cfg, ls.id, next), ls.id as WallId, [], slot.id);
+  const src = list.map((_, k) => (k === ls.index ? j : k === j ? ls.index : k));
+  const cl = clearAbove(ctx.plan, withList(cfg, ls.id, next), ls.id as WallId, [], slot.id, src);
   const r = commit(ctx, cl.cfg, ls.id, j, refuse);
   if (!r.ok || !cl.gone) return r;
   const note = uppersGone(cl.gone, "iznad novog mjesta visokog elementa");
@@ -1280,10 +1487,11 @@ export function resetRun(input: KitchenConfig, run: RunRef, zone?: "base" | "upp
 
 /**
  * Every element edit undone (all runs, corners and the tall column back to the planner, added tall columns gone, the
- * tall column back where the planner puts it). Materials, the room and where the kitchen stands on it (extents) stay.
+ * tall column back where the planner puts it — also when it had been removed: the column is an element like any other,
+ * there is no "Visoki stup" switch to keep it off). Materials, the room and where the kitchen stands on it (extents) stay.
  */
 export function resetAll(input: KitchenConfig): KitchenConfig {
-  const c = { ...sanitizeConfig(input) };
+  const c = { ...sanitizeConfig(input), tall: true };
   delete c.runs;
   delete c.upperRuns;
   delete c.tallRun;
@@ -1296,7 +1504,8 @@ export function resetAll(input: KitchenConfig): KitchenConfig {
 /** has the customer edited this list (or, without an id, anything)? */
 export function isEdited(cfg: KitchenConfig, id?: ListId): boolean {
   if (id) return listOf(cfg, id) !== undefined;
-  return Boolean(cfg.runs || cfg.upperRuns || cfg.tallRun || cfg.tallRuns || cfg.tallAt || cfg.corners || Object.keys(cfg.overrides ?? {}).length);
+  // (a removed tall column is an element edit too: resetAll brings it back)
+  return Boolean(cfg.runs || cfg.upperRuns || cfg.tallRun || cfg.tallRuns || cfg.tallAt || cfg.corners || !cfg.tall || Object.keys(cfg.overrides ?? {}).length);
 }
 
 // ---------------------------------------------------------------- what the popover / in-kitchen toolbar can offer
@@ -2187,6 +2396,42 @@ function extendRun(cfg: KitchenConfig, wall: WallId, side: "left" | "right", cm:
   return withExtent(cfg, wall, side === "left" ? { from: Math.max(0, k.from - Math.ceil(cm)), to: k.to } : { from: k.from, to: Math.min(L, k.to + Math.ceil(cm)) });
 }
 
+/**
+ * An insert into a wall's base list `next` that takes `delta` cm more of the run (no growth into the bare wall) and leaves
+ * less than FREE_MIN of the bare floor at a free end: the planner would close that sliver with a filler at the run's
+ * other end (a wall / a corner), and every cabinet would slide by it (16–23 cm in the review — a tall unit joining a column
+ * that stands in the run beside the bare floor). Instead it is absorbed at that end, so the cabinets stay where they are:
+ * as a filler strip ("filer" entry) beyond the last cabinet there (the wall units above keep their room), or — where a
+ * tall column is the outermost element — by ending the kitchen run at the column (the sliver becomes bare wall beyond
+ * the kitchen, as beside a new column at a run's end; a filler strip with worktop beside a column would look odd).
+ * `filer`: the index the filler strip took in the returned list (callers shift their indices), else null.
+ */
+function keepSliver(plan0: KitchenPlan, cfg: KitchenConfig, wall: WallId, next: CabinetSpec[], delta: number): { cfg: KitchenConfig; list: CabinetSpec[]; filer: number | null } {
+  const same = { cfg, list: next, filer: null };
+  const run = plan0.runs.find((r) => r.wall === wall);
+  if (!run || delta <= 0.5) return same;
+  const k = kitchenRange(sanitizeConfig(cfg), wall);
+  // the run grew: no sliver is left
+  if (Math.abs(k.from - run.kitchen.from) > 0.5 || Math.abs(k.to - run.kitchen.to) > 0.5) return same;
+  for (const f of run.free) {
+    const rest = Math.floor(f.to - f.from - delta + 1e-6);
+    if (rest < 1 || rest >= FREE_MIN) continue;
+    const real = next.filter((e) => !isFillerEntry(e));
+    const outer = f.side === "left" ? real[0] : real[real.length - 1];
+    if (!outer) return same;
+    if (outer.tall) {
+      const r = f.side === "left" ? { from: k.from + rest, to: k.to } : { from: k.from, to: k.to - rest };
+      // (a kitchen run keeps the layout's shortest length: then the planner closes the sliver as before)
+      if (r.to - r.from < minRun(cfg.layout, wall)) return same;
+      return { cfg: withExtent(cfg, wall, r), list: next, filer: null };
+    }
+    if (next.length >= MAX_LIST) return same;
+    const at = f.side === "left" ? 0 : next.length;
+    return { cfg, list: [...next.slice(0, at), { type: "filer", width: rest }, ...next.slice(at)], filer: at };
+  }
+  return same;
+}
+
 /** Croatian notes on how the corner rules moved kitchen runs (`want`: what was asked for each wall) */
 function cornerNotes(cfg: KitchenConfig, want: Partial<Record<WallId, Range>>): string[] {
   const notes: string[] = [];
@@ -2372,11 +2617,13 @@ export function gapOptions(input: KitchenConfig, gapId: string): GapOptions | nu
     }
     return ok;
   };
+  // a "+" that replaces an element (a full row: PlanGap.replace) does not offer that element again
+  const same = gap.replace ? plan.slots.find((s) => s.id === gap.replace) : undefined;
   const list = (z: ListZone) =>
     poolOf(z)
       .filter((d) => !d.spacer && !d.corner)
       .map((d) => {
-        const fitting = d.widths.filter((w) => fits(z, d, w));
+        const fitting = d.widths.filter((w) => fits(z, d, w) && !(same && z !== "tall" && same.type === d.id && Math.abs(same.width - w) < 0.5));
         return choice(d, widthsNew(d).find((w) => fitting.includes(w)) ?? null, false, fitting);
       });
   return { gap, types: list(zone), tall: tallGap(gap) ? list("tall") : [] };
@@ -2516,7 +2763,8 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
     if (need > (gap.outside ?? 0) + 0.5) return fail(cfg, refuse);
     const c2 = need > 0.5 ? { ...c1, island: cfg.island + Math.ceil(need) } : c1;
     const at = gap.side === "left" ? 0 : list.length;
-    return commitPlan(cfg, plan, null, withList(c2, "isl", put(list, at)), "isl", at, refuse);
+    // ("Otok je duži za 30 cm." when it grew, as at a wall run's end)
+    return grewNote(cfg, commitPlan(cfg, plan, null, withList(c2, "isl", put(list, at)), "isl", at, refuse), gap);
   }
   // the end of a wall's kitchen run
   const wall = gap.run as WallId;
@@ -2549,7 +2797,7 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
     return say(
       last,
       revived.ids.includes("tall") && revived.ids.length === 1
-        ? "Visoki stup koji nije stao ostaje isključen — uključite ga ponovno kad za njega bude mjesta."
+        ? "Visoki stup koji nije stao ostaje izostavljen — kad za njega bude mjesta, vratite ga u koraku „Elementi” („Vrati zadani visoki stup”)."
         : `${names.length > 1 ? "Visoki stupovi koji nisu stali ostaju izostavljeni" : "Visoki stup koji nije stao ostaje izostavljen"} — dodajte ga ponovno s „+” na kraju niza kad za njega bude mjesta.`,
     );
   };
@@ -2561,8 +2809,8 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
   const runCol = Boolean(gap.tallList && !isTallList(gap.tallList)) || (!endCol && Boolean(edge?.tall));
   /** wall units over the bare floor there that a tall unit now stands under go (clearAbove), and the note says so */
   let cleared = 0;
-  const clear = (c: KitchenConfig): KitchenConfig => {
-    const cl = clearAbove(plan, c, wall, opt.force ?? []);
+  const clear = (c: KitchenConfig, src?: number[]): KitchenConfig => {
+    const cl = clearAbove(plan, c, wall, opt.force ?? [], undefined, src);
     cleared = cl.gone;
     return cl.cfg;
   };
@@ -2573,14 +2821,21 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
     const note = uppersGone(n, "iznad visokog elementa");
     return { ...r, warning: r.warning ? `${note} ${r.warning}` : note, uppersGone: cleared };
   };
+  /** the kitchen grew: say so ("Kuhinja na zidu B duža je za 30 cm.") */
+  const done = (r: EditResult): EditResult => grewNote(cfg, r, gap);
   if (zone === "tall" && runCol) {
-    // the column stands in the run at this end: the unit joins it at its outer side (the run grows by its width)
+    // the column stands in the run at this end: the unit joins it at its outer side (the run grows by its width; a
+    // sliver of bare floor it leaves there ends the kitchen run instead of sliding the cabinets: keepSliver)
     const { cfg: c1, list } = editableIn(cfg, plan, wall);
     if (list.length >= MAX_LIST) return fail(cfg, fullNote("base"));
     const at = side === "left" ? 0 : list.length;
     const t: CabinetSpec = { type, width: w, tall: true };
     const grown = Math.max(0, Math.min(w - floor, outside));
-    return clearedNote(withRevived(wall, at, outside - grown, (more) => clear(withList(extendRun(c1, wall, side, grown + more), wall, put(list, at, t)))));
+    const ks = grown > 0.5 ? { cfg: c1, list: put(list, at, t), filer: null } : keepSliver(plan, c1, wall, put(list, at, t), runFoot(plan, wall, put(list, at, t)) - runFoot(plan, wall, list));
+    const src = srcInsert(list.length, at);
+    if (ks.filer !== null) src.splice(ks.filer, 0, -1);
+    const i = ks.list.indexOf(t);
+    return done(clearedNote(withRevived(wall, i, outside - grown, (more) => clear(withList(extendRun(ks.cfg, wall, side, grown + more), wall, ks.list), src))));
   }
   if (zone === "tall") {
     if (endCol) {
@@ -2592,7 +2847,7 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
       const outer = side === "left" ? 0 : list.length;
       const at = opt.beside ? list.length - outer : outer;
       const grown = Math.min(w, outside);
-      return clearedNote(withRevived(tallList, at, outside - grown, (more) => clear(withList(extendRun(c1, wall, side, grown + more), tallList, put(list, at)))));
+      return done(clearedNote(withRevived(tallList, at, outside - grown, (more) => clear(withList(extendRun(c1, wall, side, grown + more), tallList, put(list, at))))));
     }
     // a new column at this end stands right beside the cabinets (never with bare floor between them): the kitchen run
     // then ends at the column's outer side — bare floor beyond it is bare wall outside the kitchen; without bare floor
@@ -2615,10 +2870,10 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
         to: Math.min(cfg.walls[wall], side === "left" ? target.to : target.to + more),
       });
     if (!plan.slots.some((s) => s.list?.id === "tall")) {
-      return clearedNote(withRevived("tall", 0, -beyond, (more) => clear({ ...at(more), tall: true, tallRun: [el], tallAt: e })));
+      return done(clearedNote(withRevived("tall", 0, -beyond, (more) => clear({ ...at(more), tall: true, tallRun: [el], tallAt: e }))));
     }
     const id: TallListId = `tall:${e}`;
-    return clearedNote(withRevived(id, 0, -beyond, (more) => clear(withList(at(more), id, [el]))));
+    return done(clearedNote(withRevived(id, 0, -beyond, (more) => clear(withList(at(more), id, [el])))));
   }
   const { cfg: c1, list } = editableIn(cfg, plan, wall);
   if (list.length >= MAX_LIST) return fail(cfg, fullNote("base"));
@@ -2631,15 +2886,17 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
   let r: EditResult = fail(cfg, refuse);
   for (const g of grows) {
     if (g > outside + 0.5) continue;
-    r = withRevived(wall, at, outside - g, (more) => withList(extendRun(c1, wall, side, g + more), wall, put(list, at)));
+    // a sliver of bare floor it leaves at this end is absorbed there (the cabinets do not slide: keepSliver)
+    const ks = g > 0.5 ? { cfg: c1, list: put(list, at), filer: null } : keepSliver(plan, c1, wall, put(list, at), runFoot(plan, wall, put(list, at)) - runFoot(plan, wall, list) + (runCol ? DIM.panel : 0));
+    r = withRevived(wall, ks.list.indexOf(el), outside - g, (more) => withList(extendRun(ks.cfg, wall, side, g + more), wall, ks.list));
     if (r.ok) break;
   }
   // "+ lijevo / + desno" beside the last cabinet before the column at this end: the column moves out by its width
   if (r.ok && endCol) {
     const note = "Novi ormarić stoji uz ostale donje elemente, a visoki stup pomaknut je prema kraju zida.";
-    return { ...r, warning: r.warning ? `${note} ${r.warning}` : note };
+    return done({ ...r, warning: r.warning ? `${note} ${r.warning}` : note });
   }
-  return r;
+  return done(r);
 }
 
 /**
@@ -2673,9 +2930,9 @@ function insertBeyondColumn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap,
 
 /**
  * A tall unit into a "+" between the cabinets of a wall's base run (a joint of a full row, or empty space): it stands in
- * the run (CabinetSpec.tall). Between two cabinets one of them gets narrower when the run has no free cm (as for a
- * cabinet there); into empty space it takes the space's place (what it does not take stays empty). The wall units above
- * it go (commitTall).
+ * the run (CabinetSpec.tall). Between two cabinets the row makes room when the run has no free cm, as for a cabinet
+ * there (the two beside the joint first, then the run's others: commitTall); into empty space it takes the space's place
+ * (what it does not take stays empty). The wall units above it go (commitTall).
  */
 function insertTallGap(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: string, w: number, refuse: string): EditResult {
   const def = moduleDef("tall", type);
@@ -2689,12 +2946,16 @@ function insertTallGap(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type
   }
   if (!gap.between) return fail(cfg, refuse);
   const { cfg: c1, list } = editableIn(cfg, plan, wall);
+  if (!seamHolds(plan, gap, list)) return fail(cfg, "Tog mjesta više nema.");
+  // a full row where nothing can make room: the tall unit takes that element's place (as "Zamijeni" does)
+  if (gap.replace) {
+    const slot = plan.slots.find((s) => s.id === gap.replace);
+    return slot ? tallForBase(cfg, plan, slot, def, { widths: [w] }) : fail(cfg, "Tog mjesta više nema.");
+  }
   if (list.length >= MAX_LIST) return fail(cfg, fullNote("base"));
   const at = gap.index;
-  const [left, right] = gap.between.map((sid) => plan.slots.find((s) => s.id === sid));
-  if (!left || !right || list[at - 1]?.type !== left.type || list[at]?.type !== right.type) return fail(cfg, "Tog mjesta više nema.");
   const next = [...list.slice(0, at).map(copyEntry), { type, width: w, tall: true as const }, ...list.slice(at).map(copyEntry)];
-  return commitTall(cfg, plan, null, c1, wall, list, next, at, { refuse, shrink: [at - 1, at + 1], one: true });
+  return commitTall(cfg, plan, null, c1, wall, list, next, at, { refuse, shrink: [at - 1, at + 1], wide: true, src: srcInsert(list.length, at) });
 }
 
 /**
@@ -2734,10 +2995,12 @@ function gapHasOption(plan: KitchenPlan, gap: PlanGap): boolean {
 registerGapCheck(gapHasOption);
 
 /**
- * A new element between two elements of a full row (PlanGap kind "seam"): one of the two gets narrower — the widest of
- * its own widths that leaves enough room (at least SEAM_MIN), as "+ lijevo / + desno" on a full row do (shrinkFor). A plain cabinet gives
- * way before the sink, the hob or the dishwasher, the wider one first. Base runs use their free cm first; wall units
- * never (that room may lie beyond the window: the row must not flow over it). Says what got narrower.
+ * A new element into a full row (PlanGap kind "seam"). Between two elements (or beside the only one of a stretch): the
+ * row makes room — its free cm first (`gap.room`), then one element that can give enough on its own (the two beside the
+ * joint first, the wider first, plain cabinets before the sink / hob / dishwasher), else several (as few sinks / hobs /
+ * dishwashers as possible, then as few elements, each as little as it can) — never a corner unit, the hood above the hob
+ * or a tall unit, never below SEAM_MIN (`gap.narrow` lists who may give way). Where nothing can make room
+ * (`gap.replace`), the new element takes that element's place. Says what got narrower / what it replaced.
  */
 function insertSeam(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, el: CabinetSpec, refuse: string): EditResult {
   if (el.width > gap.maxWidth + 0.5 || !gap.between) return fail(cfg, refuse);
@@ -2745,33 +3008,214 @@ function insertSeam(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, el: Cab
   const z = listZone(id);
   if (z !== "base" && z !== "upper" && z !== "island") return fail(cfg, refuse);
   const { cfg: c1, list } = editableIn(cfg, plan, id);
+  // the list must still be the one the seam was found in
+  if (!seamHolds(plan, gap, list)) return fail(cfg, "Tog mjesta više nema.");
+  if (gap.replace) return replaceAtSeam(cfg, plan, gap, c1, list, el, refuse);
   if (list.length >= MAX_LIST) return fail(cfg, fullNote(z));
   const at = gap.index;
-  const [left, right] = gap.between.map((sid) => plan.slots.find((s) => s.id === sid));
-  // the list must still be the one the seam was found in
-  if (!left || !right || list[at - 1]?.type !== left.type || list[at]?.type !== right.type) return fail(cfg, "Tog mjesta više nema.");
-  const need = el.width - (z !== "upper" ? freeOf(plan, id) : 0);
-  // (a tall unit standing in the run does not get narrower: seamDef has no tall types)
-  const order = [at - 1, at].filter((i) => !list[i].tall).sort((p, q) => {
-    const dp = defOf(z, list[p].type);
-    const dq = defOf(z, list[q].type);
-    return Number(Boolean(dp?.feature)) - Number(Boolean(dq?.feature)) || list[q].width - list[p].width;
-  });
-  for (const i of order) {
-    const e = list[i];
-    const d = seamDef(z === "island" ? "base" : z, e.type);
-    if (!d) continue;
-    const nw = need > 0.5 ? d.widths.filter((x) => x < e.width - 0.5 && x >= SEAM_MIN && e.width - x >= need - 0.5).sort((p, q) => q - p)[0] : e.width;
-    if (nw === undefined) continue;
-    const next = list.map((x, j) => (j === i ? { ...x, width: nw } : { ...x }));
-    const placed = [...next.slice(0, at), el, ...next.slice(at)];
-    const r = commitPlan(cfg, plan, null, withList(c1, id, placed), id, at, refuse);
+  // wall units: each stays in its stretch (keepStretches), the new one at the joint
+  const tgt = upperTargets(plan, gap, list);
+  const placed = (next: CabinetSpec[]) => {
+    const out = [...next.slice(0, at), el, ...next.slice(at)];
+    if (z !== "upper") return out;
+    next.forEach((e, j) => tgt.map.set(e, tgt.x(j)));
+    tgt.map.set(el, tgt.joint);
+    return keepStretches(c1, id, out, out.map((e) => tgt.map.get(e) ?? null));
+  };
+  const need = el.width - (gap.room ?? (z !== "upper" ? freeOf(plan, id) : 0));
+  // (and the new one must hang at the joint: else this "+" is not offered)
+  const here = (r: EditResult) => (z === "upper" ? onTheGap(cfg, r, gap, refuse) : r);
+  const commitIn = (arr: CabinetSpec[]) => commitPlan(cfg, plan, null, withList(c1, id, arr), id, arr.indexOf(el), refuse);
+  if (need <= 0.5) return here(commitIn(placed(list.map(copyEntry))));
+  // who may give way, in the order they are asked (a tall unit standing in the run does not: seamDef has no tall types)
+  const dz = z === "island" ? "base" : z;
+  const cands = (gap.narrow ?? gap.between)
+    .map((sid) => plan.slots.find((s) => s.id === sid))
+    .filter((s): s is PlanSlot => Boolean(s?.list && s.list.id === id && !list[s.list.index]?.tall))
+    .map((s) => {
+      const i = s.list!.index;
+      const e = list[i];
+      const d = seamDef(dz, e.type);
+      const widths = d ? d.widths.filter((x) => x < e.width - 0.5 && x >= SEAM_MIN && (z !== "island" || d.island)).sort((p, q) => q - p) : [];
+      return { i, e, d: d!, widths, feature: Boolean(d?.feature) };
+    })
+    .filter((c) => c.widths.length);
+  for (const ways of narrowings(cands, need)) {
+    const next = list.map((x, j) => (ways.has(j) ? { ...x, width: ways.get(j)! } : { ...x }));
+    const r = here(commitIn(placed(next)));
     if (!r.ok) continue;
-    if (nw >= e.width - 0.5) return r;
-    const note = `Za novi element napravljeno je mjesto: ${d.name.charAt(0).toLowerCase()}${d.name.slice(1)} sada je ${nw} cm umjesto ${e.width} cm.`;
+    const name = (c: (typeof cands)[number]) => `${c.d.name.charAt(0).toLowerCase()}${c.d.name.slice(1)}`;
+    const told = cands.filter((c) => ways.has(c.i)).sort((p, q) => p.i - q.i);
+    const note =
+      told.length === 1
+        ? `Za novi element napravljeno je mjesto: ${name(told[0])} sada je ${ways.get(told[0].i)} cm umjesto ${told[0].e.width} cm.`
+        : `Za novi element napravljeno je mjesto, uži su: ${told.map((c) => `${name(c)} ${ways.get(c.i)} cm umjesto ${c.e.width} cm`).join(", ")}.`;
     return { ...r, warning: r.warning ? `${note} ${r.warning}` : note };
   }
   return fail(cfg, refuse);
+}
+
+/**
+ * An edited wall-unit list flows (plan.ts flowUpper): each unit goes into the first stretch — between the window, the
+ * hood, a column and the row's ends — from the current one that still has room. So a unit can slip into an earlier
+ * stretch with room: the bare wall left of the window over bare floor when the planner's own wall units are made explicit,
+ * a narrow stretch a 15 cm niche fits in. `x[i]`: where entry i hangs now (run-local cm; null = anywhere). Empty space
+ * ("Bez gornjeg elementa") fills each stretch an entry must not slip into, so every unit stays in its stretch.
+ */
+function keepStretches(cfg: KitchenConfig, upId: ListId, list: CabinetSpec[], x: (number | null)[]): CabinetSpec[] {
+  const seg = planList(planKitchen(sanitizeConfig(withList(cfg, upId, list))), upId)?.segments;
+  if (!seg?.spans || x.length !== list.length) return list;
+  const out: CabinetSpec[] = [];
+  const flow = (caps: number[], spans: Range[], idx: number[]) => {
+    const used = caps.map(() => 0);
+    let cur = 0;
+    for (const i of idx) {
+      const e = list[i];
+      const t = x[i] === null ? -1 : spans.findIndex((r) => (x[i] as number) >= r.from - 0.5 && (x[i] as number) < r.to + 0.5);
+      for (let guard = 0; guard < caps.length + 1; guard++) {
+        let k = -1;
+        for (let j = cur; j < caps.length; j++) {
+          if (used[j] + e.width <= caps[j] + 0.01) {
+            k = j;
+            break;
+          }
+        }
+        if (k < 0 || t < 0 || k >= t) {
+          if (k >= 0) [cur, used[k]] = [k, used[k] + e.width];
+          break;
+        }
+        // it would slip into stretch k before its own: the rest of k stays bare wall
+        const pad = Math.floor(caps[k] - used[k] + 1e-6);
+        if (pad >= 5) out.push({ type: SPACER.upper, width: pad });
+        used[k] = caps[k];
+        cur = k;
+      }
+      out.push(e);
+    }
+  };
+  const all = list.map((_, i) => i);
+  const h = seg.hoodAt;
+  if (h === null || h < 0 || h >= list.length) flow(seg.left, seg.spans.left, all);
+  else {
+    flow(seg.left, seg.spans.left, all.filter((i) => i < h));
+    out.push(list[h]);
+    flow(seg.right, seg.spans.right, all.filter((i) => i > h));
+  }
+  return out.length === list.length ? list : out;
+}
+
+/** an element that may give way for a seam insert: its list index, entry, type and the widths it may take (widest first) */
+interface SeamCand {
+  i: number;
+  e: CabinetSpec;
+  widths: number[];
+  feature: boolean;
+}
+
+/**
+ * The ways `cands` (in the order they are asked) can give up `need` cm, best first, as list index → new width: one alone
+ * (plain cabinets first, in their order, each as little as it can), then several — the fewest sinks / hobs /
+ * dishwashers, then the fewest elements (the ones that give most), each widened back as far as the total still allows
+ * (the sink / hob / dishwasher first, then the farthest).
+ */
+function narrowings(cands: SeamCand[], need: number): Map<number, number>[] {
+  const out: Map<number, number>[] = [];
+  const most = (c: SeamCand) => c.e.width - c.widths[c.widths.length - 1];
+  for (const feature of [false, true]) {
+    for (const c of cands) {
+      if (c.feature !== feature) continue;
+      const w = c.widths.find((x) => c.e.width - x >= need - 0.5);
+      if (w !== undefined) out.push(new Map([[c.i, w]]));
+    }
+  }
+  const plain = cands.filter((c) => !c.feature).sort((p, q) => most(q) - most(p));
+  const feats = cands.filter((c) => c.feature).sort((p, q) => most(q) - most(p));
+  for (let nf = 0; nf <= feats.length; nf++) {
+    const chosen = feats.slice(0, nf);
+    let sum = chosen.reduce((n, c) => n + most(c), 0);
+    for (const c of plain) {
+      if (sum >= need - 0.5) break;
+      chosen.push(c);
+      sum += most(c);
+    }
+    if (sum < need - 0.5 || chosen.length < 2) continue;
+    // each at its narrowest, then widened back as far as the total allows: the sink / hob / dishwasher first, then the farthest
+    const ways = new Map(chosen.map((c) => [c.i, c.widths[c.widths.length - 1]]));
+    const relax = [...chosen].sort((p, q) => Number(q.feature) - Number(p.feature) || cands.indexOf(q) - cands.indexOf(p));
+    for (const c of relax) {
+      const others = [...ways].reduce((n, [i, w]) => n + (i === c.i ? 0 : (cands.find((x) => x.i === i)!.e.width - w)), 0);
+      const w = c.widths.find((x) => others + c.e.width - x >= need - 0.5);
+      if (w !== undefined) ways.set(c.i, w);
+    }
+    for (const [i, w] of [...ways]) if (w >= (cands.find((x) => x.i === i)!.e.width - 0.5)) ways.delete(i);
+    if (!out.some((m) => m.size === ways.size && [...m].every(([i, w]) => ways.get(i) === w))) out.push(ways);
+  }
+  return out;
+}
+
+/**
+ * where the wall units of a seam's row hang now (keepStretches): entry j of the (made explicit) list at its slot's centre,
+ * and the joint — a point inside the stretch the new element is to go into. `map` collects entry objects → x for the caller.
+ */
+function upperTargets(plan: KitchenPlan, gap: PlanGap, list: CabinetSpec[]): { x: (j: number) => number | null; joint: number | null; map: Map<CabinetSpec, number | null> } {
+  const at = new Map(plan.slots.filter((s) => s.list?.id === gap.list).map((s) => [s.list!.index, s.x + s.width / 2]));
+  const inRow = (sid: string | undefined) => plan.slots.find((s) => s.id === sid && s.list?.id === gap.list);
+  const a = inRow(gap.between?.[0]);
+  const b = inRow(gap.between?.[1]);
+  const r = inRow(gap.replace);
+  const joint = r ? r.x + r.width / 2 : a ? a.x + a.width - 1 : b ? b.x + 1 : null;
+  return { x: (j) => (j < list.length ? (at.get(j) ?? null) : null), joint, map: new Map() };
+}
+
+/** the seam's elements still stand where planGaps found them in the (made explicit) list */
+function seamHolds(plan: KitchenPlan, gap: PlanGap, list: CabinetSpec[]): boolean {
+  const at = gap.index;
+  const ok = (sid: string, i: number) => {
+    const s = plan.slots.find((x) => x.id === sid);
+    // (beside a stretch of one element: what stands outside the row, or nothing)
+    if (!s || s.list?.id !== gap.list) return true;
+    return s.list.index === i && list[i]?.type === s.type && Math.abs(list[i].width - s.width) < 0.05;
+  };
+  if (gap.replace) return ok(gap.replace, at);
+  const [a, b] = gap.between ?? ["", ""];
+  return ok(a, at - 1) && ok(b, at);
+}
+
+/**
+ * A seam where nothing can make room (`gap.replace`): the new element takes that element's place — wall units: what it
+ * does not take stays bare wall beside it ("Bez gornjeg elementa"), so the others stay put; base cabinets and the island
+ * slide. Says what it replaced.
+ */
+function replaceAtSeam(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, c1: KitchenConfig, list: CabinetSpec[], el: CabinetSpec, refuse: string): EditResult {
+  const id = gap.list;
+  const z = listZone(id);
+  const i = gap.index;
+  const cur = list[i];
+  if (!cur) return fail(cfg, "Tog mjesta više nema.");
+  if (cur.type === el.type && Math.abs(cur.width - el.width) < 0.5) return fail(cfg, "Na tom mjestu već stoji taj element.");
+  const next = list.map(copyEntry);
+  next[i] = el;
+  const tgt = upperTargets(plan, gap, list);
+  next.forEach((e, j) => tgt.map.set(e, tgt.x(j)));
+  const rest = cur.width - el.width;
+  if (rest > 0.5 && z === "base") {
+    // a wall's base row keeps its cabinets (and a column in it, the wall units over them) where they are: what the new
+    // element leaves of the place stays beside it — empty space with its own "+", a sliver as a filler strip
+    next.splice(i + 1, 0, rest >= GAP_MIN ? { type: SPACER.base, width: rest } : { type: "filer", width: rest });
+  } else if (rest > 0.5) keepRoom(next, i, rest, z);
+  else if (el.width > cur.width) growInto(next, i, el.width - cur.width, z);
+  const tidied = tidy(next, z, el);
+  // wall units: each stays in its stretch (keepStretches)
+  const final = z === "upper" ? keepStretches(c1, id, tidied, tidied.map((e) => tgt.map.get(e) ?? null)) : tidied;
+  const r0 = commitPlan(cfg, plan, null, withList(c1, id, final), id, final.indexOf(el), refuse);
+  const r = z === "upper" ? onTheGap(cfg, r0, gap, refuse) : r0;
+  if (!r.ok) return r;
+  const d = defOf(z, cur.type);
+  const notes = [`Novi element stoji umjesto susjednog (${d ? `${d.name.charAt(0).toLowerCase()}${d.name.slice(1)}` : cur.type}, ${cur.width} cm).`];
+  // a sink / hob / dishwasher that went is named (as when a tall unit takes its place)
+  if (d?.feature) notes.push(d.feature === "sink" ? `${d.name} (${cur.width} cm) je uklonjen — dodajte ga na drugo mjesto.` : `${d.name} (${cur.width} cm) je uklonjena — dodajte je na drugo mjesto.`);
+  if (r.warning) notes.push(r.warning);
+  return { ...r, warning: notes.join(" ") };
 }
 
 /** a wall unit put into a gap must hang on that bare wall (the list could flow it elsewhere): else the refusal */

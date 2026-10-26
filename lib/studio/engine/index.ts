@@ -2384,10 +2384,29 @@ class Engine {
   private computeGaps(K: KitchenRT, onScreen: (x: number, y: number) => boolean): GapView[] {
     const out: GapView[] = [];
     if (this.play) return out;
+    // the tall units in view (world boxes): a "+" behind one of them is not shown — seen past the column standing at
+    // its end, a wall-unit row's "+" would sit on the column's front. Only columns hide them: they are what rises in
+    // front of a row (an island in front of a wall's base row leaves its "+" in sight above the worktop)
+    const cam = this.camera.position;
+    const cols: THREE.Box3[] = [];
+    for (const m of K.modules.values()) if (m.slot.zone === "tall" && this.shown(m.root)) cols.push(this.localBox(m).clone().applyMatrix4(m.root.matrixWorld));
+    const ray = new THREE.Ray();
+    const hitAt = new THREE.Vector3();
+    const hidden = (at: THREE.Vector3) => {
+      const len = at.distanceTo(cam);
+      if (!cols.length || len < 1e-6) return false;
+      ray.set(cam, hitAt.copy(at).sub(cam).divideScalar(len));
+      // (a box the ray only enters in its last 6 cm is what the "+" stands against — the column beside a joint, seen
+      // from the joint's side — not in front of it)
+      return cols.some((b) => ray.intersectBox(b, hitAt) !== null && hitAt.distanceTo(cam) < len - 0.06);
+    };
+    const world = new THREE.Vector3();
     for (const g of planGaps(K.plan)) {
       const run = K.runs.get(g.run);
       if (!run) continue;
-      const p = this.toScreen(run.group.localToWorld(this.tmpC.set(g.at.x / 100, g.at.y / 100, g.at.z / 100)));
+      run.group.localToWorld(world.set(g.at.x / 100, g.at.y / 100, g.at.z / 100));
+      const p = this.toScreen(this.tmpC.copy(world));
+      const behind = Boolean(p) && hidden(world);
       out.push({
         id: g.id,
         kind: g.kind,
@@ -2395,11 +2414,12 @@ class Engine {
         zone: g.zone,
         label: g.label,
         ...(g.side ? { side: g.side } : {}),
+        ...(g.replace ? { replace: g.replace } : {}),
         offset_cm: Math.round(g.from * 10) / 10,
         width_cm: Math.round((g.to - g.from) * 10) / 10,
         maxWidth_cm: g.maxWidth,
         anchor: p ? { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 } : { x: 0, y: 0 },
-        visible: Boolean(p) && onScreen(p?.x ?? -1, p?.y ?? -1),
+        visible: Boolean(p) && !behind && onScreen(p?.x ?? -1, p?.y ?? -1),
       });
     }
     return out;

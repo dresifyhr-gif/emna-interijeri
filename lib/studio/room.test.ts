@@ -289,7 +289,8 @@ describe("gaps (the studio's \"+\")", () => {
   it("lists bare floor, bare wall beyond the kitchen, empty space and bare wall above the worktop", () => {
     const ids = (c: KitchenConfig) => planGaps(planKitchen(c)).map((g) => g.id);
     // the bare floor (base cabinets or a tall unit), the bare wall above it (wall units), the 25 cm left beside the hood
-    assert.deepEqual(ids(ownerEdited()), ["end:b-left", "upend:b-left", "up:b:390"]);
+    // (and wall A's full rows their "+" between elements: every row has one)
+    assert.deepEqual(ids(ownerEdited()), ["end:b-left", "upend:b-left", "up:b:390", "seam:a:1", "seam:a:u:0"]);
     const ext = setKitchenExtent(kitchen({ ...OWNER, walls: { a: 400, b: 450, c: 220 } }), "a", { length: 300 }).cfg;
     const g = planGaps(planKitchen(ext)).find((x) => x.id === "end:a-right")!;
     assert.deepEqual([g.floor, g.outside, g.maxWidth], [0, 100, 100]);
