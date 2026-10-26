@@ -6,19 +6,42 @@
 
 import {
   FINISH_DEFAULTS,
+  backsplashDef,
   defaultHandleColor,
   finishDef,
   frontDef,
+  glassFrameDef,
+  glassTypeDef,
   handleColorDef,
   handleDef,
+  hoodFinishDef,
   moduleDef,
   roomFloorDef,
   roomWallDef,
   topDef,
+  worktopThicknessDef,
 } from "./catalog";
-import { defaultAnchor, frontFor, isPeninsula, isTallList, kitchenRange, parseRunEnd, planKitchen, tallListEnd, type KitchenPlan, type ListId, type SlotZone } from "./plan";
+import {
+  backsplashOfCfg,
+  defaultAnchor,
+  frontFor,
+  glassOf,
+  hoodKindOf,
+  isPeninsula,
+  isTallList,
+  kitchenRange,
+  parseRunEnd,
+  planKitchen,
+  shelvesOf,
+  tallListEnd,
+  worktopThickness,
+  type KitchenPlan,
+  type ListId,
+  type PlanSlot,
+  type SlotZone,
+} from "./plan";
 import { backsplashArea } from "./price";
-import type { FrontZone, KitchenConfig, Layout, WallId } from "./types";
+import type { FrontZone, GlassSpec, KitchenConfig, Layout, WallId } from "./types";
 
 const LAYOUT_NAME: Record<Layout, string> = {
   ravna: "ravna kuhinja",
@@ -76,6 +99,8 @@ export interface CompositionItem {
   corner: boolean;
   /** empty space, not a cabinet */
   spacer: boolean;
+  /** what this element has of its own (elementOptionsText: "satinirano staklo, otvaranje na dodir"); absent = nothing */
+  options?: string;
 }
 
 export interface CompositionRow {
@@ -130,6 +155,7 @@ export function composition(cfg: KitchenConfig, plan: KitchenPlan = planKitchen(
         const def = moduleDef(s.zone, s.type);
         // a door or a vitrine in a blind corner is still a corner unit
         const name = def ? (s.corner && !def.corner ? `Kutni element, ${def.name.toLowerCase()}` : def.name) : s.type;
+        const options = elementOptionsText(c, s);
         return {
           slotId: s.id,
           type: s.type,
@@ -139,12 +165,51 @@ export function composition(cfg: KitchenConfig, plan: KitchenPlan = planKitchen(
           priceAdd: def?.priceAdd ?? 0,
           corner: Boolean(s.corner),
           spacer: Boolean(def?.spacer),
+          ...(options ? { options } : {}),
         };
       }),
     });
   }
   return rows;
 }
+
+/** "satinirano staklo, tanki aluminijski, crni okvir, bez LED-a" — the glass of a glass-door element in words */
+export function glassText(g: Required<GlassSpec>): string {
+  const parts = [(glassTypeDef(g.type)?.name ?? g.type).toLowerCase()];
+  if (g.frame !== "fronta") parts.push(`okvir ${(glassFrameDef(g.frame)?.name ?? g.frame).toLowerCase()}`);
+  if (!g.led) parts.push("bez LED-a");
+  if (!g.shelves) parts.push("bez staklenih polica");
+  return parts.join(", ");
+}
+
+/**
+ * What an element has of its own beyond its type (summary, admin quote), or null: its glass when the kitchen / the element
+ * sets one (KitchenConfig.glass, opt.glass), its own opening style, top-box depth, hob hood, shelf rows / LED, and an end
+ * unit at the end of its run. Every older link: null for every element.
+ */
+export function elementOptionsText(cfg: KitchenConfig, s: PlanSlot): string | null {
+  const def = moduleDef(s.zone, s.type);
+  if (!def || def.spacer) return null;
+  const o = s.opt;
+  const parts: string[] = [];
+  if (def.glass && (cfg.glass || o?.glass)) parts.push(glassText(glassOf(cfg, o)));
+  if (o?.open && o.open !== cfg.handles) parts.push((handleDef(o.open)?.name ?? o.open).toLowerCase());
+  if (o?.depth !== undefined) parts.push(`nadgradni ormarić dubine ${o.depth} cm`);
+  if (def.feature === "hob" && o?.hood) parts.push(HOOD_WORDS[hoodKindOf(cfg, o)]);
+  if (def.rows) {
+    const sh = shelvesOf(o);
+    parts.push(`${sh.rows} ${sh.rows === 1 ? "polica" : "police"}${sh.led ? " s LED-om" : ""}`);
+  } else if (def.lit && o?.led === false) parts.push("bez LED-a");
+  if (s.end) parts.push(`završetak ${s.end.side === "left" ? "lijevog" : "desnog"} kraja`);
+  return parts.length ? parts.join(", ") : null;
+}
+
+const HOOD_WORDS = {
+  ugradbena: "napa ugrađena u zidni element",
+  dimnjak: "zidna napa s dimnjakom",
+  kosa: "kosa staklena napa",
+  ploca: "napa u ploči (downdraft)",
+} as const;
 
 /** "1 barska stolica", "3 barske stolice", "5 barskih stolica" / "2 stolice" */
 function seatsWord(n: number, bar: boolean): string {
@@ -200,10 +265,13 @@ export function islandSummary(plan: KitchenPlan): string[] {
   } else if (!I.seatSide) lines.push("Sjedenje: bez prepusta za sjedenje");
   if (I.hood) {
     const h = I.hood;
+    const finish = h.finish ? `, ${(hoodFinishDef(h.finish)?.name ?? h.finish).toLowerCase()}` : "";
     lines.push(
-      `Napa: otočna, stropna, ${r(h.width)} × ${r(h.depth)} cm, donji rub ${r(h.bottom)} cm od poda (${r(h.above)} cm iznad radne ploče), iznad ploče na ${on} — napa nije uračunata u cijenu`,
+      h.style === "kaseta"
+        ? `Napa: stropna kaseta u ravnini sa stropom, ${r(h.width)} × ${r(h.depth)} cm${finish}, iznad ploče na ${on} — napa nije uračunata u cijenu`
+        : `Napa: otočna, stropna, ${r(h.width)} × ${r(h.depth)} cm${finish}, donji rub ${r(h.bottom)} cm od poda (${r(h.above)} cm iznad radne ploče), iznad ploče na ${on} — napa nije uračunata u cijenu`,
     );
-  } else if (c.islandSpec?.hood === false && isl.some((s) => isF(s.type, "hob"))) {
+  } else if ((c.islandSpec?.hood === false || isl.some((s) => isF(s.type, "hob") && hoodKindOf(c, s.opt) === "ploca")) && isl.some((s) => isF(s.type, "hob"))) {
     lines.push(`Napa: bez nape iznad ${on === "otoku" ? "otoka" : "poluotoka"} (ploča s ugrađenim odsisom)`);
   }
   return lines;
@@ -243,12 +311,13 @@ export function summarize(cfg: KitchenConfig): string[] {
     lines.push(`Zid ${WALL_NAME[w]} (${WALL_HINT[w]}): ${c.walls[w]} cm${kitchenOnWall(plan, w)}`);
   }
   lines.push(`Visina stropa: ${c.ceiling} cm`);
-  // heights other than the standard ones (KitchenConfig.heights), as the plan fitted them under the ceiling
-  if (c.heights) {
+  // heights other than the standard ones (KitchenConfig.heights), as the plan fitted them under the ceiling (a top-row
+  // depth alone is not a height: it has its own line below)
+  if (c.heights && (c.heights.mode !== "standard" || c.heights.worktop !== undefined || worktopThickness(c) !== 4)) {
     const H = plan.heights;
     const r = Math.round;
     const parts = [`radna ploča ${r(H.worktop)} cm`, `gornji elementi ${r(H.upperTop - H.upperBottom)} cm (${r(H.upperBottom)}–${r(H.upperTop)} cm od poda)`];
-    if (H.topRow) parts.push(`nadgradni ormarići ${r(H.topRow.to - H.topRow.from)} cm (do ${r(H.topRow.to)} cm)`);
+    if (H.topRow) parts.push(`nadgradni ormarići ${r(H.topRow.to - H.topRow.from)} cm (do ${r(H.topRow.to)} cm${c.heights?.topDepth !== undefined ? `, dubina ${c.heights.topDepth} cm` : ""})`);
     if (plan.slots.some((s) => s.zone === "tall")) parts.push(`visoki stup do ${r(H.tallTop)} cm`);
     if (H.cornice) parts.push(`lajsna do stropa ${r(H.cornice.to - H.cornice.from)} cm`);
     const mode = H.mode === "do-stropa" ? "do stropa" : H.mode === "custom" ? "po mjeri" : "standardne";
@@ -276,16 +345,46 @@ export function summarize(cfg: KitchenConfig): string[] {
   const handle = handleDef(c.handles);
   const hc = handleColorDef(c.finish?.handleColor ?? defaultHandleColor(c.handles));
   const colour = handle?.coloured && hc ? `, ${(c.handles === "bez" ? hc.golaName : hc.name).toLowerCase()}` : "";
-  lines.push(`Ručke: ${handle?.name ?? c.handles}${colour}`);
+  // elements that open differently from the rest (CabinetSpec.opt.open)
+  const own = new Map<string, number>();
+  for (const sl of plan.slots) {
+    const o = sl.opt?.open;
+    if (o && o !== c.handles) own.set(o, (own.get(o) ?? 0) + 1);
+  }
+  const ownText = [...own].map(([id, n]) => `${(handleDef(id)?.name ?? id).toLowerCase()}: ${n} ${n === 1 ? "element" : n < 5 ? "elementa" : "elemenata"}`).join("; ");
+  lines.push(`Ručke: ${handle?.name ?? c.handles}${colour}${ownText ? ` (osim: ${ownText})` : ""}`);
 
   const topName = topDef(c.top)?.name ?? c.top;
-  lines.push(`Radna ploča: ${topName}`);
-  // the engine draws a backsplash in the worktop material and price.ts prices it, so the owner sees it too
+  const thick = worktopThickness(c);
+  lines.push(`Radna ploča: ${topName}${c.worktop ? `, debljina ${worktopThicknessDef(thick)?.name ?? `${thick} cm`}` : ""}`);
+  // the engine draws the backsplash (worktop material, glass or tiles) and price.ts prices it, so the owner sees it too
   const splash = backsplashArea(plan);
-  if (splash > 0.05) {
-    const m2 = new Intl.NumberFormat("hr-HR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(splash);
-    lines.push(`Zidna obloga: ${topName}, oko ${m2} m² između radne ploče i gornjih elemenata`);
+  const bs = backsplashOfCfg(c);
+  const m2 = new Intl.NumberFormat("hr-HR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(splash);
+  if (bs.kind === "bez") lines.push("Zidna obloga: bez obloge između radne ploče i gornjih elemenata");
+  else if (splash > 0.05) {
+    const what = bs.kind === "staklo" || bs.kind === "plocice" ? (backsplashDef(bs.finish ?? undefined)?.name ?? bs.finish ?? bs.kind) : topName;
+    const where = bs.kind === "pola" ? "do pola visine između radne ploče i gornjih elemenata" : "između radne ploče i gornjih elemenata";
+    lines.push(`Zidna obloga: ${what}, oko ${m2} m² ${where}`);
   }
+  // hanging rails with hooks (KitchenConfig.rails)
+  for (const r of plan.runs) {
+    if (r.rail) lines.push(`Reling s kukama: zid ${WALL_NAME[r.wall]}, ${Math.round(r.rail.to - r.rail.from)} cm`);
+  }
+  // the hood above a wall hob: only when it is not the hidden one in a wall unit (every older link)
+  for (const r of plan.runs) {
+    for (const h of r.hoods ?? []) {
+      const finish = (hoodFinishDef(h.finish)?.name ?? h.finish).toLowerCase();
+      const kind = h.kind === "dimnjak" ? "zidna s dimnjakom do stropa" : "kosa staklena";
+      lines.push(`Napa: ${kind}, ${Math.round(h.width)} cm, ${finish}, iznad ploče na zidu ${WALL_NAME[r.wall]} (iznad nje nema zidnih elemenata) — napa nije uračunata u cijenu`);
+    }
+  }
+  const downdraft = plan.slots.filter((sl) => sl.zone === "base" && moduleDef("base", sl.type)?.feature === "hob" && hoodKindOf(c, sl.opt) === "ploca");
+  if (downdraft.length) lines.push(`Napa: u ploči za kuhanje (ploča s ugrađenim odsisom, bez nape iznad)${downdraft.length > 1 ? ` — ${downdraft.length} ploče` : ""}`);
+  // glass-door elements: the kitchen's glass (KitchenConfig.glass) when it is not the plain one of every older link
+  const glassy = plan.slots.filter((sl) => moduleDef(sl.zone, sl.type)?.glass);
+  if (c.glass && glassy.length) lines.push(`Staklo vitrina: ${glassText(glassOf(c))}`);
+
 
   // hardware the kitchen actually has
   const has = (f: (t: string, z: SlotZone) => boolean) => plan.slots.some((s) => f(s.type, s.zone));
@@ -328,7 +427,7 @@ export function summarize(cfg: KitchenConfig): string[] {
   // every run, left → right (edited ones marked) — the owner quotes from this
   for (const row of composition(c, plan)) {
     if (isTallList(row.list)) continue;
-    const items = row.items.map((it) => `${it.spacer ? it.name.toLowerCase() : it.name} ${it.width}`).join(" · ");
+    const items = row.items.map((it) => `${it.spacer ? it.name.toLowerCase() : it.name} ${it.width}${it.options ? ` (${it.options})` : ""}`).join(" · ");
     lines.push(`${row.label}${row.edited ? " (uređeno)" : ""}: ${items}`);
   }
 

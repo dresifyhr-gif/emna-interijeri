@@ -36,8 +36,8 @@ export const STEPS: StepDef[] = [
     lead: "Kliknite element u 3D prikazu ili na popisu — pa ga zamijenite, suzite ili uklonite.",
     leadNoImage: "Odaberite element na popisu — pa ga zamijenite, suzite ili uklonite.",
   },
-  { id: "boje", short: "Boje", title: "Boje fronti", lead: "Vrata i ladice — jednobojno ili dvobojno." },
-  { id: "ploca", short: "Ploča", title: "Ploča i detalji", lead: "Radna ploča, ručke, sudoper i rasvjeta." },
+  { id: "boje", short: "Boje", title: "Boje fronti", lead: "Vrata i ladice — boja, kako se otvaraju i staklo vitrina." },
+  { id: "ploca", short: "Ploča", title: "Ploča i detalji", lead: "Radna ploča, zid iza nje, napa, sudoper i rasvjeta." },
   {
     id: "posalji",
     short: "Pošalji",

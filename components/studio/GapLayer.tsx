@@ -7,8 +7,10 @@
  * and, on every row with none of these (full), one joint between its elements ("seam": neighbours get narrower, or —
  * where nothing can — the new element takes one's place). Shown in every step — quiet (small, dimmed) outside
  * "Elementi", full in it or while an element is selected (the joints only then); hovering or focusing one says what it
- * adds and what happens ("Dodaj gornji element · slobodno 120 cm", "… · susjedni element suzit će se", "… · zamijenit
- * će ladičar, 60 cm").
+ * adds and what happens ("Dodaj gornji element · slobodno 120 cm", "… · susjedni element suzit će se: ladičar 60 → 30
+ * cm", "… · susjedni elementi suzit će se: …", "… · novi element zamijenit će: ladičar, 60 cm" — planned at the width its
+ * picker starts with; in the open picker at the width chosen there). At a free end of a run the picker shows the end
+ * units (završeci) in a block of their own.
  *
  * A click opens the add picker anchored at the "+" (AddPicker: widths preselected to what fills the place, the common
  * elements as big tiles, "Više elemenata" for the rest — lib/studio/edit.ts gapOptions checks every width by planning
@@ -25,7 +27,7 @@
  * picker the arrows move between its options, Escape closes it and goes back to its "+".
  */
 import { useIsPresent } from "framer-motion";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type KeyboardEvent, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { gapOptions, insertAtGap, type EditResult } from "@/lib/studio/edit";
 import { moduleDef } from "@/lib/studio/catalog";
 import { GAP_LABEL, planGaps, type KitchenPlan, type PlanGap } from "@/lib/studio/plan";
@@ -34,6 +36,7 @@ import { AddPicker, addItems, type AddItem } from "./AddPicker";
 import { gapStretch } from "./addModel";
 import { CloseIcon, PlusIcon } from "./icons";
 import { clamp, gapPlace, islandWord } from "./meta";
+import { seamLine, seamPreview, seamPreviewAtStart, type SeamPreview } from "./optionsModel";
 import { areaOf, moveFocus, spreadApart, useEngineView, type Insets } from "./overlay";
 import s from "./studio.module.css";
 
@@ -98,13 +101,6 @@ export interface GapLayerProps {
   onInsert: (r: EditResult, say: string) => void;
 }
 
-/** the element a replace seam's new element takes the place of ("ladičar, 60 cm") */
-const replacedText = (g: PlanGap, plan: KitchenPlan): string | null => {
-  const r = g.replace ? plan.slots.find((x) => x.id === g.replace) : null;
-  if (!r) return null;
-  const name = moduleDef(r.zone === "island" ? "base" : r.zone, r.type)?.name ?? "element";
-  return `${lower(name)}, ${Math.round(r.width)} cm`;
-};
 /**
  * a replace seam that would take the place of a sink / hob / dishwasher says so up front (the toast names it again after
  * the insert): " Element za sudoper tada se uklanja — dodajte ga na drugo mjesto."
@@ -116,17 +112,11 @@ const replacedFeature = (g: PlanGap, plan: KitchenPlan): string | null => {
   return `${d.name} tada se uklanja — dodajte ${d.feature === "sink" ? "ga" : "je"} na drugo mjesto.`;
 };
 /**
- * what a "+" does, for its tooltip and label: "slobodno 150 cm"; a full row's joint: "susjedni element suzit će se"
- * (neighbours make room) or "zamijenit će ladičar, 60 cm" (nothing can: the new element takes its place)
+ * what a "+" does, for its tooltip and label: "slobodno 150 cm"; a full row's joint (optionsModel seamLine, at the width
+ * its picker starts with): "susjedni element suzit će se: ladičar 60 → 30 cm", "susjedni elementi suzit će se: …" or
+ * "novi element zamijenit će: ladičar, 60 cm" (nothing can make room: the new element takes its place)
  */
-const freeText = (g: PlanGap, plan: KitchenPlan) => {
-  if (g.kind !== "seam") return `slobodno ${Math.floor(g.maxWidth)} cm`;
-  if (g.replace) {
-    const r = replacedText(g, plan);
-    return r ? `zamijenit će ${r}` : "zamijenit će susjedni element";
-  }
-  return "susjedni element suzit će se";
-};
+const freeText = (g: PlanGap, p: SeamPreview | null | undefined) => (g.kind !== "seam" ? `slobodno ${Math.floor(g.maxWidth)} cm` : seamLine(p ?? null, Boolean(g.replace)));
 /** "Dodaj gornji element" (plan.ts GAP_LABEL) */
 const addText = (g: PlanGap) => `Dodaj ${lower(g.label || GAP_LABEL.base)}`;
 
@@ -254,6 +244,16 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
 
   const opts = useMemo(() => (openId ? gapOptions(cfg, openId) : null), [cfg, openId]);
   const items = useMemo(() => (opts ? addItems(opts.types, opts.tall) : []), [opts]);
+  // a full row's "+": what it makes narrower (or replaces) at the width its picker starts with — once per plan, for the
+  // markers' tooltips; the open picker's own line follows the width chosen in it
+  const previews = useMemo(() => new Map(gaps.filter((g) => g.kind === "seam").map((g) => [g.id, seamPreviewAtStart(cfg, plan, g)])), [cfg, plan, gaps]);
+  const [pickW, setPickW] = useState<{ id: string; w: number | null } | null>(null);
+  const openW = open && pickW && pickW.id === open.id ? pickW.w : null;
+  const openPreview = useMemo(() => {
+    if (open?.kind !== "seam") return null;
+    const start = previews.get(open.id) ?? null;
+    return openW === null || openW === start?.width ? start : seamPreview(cfg, plan, open, openW);
+  }, [open, openW, cfg, plan, previews]);
 
   // the gap went away (an edit elsewhere): the picker goes with it
   useEffect(() => {
@@ -342,7 +342,7 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
               tabIndex={subtle && openId !== g.id ? -1 : undefined}
               data-zone={g.zone}
               data-open={openId === g.id || undefined}
-              aria-label={`${addText(g)}: ${where}, ${freeText(g, plan)}`}
+              aria-label={`${addText(g)}: ${where}, ${freeText(g, previews.get(g.id))}`}
               aria-haspopup="dialog"
               aria-expanded={openId === g.id}
               onClick={(e) => {
@@ -357,7 +357,7 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
                 <PlusIcon className="h-4 w-4" />
               </span>
               <span aria-hidden="true" className={s.gapTip}>
-                {addText(g)} · {freeText(g, plan)}
+                {addText(g)} · {freeText(g, previews.get(g.id))}
               </span>
             </button>
           );
@@ -376,20 +376,23 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
             <div className="flex items-start gap-2 px-4 pb-2.5 pt-3.5">
               <div className="min-w-0 flex-1">
                 <p className="font-display text-[16px] font-medium leading-tight">{addText(open)}</p>
-                <p className="mt-1 text-[11.5px] leading-snug text-mut">
+                <p aria-live="polite" className="mt-1 text-[11.5px] leading-snug text-mut">
                   {open.kind === "seam" ? (
                     open.replace ? (
                       <>
-                        {gapPlace(open, cfg.layout)}. Nema mjesta — novi element zamijenit će susjedni
-                        {replacedText(open, plan) ? <> ({replacedText(open, plan)})</> : null}.
+                        {gapPlace(open, cfg.layout)}. Nema mjesta — {seamLine(openPreview, true)}.
                         {replacedFeature(open, plan) ? <> {replacedFeature(open, plan)}</> : null}
                       </>
+                    ) : openPreview && !openPreview.narrowed.length ? (
+                      <>{gapPlace(open, cfg.layout)}. Novi element od {openPreview.width} cm stane bez sužavanja susjednih.</>
                     ) : (
-                      <>{gapPlace(open, cfg.layout)}. Nema slobodnog mjesta — susjedni element suzit će se koliko treba.</>
+                      <>
+                        {gapPlace(open, cfg.layout)}. Nema slobodnog mjesta — {openPreview ? seamLine(openPreview) : "susjedni element suzit će se koliko treba"}.
+                      </>
                     )
                   ) : (
                     <>
-                      {gapPlace(open, cfg.layout)} · <span className="tabular-nums">{freeText(open, plan)}</span>.{grows(open)}
+                      {gapPlace(open, cfg.layout)} · <span className="tabular-nums">{freeText(open, null)}</span>.{grows(open)}
                     </>
                   )}
                 </p>
@@ -404,7 +407,17 @@ export function GapLayer({ apiRef, live, cfg, plan, docked, insetsRef, subtle, p
               </button>
             </div>
             <div className="px-2 pb-2.5">
-              <AddPicker key={open.id} items={items} zone={zoneOf(open)} stretch={gapStretch(open)} docked={docked} onPick={pick} />
+              <AddPicker
+                key={open.id}
+                items={items}
+                zone={zoneOf(open)}
+                stretch={gapStretch(open)}
+                docked={docked}
+                // a free end of a run: the end units (završeci) in a block of their own
+                ends={open.kind === "end" || (open.kind === "upper" && Boolean(open.side))}
+                onPick={pick}
+                onWidth={(w) => setPickW({ id: open.id, w })}
+              />
             </div>
           </div>
         </div>

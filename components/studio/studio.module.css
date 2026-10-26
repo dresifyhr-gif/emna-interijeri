@@ -878,6 +878,10 @@
   pointer-events: auto;
   will-change: transform;
 }
+/* phone: on the top of the step sheet, as wide as the sheet allows (the small 3D view above it stays free) */
+.coach[data-docked] {
+  width: min(420px, calc(100vw - 16px));
+}
 /* the card animates in (the outer box carries the position) */
 .coachCard {
   animation: popIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;

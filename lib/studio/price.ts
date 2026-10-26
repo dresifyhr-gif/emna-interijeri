@@ -10,18 +10,42 @@
 
 import {
   PRICES_CONFIRMED,
+  backsplashDef,
   catalog,
   defaultHandleColor,
   finishDef,
   frontDef,
+  glassFrameDef,
+  glassTypeDef,
   handleColorDef,
   handleDef,
+  hoodKindDef,
+  islandHoodStyleDef,
   moduleDef,
   topDef,
+  worktopThicknessDef,
   FINISH_DEFAULTS,
+  type HandleDef,
 } from "./catalog";
-import { DIM, frontFor, hasTopBox, planHeights, planKitchen, type KitchenPlan, type SlotZone } from "./plan";
-import type { FrontZone, KitchenConfig } from "./types";
+import {
+  DIM,
+  TOP_DEPTH_DEFAULT,
+  backsplashOfCfg,
+  frontFor,
+  glassOf,
+  hasTopBox,
+  hoodKindOf,
+  openingOf,
+  planHeights,
+  planKitchen,
+  shelvesOf,
+  topDepthOf,
+  worktopThickness,
+  type KitchenPlan,
+  type PlanSlot,
+  type SlotZone,
+} from "./plan";
+import type { FrontZone, HandleStyle, KitchenConfig } from "./types";
 
 export { PRICES_CONFIRMED };
 
@@ -57,10 +81,13 @@ export const TOP_BOX_HARDWARE = 60;
 
 export interface PriceBreakdown {
   cabinets: number;
+  /** the worktop (its thickness: catalog.worktopThickness priceFactor), the island slab, a bar top, side panels of worktop */
   worktop: number;
-  /** stone backsplash between worktop and wall units (same material as the worktop) */
+  /** between worktop and wall units: worktop material (KitchenConfig.backsplash "ploca" / "pola"), glass or tiles */
   backsplash: number;
+  /** per metre of fronts, each element in its own opening style (KitchenConfig.handles / CabinetSpec.opt.open) */
   handles: number;
+  /** catalogue add-ons of every element (+ the boards of floating shelves) */
   mechanisms: number;
   /** handle colour, sink and tap finish, plinth */
   finishes: number;
@@ -68,7 +95,79 @@ export interface PriceBreakdown {
   install: number;
   /** island / peninsula extras (islandCost: fixed + bar build + hood mounting); its slab and bar top are in `worktop`, its outer row and end panels in `cabinets` */
   island: number;
+  /** glass-door elements: glass kind and frame surcharges (KitchenConfig.glass / CabinetSpec.opt.glass) */
+  glass: number;
+  /** visible wall hoods and downdraft hobs: fitting, chimney cover, duct (hoodsCost; the appliances themselves are not included) */
+  hoods: number;
+  /** hanging rails with hooks (KitchenConfig.rails) */
+  rails: number;
   total: number;
+}
+
+/** the handle style an element is priced with (null: it has no fronts — open shelves, empty space, side panels) */
+export function slotHandle(cfg: KitchenConfig, s: PlanSlot): HandleDef | null {
+  const def = moduleDef(s.zone, s.type);
+  if (!def || def.spacer || def.filler) return null;
+  return handleDef(openingOf(cfg, s.opt)) ?? catalog.handles[0];
+}
+
+/** glass-door element: EUR surcharge of its glass kind and frame (per running metre of the element), 0 otherwise */
+export function glassCost(cfg: KitchenConfig, s: PlanSlot): number {
+  const def = moduleDef(s.zone, s.type);
+  if (!def?.glass) return 0;
+  const g = glassOf(cfg, s.opt);
+  return ((glassTypeDef(g.type)?.priceAdd ?? 0) + (glassFrameDef(g.frame)?.priceAdd ?? 0)) * (s.width / 100);
+}
+
+/** floating shelves: EUR of their boards (catalog.extras.shelfBoardPerMeter per metre of each board), 0 otherwise */
+export function boardsCost(s: PlanSlot): number {
+  const def = moduleDef(s.zone, s.type);
+  if (!def?.rows) return 0;
+  return shelvesOf(s.opt).rows * (s.width / 100) * catalog.extras.shelfBoardPerMeter;
+}
+
+/** a "do stropa" top box's price factor for its depth (catalog.extras.topDepthShare): 1 at 35 cm */
+export function topDepthFactor(depth: number): number {
+  const k = catalog.extras.topDepthShare;
+  return 1 - k + (k * depth) / TOP_DEPTH_DEFAULT;
+}
+
+/** EUR of the worktop's thickness factor (catalog.worktopThickness priceFactor; 1 for 4 cm) */
+export function worktopFactor(cfg: KitchenConfig): number {
+  return worktopThicknessDef(worktopThickness(cfg))?.priceFactor ?? 1;
+}
+
+/**
+ * Hoods beyond the cabinets (catalog.hoods.kinds priceAdd): every visible wall hood of the plan (RunPlan.hoods) and every
+ * downdraft hob (KitchenConfig.hood / opt.hood "ploca") — fitting, chimney cover, duct; the hood / hob is an appliance.
+ */
+export function hoodsCost(plan: KitchenPlan): { kind: "dimnjak" | "kosa" | "ploca"; count: number; each: number }[] {
+  const c = plan.cfg;
+  const out: { kind: "dimnjak" | "kosa" | "ploca"; count: number; each: number }[] = [];
+  const add = (kind: "dimnjak" | "kosa" | "ploca") => {
+    const hit = out.find((x) => x.kind === kind);
+    if (hit) hit.count++;
+    else out.push({ kind, count: 1, each: hoodKindDef(kind)?.priceAdd ?? 0 });
+  };
+  for (const r of plan.runs) for (const h of r.hoods ?? []) add(h.kind);
+  for (const s of plan.slots) {
+    if ((s.zone === "base" || s.zone === "island") && moduleDef("base", s.type)?.feature === "hob" && hoodKindOf(c, s.opt) === "ploca") add("ploca");
+  }
+  return out;
+}
+
+/** metres of hanging rail (KitchenConfig.rails) the plan places */
+export function railMetres(plan: KitchenPlan): number {
+  return plan.runs.reduce((n, r) => n + (r.rail ? (r.rail.to - r.rail.from) / 100 : 0), 0);
+}
+
+/** EUR per m² of the backsplash the config asks for (worktop material: its price per m² × share × thickness factor) */
+export function backsplashRate(cfg: KitchenConfig): number {
+  const b = backsplashOfCfg(cfg);
+  if (b.kind === "staklo" || b.kind === "plocice") return backsplashDef(b.finish ?? undefined)?.pricePerM2 ?? 0;
+  if (b.kind === "bez") return 0;
+  const top = topDef(cfg.top) ?? catalog.tops[0];
+  return (top.pricePerMeter / (DIM.worktopDepth / 100)) * catalog.extras.backsplashShare * worktopFactor(cfg);
 }
 
 /**
@@ -142,7 +241,7 @@ export function islandCost(plan: KitchenPlan): IslandCost | null {
     backRow,
     endPanels: I.endPanels.length * x.islandEndPanel,
     fixed: x.islandFixed,
-    hood: I.hood ? x.islandHoodInstall : 0,
+    hood: I.hood ? (I.hood.style === "kaseta" ? (islandHoodStyleDef("kaseta")?.install ?? x.islandHoodInstall) : x.islandHoodInstall) : 0,
   };
 }
 
@@ -162,15 +261,20 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
   const c = plan.cfg;
   const front = (z: FrontZone) => frontDef(frontFor(c, z)) ?? catalog.fronts[0];
   const top = topDef(c.top) ?? catalog.tops[0];
-  const handle = handleDef(c.handles) ?? catalog.handles[0];
   const m = (cm: number) => cm / 100;
+  const wf = worktopFactor(c);
 
   /** metres of cabinets per zone (empty space excluded), and of fronts (open units count less) */
   const run = { base: 0, upper: 0, tall: 0, island: 0 };
   let cabinets = 0;
-  let fronted = 0;
   let mechanisms = 0;
   let sinks = 0;
+  let handles = 0;
+  let glass = 0;
+  /** metres of fronts per opening style (each element in its own: CabinetSpec.opt.open) */
+  const byStyle = new Map<HandleStyle, number>();
+  /** side panels in the worktop material (catalog worktopMaterial): their stone, like a waterfall side */
+  let panelStone = 0;
   const hs = heightScale(plan);
   for (const s of plan.slots) {
     const def = moduleDef(s.zone, s.type);
@@ -179,11 +283,21 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
     const share = def?.frontShare ?? 1;
     run[s.zone] += w;
     cabinets += front(zoneOf(s.zone)).pricePerMeter * ZONE_FACTOR[s.zone] * w * share * hs[s.zone];
-    // "do stropa": the top box above a wall unit / a split tall unit (kept in cabinets, so lib/admin's lines still add up)
-    if (s.zone === "upper" && hs.top > 0 && hasTopBox(s.type)) cabinets += front("upper").pricePerMeter * ZONE_FACTOR.upper * w * hs.top + TOP_BOX_HARDWARE;
+    // "do stropa": the top box above a wall unit / a split tall unit (kept in cabinets, so lib/admin's lines still add up);
+    // a deeper / shallower top box (HeightSpec.topDepth, opt.depth) costs in proportion (topDepthFactor)
+    if (s.zone === "upper" && hs.top > 0 && hasTopBox(s.type)) {
+      const k = s.corner ? 1 : topDepthFactor(topDepthOf(c, s.opt));
+      cabinets += front("upper").pricePerMeter * ZONE_FACTOR.upper * w * hs.top * k + TOP_BOX_HARDWARE;
+    }
     if (s.zone === "tall" && plan.heights.tallSplit !== null) cabinets += TOP_BOX_HARDWARE;
-    fronted += w * share;
-    mechanisms += def?.priceAdd ?? 0;
+    const h = slotHandle(c, s);
+    if (h) {
+      handles += h.pricePerMeter * w * share;
+      byStyle.set(h.id, (byStyle.get(h.id) ?? 0) + w * share);
+    }
+    mechanisms += (def?.priceAdd ?? 0) + boardsCost(s);
+    glass += glassCost(c, s);
+    if (def?.worktopMaterial) panelStone += top.pricePerMeter * catalog.extras.worktopPanelM * wf;
     if (def?.feature === "sink") sinks++;
   }
   for (const p of plan.pieces) {
@@ -207,21 +321,26 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
     islandTotal = ic.fixed + ic.barBuild + ic.hood;
     if (plan.island?.backRow) backRowM = m(plan.island.backRow.to - plan.island.backRow.from);
   }
-  const worktop = top.pricePerMeter * worktopM + barTop;
-  // the top's price per m² (a running metre of worktop is DIM.worktopDepth deep) times the backsplash share
-  const backsplash = (top.pricePerMeter / m(DIM.worktopDepth)) * catalog.extras.backsplashShare * backsplashArea(plan);
-  const handles = handle.pricePerMeter * fronted;
+  // the worktop's thickness (KitchenConfig.worktop) scales its price; a bar / table top keeps its own
+  const worktop = top.pricePerMeter * worktopM * wf + barTop + panelStone;
+  // worktop material: the top's price per m² (a running metre of worktop is DIM.worktopDepth deep) times the backsplash
+  // share; glass / tiles: their own price per m² (KitchenConfig.backsplash)
+  const backsplash = backsplashRate(c) * backsplashArea(plan);
 
-  // finishes
+  // finishes: the handle colour on the fronts of every coloured style (a gola profile, a bar, a knob, an edge grip)
   const hc = handleColorDef(c.finish?.handleColor ?? defaultHandleColor(c.handles));
-  let finishes = handle.coloured && hc ? hc.priceAdd * fronted : 0;
+  let colouredM = 0;
+  for (const [id, metres] of byStyle) if (handleDef(id)?.coloured) colouredM += metres;
+  let finishes = hc ? hc.priceAdd * colouredM : 0;
   finishes += sinks * ((finishDef("sinks", c.finish?.sink ?? FINISH_DEFAULTS.sink)?.priceAdd ?? 0) + (finishDef("taps", c.finish?.tap ?? FINISH_DEFAULTS.tap)?.priceAdd ?? 0));
   finishes += (finishDef("plinths", c.finish?.plinth ?? FINISH_DEFAULTS.plinth)?.priceAdd ?? 0) * (run.base + run.tall + run.island);
 
   const led = c.led ? catalog.extras.ledPerMeter * Math.max(run.upper, 0.6) + catalog.extras.ledFixed : 0;
   const install = catalog.extras.installPerMeter * (run.base + run.tall + run.island + run.upper * 0.5 + backRowM * 0.5);
-  const total = cabinets + worktop + backsplash + handles + mechanisms + finishes + led + install + islandTotal;
-  return { cabinets, worktop, backsplash, handles, mechanisms, finishes, led, install, island: islandTotal, total };
+  const hoods = hoodsCost(plan).reduce((n, h) => n + h.count * h.each, 0);
+  const rails = railMetres(plan) * catalog.extras.railPerMeter;
+  const total = cabinets + worktop + backsplash + handles + mechanisms + finishes + led + install + islandTotal + glass + hoods + rails;
+  return { cabinets, worktop, backsplash, handles, mechanisms, finishes, led, install, island: islandTotal, glass, hoods, rails, total };
 }
 
 /** Rough price range in EUR, rounded to 100 € (about ±8 %). */

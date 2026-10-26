@@ -10,9 +10,25 @@
  */
 
 import * as THREE from "three";
-import { DIM, type IslandPlan, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId, type RunPlan } from "../plan";
+import { hoodFinishDef, moduleDef } from "../catalog";
+import {
+  DIM,
+  backsplashOfCfg,
+  glassOf,
+  hoodKindOf,
+  openingOf,
+  shelvesOf,
+  topDepthOf,
+  type IslandPlan,
+  type KitchenPlan,
+  type PlanPiece,
+  type PlanSlot,
+  type RunId,
+  type RunPlan,
+  type WallHoodPlan,
+} from "../plan";
 import type { FrontZone, HandleStyle, WallId } from "../types";
-import { BASE_FACE, D, UPPER_FACE, cm, heightsOf } from "./dims";
+import { BASE_FACE, D, UPPER_FACE, cm, gripGapOf, heightsOf, lipOf } from "./dims";
 import { boxes, disposeGeometries, mesh, type BoxSpec, type GeoCache } from "./geo";
 import { dimLine, type DimLabel } from "./labels";
 import type { LedLight, WindowLight } from "./lights";
@@ -37,7 +53,7 @@ export interface RunRT {
    * wall runs: the backsplash, the plinth LED, the contact shadow and the bare-floor marks — rebuilt with the worktop
    * when an element edit changes where the cabinets end (syncRunSurfaces)
    */
-  surfaces?: { backsplash: THREE.Group | null; plinthLed: THREE.Group | null; shadow: THREE.Group | null; floor: THREE.Group | null };
+  surfaces?: { backsplash: THREE.Group | null; plinthLed: THREE.Group | null; shadow: THREE.Group | null; floor: THREE.Group | null; rail: THREE.Group | null };
 }
 
 export interface WallRT {
@@ -74,6 +90,8 @@ export interface KitchenRT {
   islandParts: { front: THREE.Mesh[]; carcass: THREE.Mesh[]; plinth: THREE.Mesh[] };
   /** the ceiling hood above the island hob (null = none); rebuilt by syncIslandHood when an edit moves the hob */
   islandHood: THREE.Group | null;
+  /** visible wall hoods per wall (plan RunPlan.hoods); rebuilt by syncWallHoods when an edit moves a hob */
+  wallHoods: Map<WallId, THREE.Group>;
   walls: WallRT[];
   /**
    * room labels (one per wall), the island / peninsula, then the kitchen-run labels (one per wall, on the floor). A
@@ -115,8 +133,8 @@ export interface KitchenEnv {
   wallMat?: (wall: WallId) => THREE.Material;
 }
 
-/** what building one module / piece needs from the environment */
-export type ModuleEnv = Pick<KitchenEnv, "mats" | "geos" | "fronts" | "handles" | "plinth">;
+/** what building one module / piece needs from the environment (`topId`: side panels of worktop wear it) */
+export type ModuleEnv = Pick<KitchenEnv, "mats" | "geos" | "fronts" | "handles" | "plinth"> & { topId?: string };
 
 /** front zone of a plan piece (island fillers wear the island front) */
 export const pieceZone = (p: PlanPiece): FrontZone => (p.run === "isl" ? "island" : p.zone);
@@ -148,13 +166,24 @@ export function moduleCtx(env: ModuleEnv, plan: KitchenPlan, run: RunRT | undefi
   const mid = cm(slot.x + slot.width / 2);
   const fid = env.fronts[slot.zone];
   const h = heightsOf(plan);
+  const c = plan.cfg;
+  const def = moduleDef(slot.zone, slot.type);
+  // what the element has of its own (CabinetSpec.opt) over the kitchen's settings — plan.ts resolves it, PlanSlot.look keys it
+  const extra: Partial<BuildCtx> = {};
+  if (def?.glass) extra.glass = glassOf(c, slot.opt);
+  if (slot.zone === "upper" && slot.opt?.depth !== undefined) extra.topDepth = cm(topDepthOf(c, slot.opt));
+  if (def?.feature === "hob") extra.hood = hoodKindOf(c, slot.opt);
+  if (def?.worktopMaterial) extra.top = mats.top(env.topId ?? c.top);
+  if (def?.rows || def?.lit) extra.opt = shelvesOf(slot.opt);
   return {
+    ...extra,
     mats,
     geos: env.geos,
     front: mats.front(fid),
     carcass: mats.carcass(fid),
     plinth: plinthMat(env, slot.zone),
-    handles: env.handles,
+    // the element's own opening style (opt.open), else the kitchen's as the scene shows it
+    handles: slot.opt?.open ? openingOf(c, slot.opt) : env.handles,
     ub: h.ub,
     // tall units: the top of the unit itself, module-local (the module stands h.lift higher; a top box above
     // h.tallSplit and the cornice are drawn by modules.ts buildHeightExtras)
@@ -319,6 +348,7 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     islandBack: null,
     islandParts: { front: [], carcass: [], plinth: [] },
     islandHood: null,
+    wallHoods: new Map(),
     walls: [],
     labels: [],
     leds: [],
@@ -527,8 +557,10 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     if (!g) continue;
     tl.add(g, "growX", tTop + wtIndex * 0.15 * s, 1.0 * k);
     // backsplash: exactly the pieces the plan lists (and price.ts prices): worktop to wall units, around the window
-    const bg = backsplashGroup(K, r, top);
+    const bg = backsplashGroup(K, r, top, mats);
     if (bg) tl.add(bg, "growY", tTop + 0.45 * k + wtIndex * 0.15 * s, 0.9 * k);
+    const rg = railGroup(K, r, mats);
+    if (rg) tl.add(rg, "pop", tTop + 1.2 * k + wtIndex * 0.15 * s, 0.6 * k, 0, E.out);
     wtIndex++;
   }
 
@@ -560,6 +592,16 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     tl.add(p.obj, "drop", tUp + best * 0.08 * s, 0.85 * k, 0.3);
   }
   const tUpEnd = tUp + upperList.length * 0.08 * s + 0.85 * k;
+
+  // ---- visible wall hoods above the hobs (plan RunPlan.hoods): they come down with the wall units
+  for (const r of plan.runs) {
+    const hg = buildWallHoods(env, r);
+    const run = K.runs.get(r.wall);
+    if (!hg || !run) continue;
+    run.group.add(hg);
+    K.wallHoods.set(r.wall, hg);
+    tl.add(hg, "drop", tUp + 0.2 * k, 0.85 * k, 0.3);
+  }
 
   // ---- LED strips
   const tLed = tUpEnd - 0.2 * k;
@@ -808,7 +850,7 @@ export function syncKitchenLabels(K: KitchenRT, plan: KitchenPlan): boolean {
 
 // ---------------------------------------------------------------- per-run surfaces (rebuilt by syncRunSurfaces)
 
-const surfacesOf = (run: RunRT) => (run.surfaces ??= { backsplash: null, plinthLed: null, shadow: null, floor: null });
+const surfacesOf = (run: RunRT) => (run.surfaces ??= { backsplash: null, plinthLed: null, shadow: null, floor: null, rail: null });
 
 /** the worktop pieces of a wall run (m, run-local): RunPlan.worktops — a plan of an older shape: its one range */
 const worktopPiecesOf = (r: RunPlan): [number, number][] =>
@@ -848,19 +890,50 @@ function worktopGroup(K: KitchenRT, r: RunPlan, top: THREE.Material): THREE.Grou
 }
 
 /** the backsplash pieces of a wall run (plan RunPlan.backsplash) */
-function backsplashGroup(K: KitchenRT, r: RunPlan, top: THREE.Material): THREE.Group | null {
+function backsplashGroup(K: KitchenRT, r: RunPlan, top: THREE.Material, mats?: Materials): THREE.Group | null {
   const run = K.runs.get(r.wall);
   if (!run || !r.backsplash.length) return null;
   const { workY: WORK_Y } = heightsOf(K.plan);
   const bs: BoxSpec[] = r.backsplash.map((p) => [cm(p.from), WORK_Y, 0, cm(p.to), cm(p.top), D.backsplashT]);
   const bg = new THREE.Group();
   bg.position.y = WORK_Y;
-  const me = mesh(boxes(bs.map((b) => [b[0], b[1] - WORK_Y, b[2], b[3], b[4] - WORK_Y, b[5]] as BoxSpec), [0, WORK_Y, 0]), top);
+  // KitchenConfig.backsplash: the worktop material (it follows a worktop change: K.tops), or glass / tiles of its own
+  const kind = backsplashOfCfg(K.plan.cfg);
+  const own = mats && (kind.kind === "staklo" || kind.kind === "plocice") ? mats.backsplash(kind.finish ?? undefined) : null;
+  const me = mesh(boxes(bs.map((b) => [b[0], b[1] - WORK_Y, b[2], b[3], b[4] - WORK_Y, b[5]] as BoxSpec), [0, WORK_Y, 0]), own ?? top);
   bg.add(me);
-  K.tops.push(me);
+  if (!own) K.tops.push(me);
   run.group.add(bg);
   surfacesOf(run).backsplash = bg;
   return bg;
+}
+
+/** the hanging rail with hooks on a wall (plan RunPlan.rail): a steel tube on two brackets, S-hooks along it */
+function railGroup(K: KitchenRT, r: RunPlan, mats: Materials): THREE.Group | null {
+  const run = K.runs.get(r.wall);
+  const rl = r.rail;
+  if (!run || !rl) return null;
+  // on the backsplash (or the wall without one)
+  const z0 = r.backsplash.length ? D.backsplashT : 0;
+  const x0 = cm(rl.from);
+  const x1 = cm(rl.to);
+  const y = cm(rl.y);
+  const g = new THREE.Group();
+  const rz = z0 + 0.045;
+  const list: BoxSpec[] = [
+    [x0, y - 0.007, rz - 0.007, x1, y + 0.007, rz + 0.007],
+    [x0 + 0.04, y - 0.012, z0 + 0.0005, x0 + 0.055, y + 0.012, rz - 0.007],
+    [x1 - 0.055, y - 0.012, z0 + 0.0005, x1 - 0.04, y + 0.012, rz - 0.007],
+  ];
+  const n = Math.max(2, Math.floor((x1 - x0) / 0.12));
+  for (let i = 1; i < n; i++) {
+    const x = x0 + ((x1 - x0) * i) / n;
+    list.push([x - 0.0025, y - 0.07, rz - 0.0025, x + 0.0025, y - 0.007, rz + 0.0025], [x - 0.0025, y - 0.075, rz - 0.0025, x + 0.0025, y - 0.07, rz + 0.02]);
+  }
+  g.add(mesh(boxes(list), mats.steel));
+  run.group.add(g);
+  surfacesOf(run).rail = g;
+  return g;
 }
 
 /**
@@ -958,8 +1031,9 @@ export function syncRunSurfaces(K: KitchenRT, mats: Materials, plan: KitchenPlan
     const o = old.runs.find((x) => x.wall === r.wall);
     const run = K.runs.get(r.wall);
     if (!o || !run) continue;
-    const key = (x: RunPlan) => JSON.stringify([x.worktops ?? x.worktop, x.backsplash, x.counters ?? x.counter, x.talls ?? x.tall, x.free ?? []]);
-    if (key(o) === key(r)) continue;
+    const key = (x: RunPlan, p: KitchenPlan) =>
+      JSON.stringify([x.worktops ?? x.worktop, x.backsplash, x.counters ?? x.counter, x.talls ?? x.tall, x.free ?? [], x.rail ?? null, p.cfg.backsplash ?? null]);
+    if (key(o, old) === key(r, plan)) continue;
     changed = true;
     const sf = surfacesOf(run);
     drop(run.worktop);
@@ -968,11 +1042,13 @@ export function syncRunSurfaces(K: KitchenRT, mats: Materials, plan: KitchenPlan
     drop(sf.plinthLed);
     drop(sf.shadow);
     drop(sf.floor);
-    run.surfaces = { backsplash: null, plinthLed: null, shadow: null, floor: null };
+    drop(sf.rail);
+    run.surfaces = { backsplash: null, plinthLed: null, shadow: null, floor: null, rail: null };
     worktopGroup(K, r, top);
-    backsplashGroup(K, r, top);
+    backsplashGroup(K, r, top, mats);
     plinthLedGroup(K, r, mats);
     runShadowGroup(K, r, mats);
+    railGroup(K, r, mats);
     if (marks) floorMarks(K, r, mats);
   }
   if (!changed) K.plan = old;
@@ -1050,7 +1126,11 @@ function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPl
   const tallUp = H.cornice ? H.cornice.y1 : H.tallTop;
   const TOP_Y = H.topY;
   const gola = env.handles === "bez";
-  const lip = gola ? D.upperLip : 0;
+  // the Gola lip / the finger gap ("luft") below the wall units, the channel / gap under the worktop
+  const lip = lipOf(env.handles);
+  const gripGap = gripGapOf(env.handles);
+  // a "do stropa" top row deeper / shallower than the wall units (HeightSpec.topDepth): its stretch of a piece steps out
+  const rowFace = H.topRow && Math.abs(H.topDepth - 0.35) > 1e-6 ? UPPER_FACE + (H.topDepth - 0.35) : null;
   const cx = cm(p.x + p.width / 2);
   g.position.x = cx;
   const x0 = cm(p.x) - cx;
@@ -1061,13 +1141,16 @@ function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPl
   const cs: BoxSpec[] = [];
   const plinth: THREE.Mesh[] = [];
   if (p.zone === "upper") {
+    const split = rowFace !== null && H.topRow ? H.topRow.y0 : up;
     if (p.kind === "panel") {
       // the Gola lip below the wall units stands in front of the backsplash, not in the stone
-      fm.push([x0, ub, 0, x1, up, UPPER_FACE]);
+      fm.push([x0, ub, 0, x1, split, UPPER_FACE]);
+      if (rowFace !== null) fm.push([x0, split, 0, x1, up, rowFace]);
       if (lip > 0) fm.push([x0, ub - lip, cm(DIM.backsplashT), x1, ub, UPPER_FACE]);
     }
     else {
-      fm.push([x0 + 0.0015, ub - lip, D.upperCarcass + D.frontOff, x1 - 0.0015, up, UPPER_FACE]);
+      fm.push([x0 + 0.0015, ub - lip, D.upperCarcass + D.frontOff, x1 - 0.0015, split, UPPER_FACE]);
+      if (rowFace !== null) fm.push([x0 + 0.0015, split, rowFace - D.frontT, x1 - 0.0015, up, rowFace]);
       cs.push([x0 + 0.001, ub, 0.004, x1 - 0.001, ut, D.upperCarcass]);
     }
   } else if (p.zone === "tall") {
@@ -1075,7 +1158,7 @@ function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPl
   } else if (p.kind === "panel") {
     fm.push([x0, 0, 0, x1, TOP_Y, BASE_FACE]);
   } else {
-    fm.push([x0 + 0.0015, H.plinth + 0.0015, D.carcass + D.frontOff, x1 - 0.0015, TOP_Y - (gola ? D.golaH : 0) - 0.0015, BASE_FACE]);
+    fm.push([x0 + 0.0015, H.plinth + 0.0015, D.carcass + D.frontOff, x1 - 0.0015, TOP_Y - gripGap - 0.0015, BASE_FACE]);
     cs.push([x0 + 0.001, H.plinth, 0.004, x1 - 0.001, TOP_Y, D.carcass]);
     const pm = mesh(boxes([[x0 + 0.001, 0, 0.03, x1 - 0.001, H.plinth - 0.002, BASE_FACE - D.plinthRecess]], uv), plinthMat(env, zone));
     pm.userData.fz = zone;
@@ -1300,14 +1383,42 @@ export function buildIslandHood(env: Pick<KitchenEnv, "mats">, plan: KitchenPlan
   const y1 = cm(h.top);
   const cw = cm(h.chimney.width) / 2;
   const cd = cm(h.chimney.depth) / 2;
-  // canopy and chimney cover in the appliance finish (black glass / inox), grease filter, two lights underneath
+  // the appliance finish (black glass / inox) — or the hoods' own finish (KitchenConfig.hood.finish)
+  const fin = h.finish ? hoodFinishDef(h.finish) : undefined;
+  const body = fin ? mats.finishMat(`hood:${fin.id}`, fin.render) : mats.appliance;
+  if (h.style === "kaseta") {
+    // a cassette flush with the ceiling, in a narrow frame of ceiling board in the room's paint. The room has no ceiling
+    // and the camera mostly looks from above it: the board only faces down (seen from below it frames the cassette,
+    // from above nothing floats there), and nothing here casts a shadow — it sits in the ceiling, it does not hang
+    const yc = cm(h.ceiling);
+    const m = 0.06;
+    const board = new THREE.PlaneGeometry(2 * (w + m), 2 * (d + m));
+    board.rotateX(Math.PI / 2);
+    board.translate(x, yc, z);
+    g.add(mesh(board, mats.wall, false, false));
+    g.add(mesh(boxes([[x - w, y0, z - d, x + w, yc - 0.0005, z + d]]), body, false, true));
+    g.add(mesh(boxes([[x - w + 0.03, y0 - 0.002, z - d + 0.03, x + w - 0.03, y0, z + d - 0.03]]), mats.brushed, false, true));
+    g.add(
+      mesh(
+        boxes([
+          [x - w + 0.05, y0 - 0.003, z - 0.02, x - w + 0.09, y0 - 0.002, z + 0.02],
+          [x + w - 0.09, y0 - 0.003, z - 0.02, x + w - 0.05, y0 - 0.002, z + 0.02],
+        ]),
+        mats.ovenLight,
+        false,
+        false,
+      ),
+    );
+    return g;
+  }
+  // canopy and chimney cover, grease filter, two lights underneath
   g.add(
     mesh(
       boxes([
         [x - w, y0, z - d, x + w, y1, z + d],
         [x - cw, y1, z - cd, x + cw, cm(h.ceiling), z + cd],
       ]),
-      mats.appliance,
+      body,
     ),
   );
   g.add(mesh(boxes([[x - w + 0.03, y0 - 0.002, z - d + 0.03, x + w - 0.03, y0, z + d - 0.03]]), mats.brushed, false, true));
@@ -1323,6 +1434,88 @@ export function buildIslandHood(env: Pick<KitchenEnv, "mats">, plan: KitchenPlan
     ),
   );
   return g;
+}
+
+/**
+ * The visible wall hoods of a run (plan RunPlan.hoods, KitchenConfig.hood "dimnjak" / "kosa") in its run frame: a chimney
+ * hood (canopy, grease filter, lights, chimney cover up to the ceiling) or an angled glass hood (body against the wall, a
+ * tilted black-glass panel, chimney cover) in the hood finish. Null when the run has none.
+ */
+export function buildWallHoods(env: Pick<KitchenEnv, "mats">, r: RunPlan): THREE.Group | null {
+  if (!r.hoods?.length) return null;
+  const g = new THREE.Group();
+  for (const h of r.hoods) g.add(wallHood(env.mats, h, r.backsplash.length > 0));
+  return g;
+}
+
+function wallHood(mats: Materials, h: WallHoodPlan, splash: boolean): THREE.Group {
+  const g = new THREE.Group();
+  const fin = hoodFinishDef(h.finish);
+  const body = fin ? mats.finishMat(`hood:${fin.id}`, fin.render) : mats.brushed;
+  // in front of the backsplash (1,2 cm) — never in one plane with it or the wall
+  const z0 = (splash ? D.backsplashT : 0) + 0.001;
+  const x0 = cm(h.from);
+  const x1 = cm(h.to);
+  const xc = (x0 + x1) / 2;
+  const y0 = cm(h.bottom);
+  const y1 = cm(h.top);
+  const d = cm(h.depth);
+  const cw = cm(h.chimney.width) / 2;
+  const cd = cm(h.chimney.depth);
+  const chimney: BoxSpec = [xc - cw, y1, z0, xc + cw, cm(h.ceiling), z0 + cd];
+  if (h.kind === "dimnjak") {
+    g.add(mesh(boxes([[x0, y0, z0, x1, y1, z0 + d], chimney]), body));
+    g.add(mesh(boxes([[x0 + 0.03, y0 - 0.002, z0 + 0.03, x1 - 0.03, y0, z0 + d - 0.03]]), mats.brushed, false, true));
+    g.add(
+      mesh(
+        boxes([
+          [xc - (x1 - x0) / 4 - 0.02, y0 - 0.003, z0 + d * 0.6 - 0.02, xc - (x1 - x0) / 4 + 0.02, y0 - 0.002, z0 + d * 0.6 + 0.02],
+          [xc + (x1 - x0) / 4 - 0.02, y0 - 0.003, z0 + d * 0.6 - 0.02, xc + (x1 - x0) / 4 + 0.02, y0 - 0.002, z0 + d * 0.6 + 0.02],
+        ]),
+        mats.ovenLight,
+        false,
+        false,
+      ),
+    );
+    return g;
+  }
+  // angled glass: the body against the wall, the glass from its lower front edge up and back to the body's top
+  const bd = 0.12;
+  g.add(mesh(boxes([[x0 + 0.02, y0 + 0.02, z0, x1 - 0.02, y1, z0 + bd], chimney]), body));
+  const dy = y1 - y0;
+  const dz = z0 + bd - (z0 + d);
+  const L = Math.hypot(dy, dz);
+  const glass = mesh(boxes([[-(x1 - x0) / 2, 0, -0.003, (x1 - x0) / 2, L, 0.003]]), h.finish === "bijela" ? body : mats.blackGlass);
+  glass.position.set(xc, y0, z0 + d);
+  glass.rotation.x = Math.atan2(dz, dy);
+  g.add(glass);
+  // the grease filter under the glass's lower edge
+  g.add(mesh(boxes([[x0 + 0.03, y0 + 0.015, z0 + bd, x1 - 0.03, y0 + 0.02, z0 + d - 0.02]]), mats.brushed, false, true));
+  return g;
+}
+
+/** the hobs of a wall run moved (an element edit): their visible hoods follow — rebuilt in place (no animation) */
+export function syncWallHoods(K: KitchenRT, env: Pick<KitchenEnv, "mats">, plan: KitchenPlan): boolean {
+  let changed = false;
+  for (const r of plan.runs) {
+    const before = JSON.stringify(K.plan.runs.find((x) => x.wall === r.wall)?.hoods ?? []);
+    const after = JSON.stringify(r.hoods ?? []);
+    if (before === after && (K.wallHoods.has(r.wall) || !r.hoods?.length)) continue;
+    const old = K.wallHoods.get(r.wall);
+    if (old) {
+      disposeGeometries(old);
+      old.parent?.remove(old);
+      K.wallHoods.delete(r.wall);
+    }
+    const run = K.runs.get(r.wall);
+    const g = run ? buildWallHoods(env, r) : null;
+    if (run && g) {
+      run.group.add(g);
+      K.wallHoods.set(r.wall, g);
+    }
+    changed = true;
+  }
+  return changed;
 }
 
 /** the island hob moved (an element edit): the hood follows — rebuilt in place (no animation) */

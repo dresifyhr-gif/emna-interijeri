@@ -16,8 +16,8 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
-import { FINISH_DEFAULTS } from "../catalog";
-import { frontFor, geometryKey, kitchenRange, planGaps, planKitchen, sanitizeConfig, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId } from "../plan";
+import { FINISH_DEFAULTS, moduleDef } from "../catalog";
+import { backsplashOfCfg, frontFor, geometryKey, glassOf, kitchenRange, planGaps, planKitchen, sanitizeConfig, type KitchenPlan, type PlanPiece, type PlanSlot, type RunId } from "../plan";
 import {
   DEFAULT_CONFIG,
   type CreateStudioEngine,
@@ -51,6 +51,7 @@ import {
   syncIslandHood,
   syncKitchenLabels,
   syncRunSurfaces,
+  syncWallHoods,
   underLeds,
   type KitchenRT,
   type ModuleEnv,
@@ -75,9 +76,12 @@ function zoneFronts(cfg: KitchenConfig): Record<FrontZone, string> {
 }
 const allZones = (id: string): Record<FrontZone, string> => ({ base: id, upper: id, tall: id, island: id });
 
-/** what of a plan the cabinets depend on: equal keys => no module has to move, appear or go */
+/**
+ * what of a plan the cabinets depend on: equal keys => no module has to move, appear or go (PlanSlot.look: an element's
+ * own options and the kitchen's glass / hood / top-row depth as they apply to it — a change rebuilds that element)
+ */
 function compositionKey(p: KitchenPlan): string {
-  return JSON.stringify(p.slots.map((s) => [s.id, s.type, Math.round(s.x * 10), Math.round(s.width * 10)]));
+  return JSON.stringify(p.slots.map((s) => (s.look ? [s.id, s.type, Math.round(s.x * 10), Math.round(s.width * 10), s.look] : [s.id, s.type, Math.round(s.x * 10), Math.round(s.width * 10)])));
 }
 /** assembly / keyboard order: base runs, tall column, wall units, island */
 const zoneRank = (s: PlanSlot) => ({ base: 0, tall: 1, upper: 2, island: 3 })[s.zone] * 100000 + ["a", "b", "c", "isl"].indexOf(s.run) * 10000 + s.x;
@@ -621,7 +625,7 @@ class Engine {
 
   /** what building a module / filler needs: the materials the scene shows right now */
   private moduleEnv(over: Partial<ModuleEnv> = {}): ModuleEnv {
-    return { mats: this.mats, geos: this.geos, fronts: this.applied.fronts, handles: this.applied.handles, plinth: this.applied.plinth, ...over };
+    return { mats: this.mats, geos: this.geos, fronts: this.applied.fronts, handles: this.applied.handles, plinth: this.applied.plinth, topId: this.applied.top, ...over };
   }
 
   /** remember every material in `root` as compiled */
@@ -689,7 +693,9 @@ class Engine {
     const list: THREE.Object3D[] = [];
     K?.root.traverse((o) => {
       const me = o as THREE.Mesh;
-      if (me.isMesh && !skip.has(me.material as THREE.Material)) list.push(me);
+      const mat = me.material as THREE.Material;
+      // (every door glass: catalog.glass kinds carry userData.glass)
+      if (me.isMesh && !skip.has(mat) && !mat.userData?.glass) list.push(me);
     });
     this.rayTargets = list;
   }
@@ -1296,7 +1302,12 @@ class Engine {
     if (handlesChanged) this.applied.handles = cfg.handles;
     let fresh: string[] = [];
     if (composed) fresh = this.relayout(plan);
-    else K.plan = plan;
+    else {
+      // what the cabinets do not depend on: the backsplash's kind and the rails (rebuilt in place)
+      syncWallHoods(K, { mats: this.mats }, plan);
+      syncRunSurfaces(K, this.mats, plan, this.mats.top(this.applied.top), this.mode === "studio");
+      K.plan = plan;
+    }
     this.syncMaterials(handlesChanged, fresh);
     this.dirty = true;
   }
@@ -1315,6 +1326,8 @@ class Engine {
     if (cfg.top !== this.applied.top) want.push(this.prepTop(this.mats.top(cfg.top)));
     if (floorId !== this.applied.floor) want.push(this.mats.floorMat(floorId));
     for (const w of ["a", "b", "c"] as WallId[]) want.push(this.wallMatFor(cfg, w));
+    // glass of vitrines and a glass / tile backsplash the scene may not have shown yet (KitchenConfig.glass / backsplash)
+    want.push(...this.optionMaterials(cfg));
     const pend = this.pendingFronts;
     const hc = handlesChanged || Boolean(pend?.handlesChanged);
     const skip = [...(pend?.skip ?? []), ...fresh];
@@ -1332,6 +1345,22 @@ class Engine {
     }
     this.pendingFronts = null;
     this.applyMaterials(hc, skip);
+  }
+
+  /** the glass, frame, hood and backsplash materials a config shows (compiled before they appear, like a new front) */
+  private optionMaterials(cfg: KitchenConfig): THREE.Material[] {
+    const out: THREE.Material[] = [];
+    const K = this.kitchen;
+    if (K) {
+      for (const s of K.plan.slots) {
+        if (!moduleDef(s.zone, s.type)?.glass) continue;
+        const g = glassOf(cfg, s.opt);
+        out.push(this.mats.glassOf(g.type, g.led));
+      }
+    }
+    const b = backsplashOfCfg(cfg);
+    if ((b.kind === "staklo" || b.kind === "plocice") && b.finish) out.push(this.mats.backsplash(b.finish));
+    return [...new Set(out)];
   }
 
   private applyMaterials(handlesChanged: boolean, skip: string[]): void {
@@ -1571,7 +1600,12 @@ class Engine {
     const matches = new Map<PlanSlot, ModuleRT>();
     const near = (a: number, b: number) => Math.abs(a - b) < 0.05;
     const same = (m: ModuleRT, s: PlanSlot) =>
-      m.slot.run === s.run && m.slot.zone === s.zone && m.slot.type === s.type && near(m.slot.width, s.width) && (m.slot.corner ?? "") === (s.corner ?? "");
+      m.slot.run === s.run &&
+      m.slot.zone === s.zone &&
+      m.slot.type === s.type &&
+      near(m.slot.width, s.width) &&
+      (m.slot.corner ?? "") === (s.corner ?? "") &&
+      (m.slot.look ?? "") === (s.look ?? "");
     // 1. unchanged, in place; 2. the same cabinet elsewhere in its run (it slides there), nearest first
     for (const s of plan.slots) {
       const m = old.find((o) => !taken.has(o) && same(o, s) && near(o.slot.x, s.x));
@@ -1662,8 +1696,9 @@ class Engine {
     this.listHoverId = listHovered && taken.has(listHovered) ? listHovered.slot.id : null;
 
     K.modules = next;
-    // the ceiling hood follows the island hob (an edit moved or removed it)
+    // the ceiling hood follows the island hob (an edit moved or removed it), a visible wall hood its hob
     if (syncIslandHood(K, { mats: this.mats }, plan)) this.dirty = true;
+    if (syncWallHoods(K, { mats: this.mats }, plan)) this.dirty = true;
     // the worktop, backsplash and plinth end with the cabinets: an edit that changes where they end rebuilds them
     if (syncRunSurfaces(K, this.mats, plan, this.mats.top(this.applied.top), this.mode === "studio")) this.dirty = true;
     // and the kitchen labels on the floor measure them
@@ -1909,7 +1944,8 @@ class Engine {
     const newMat = this.mats.top(topId);
     this.applied.top = topId;
     if (oldMat === newMat) return;
-    const meshes = [...K.tops];
+    // the worktop, backsplash, island slab … and side panels of worktop at the end of a run (ModuleRT.tops)
+    const meshes = [...K.tops, ...[...K.modules.values()].flatMap((m) => m.tops)];
     if (!animate || !meshes.length) {
       for (const m of meshes) m.material = newMat;
       this.dirty = true;

@@ -26,7 +26,13 @@
  * render.
  *
  * "Jednostavno / Napredno" (the step header; remembered, hooks.ts StudioMode) leaves the finer controls out for
- * customers by default. A first visit gets three skippable coach marks (CoachMarks).
+ * customers by default. A first visit gets three skippable coach marks (CoachMarks; on a phone on the step sheet, never
+ * over the 3D view).
+ *
+ * The kitchen-wide options are in the steps — "Boje": how the fronts open (Ručke / Na dodir / Gola / Luft za prste) and
+ * the glass of vitrines; "Ploča i detalji": worktop thickness, the wall behind the worktop, the hood, rails; "Zidovi": the
+ * depth of the "do stropa" top row. An element's own (its glass, opening, top-box depth, a hob's hood, shelves, end units at
+ * a free end of the run) are in the element editor ("Više" in the toolbar — ElementOptions).
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
@@ -964,6 +970,7 @@ export function Studio() {
       slotId={selSlot.id}
       info={selInfo}
       desktop={desktop}
+      advanced={advanced}
       engine={!failed && status === "ready"}
       note={note}
       focusKey={editorFocus}

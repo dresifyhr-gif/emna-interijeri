@@ -31,6 +31,22 @@
  *     tp                  where the tall column stands (tallAt): wall + l / r, "tp-bl"
  *     tal tar tbl tbr tcl tcr   more tall columns at that run end (tallRuns, same list format as `t`): "tbl-rs96"
  *     zwa zwb zwc         room: the finish of one wall (room.walls)
+ *     n                   hoods (KitchenConfig.hood), letter + number tokens: k1 / k2 / k3 chimney / angled glass / downdraft
+ *                         (hidden in a wall unit = absent) · f0 / f1 / f2 inox / black / white · i1 a ceiling cassette above
+ *                         the island: "n-k1f1", "n-k3", "n-i1"
+ *     g                   default glass of glass-door elements (KitchenConfig.glass): t<type 0–4> r<frame 0–4> e0 / e1 (LED)
+ *                         s0 / s1 (glass shelves) — codes in GLASS_TYPE_CODE / GLASS_FRAME_CODE: "g-t1r1"
+ *     wt                  worktop thickness in mm (KitchenConfig.worktop): "wt-20", "wt-12", "wt-60"
+ *     bs                  backsplash (KitchenConfig.backsplash): its kind ("bs-pola", "bs-bez", "bs-staklo") or its catalogue
+ *                         finish, which names the kind ("bs-staklo-crno", "bs-hex-bijele")
+ *     rl                  walls with a hanging rail with hooks (KitchenConfig.rails): "rl-ab"
+ *
+ *   heights `h` also take d<top-row depth> (HeightSpec.topDepth): "sd45"
+ *
+ *   An entry of any list may carry its own options (CabinetSpec.opt) right after its width, as capital letter + number
+ *   tokens (never T, which starts a tall unit): O<opening 0–5> G<glass 0–4> F<frame 0–4> E0/E1 (glass LED) S0/S1 (glass
+ *   shelves) D<top-box depth> H<hood 0–3> N<shelf rows> L0 (no LED): "g60G1F1E0" = a 60 cm vitrine with frosted glass
+ *   in a thin black frame without LED, "p80H1" = a hob with a chimney hood.
  *
  * v1 (still decoded):
  *   1.L.380.220.220.260.antracit.mramor.bez.1.240.1.0.0 — the 14th field holds positional element edits
@@ -41,7 +57,7 @@
  * lengths are clamped, broken entries are dropped. It also accepts a base64url JSON KitchenConfig.
  */
 
-import { moduleByCode, moduleDef, type ModuleZone } from "./catalog";
+import { backsplashDef, moduleByCode, moduleDef, type ModuleZone } from "./catalog";
 import { RUN_ENDS, defaultAnchor, sanitizeConfig } from "./plan";
 import {
   DEFAULT_CONFIG,
@@ -49,8 +65,16 @@ import {
   type BaseRunId,
   type CabinetSpec,
   type CornerId,
+  type ElementOpts,
   type FrontZone,
+  type GlassFrame,
+  type GlassSpec,
+  type GlassType,
+  type HandleStyle,
   type HeightSpec,
+  type HoodFinish,
+  type HoodKind,
+  type HoodSpec,
   type IslandFunctions,
   type IslandSpec,
   type KitchenConfig,
@@ -145,13 +169,57 @@ const FINISH_KEYS: [string, "handleColor" | "sink" | "tap" | "appliances" | "pli
   ["le", "led"],
 ];
 
+/** codes of the options (share links: KitchenConfig.hood / glass and CabinetSpec.opt) — append only, never reuse */
+const OPEN_CODE: Record<HandleStyle, number> = { bez: 0, letvica: 1, gumb: 2, utor: 3, push: 4, luft: 5 };
+const GLASS_TYPE_CODE: Record<GlassType, number> = { prozirno: 0, satinirano: 1, dimljeno: 2, broncano: 3, rebrasto: 4 };
+const GLASS_FRAME_CODE: Record<GlassFrame, number> = { fronta: 0, "alu-crni": 1, inox: 2, zlatni: 3, bronca: 4 };
+const HOOD_CODE: Record<HoodKind, number> = { ugradbena: 0, dimnjak: 1, kosa: 2, ploca: 3 };
+const HOOD_FINISH_CODE: Record<HoodFinish, number> = { inox: 0, crna: 1, bijela: 2 };
+const byCode = <K extends string>(map: Record<K, number>, v: string): K | undefined => (Object.keys(map) as K[]).find((k) => String(map[k]) === v);
+
+/** an entry's options as capital-letter tokens (never "T": it starts a tall unit) */
+function encodeOpts(o: ElementOpts | undefined): string {
+  if (!o) return "";
+  let out = "";
+  if (o.open) out += `O${OPEN_CODE[o.open]}`;
+  const g = o.glass;
+  if (g?.type) out += `G${GLASS_TYPE_CODE[g.type]}`;
+  if (g?.frame) out += `F${GLASS_FRAME_CODE[g.frame]}`;
+  if (g?.led !== undefined) out += `E${g.led ? 1 : 0}`;
+  if (g?.shelves !== undefined) out += `S${g.shelves ? 1 : 0}`;
+  if (o.depth !== undefined) out += `D${Math.round(o.depth)}`;
+  if (o.hood) out += `H${HOOD_CODE[o.hood]}`;
+  if (o.rows !== undefined) out += `N${Math.round(o.rows)}`;
+  if (o.led === false) out += "L0";
+  return out;
+}
+
+function decodeOpts(s: string): Record<string, unknown> | null {
+  if (!s) return null;
+  const out: Record<string, unknown> = {};
+  const glass: Record<string, unknown> = {};
+  for (const [, k, v] of s.matchAll(/([A-SU-Z])(\d{0,3})/g)) {
+    if (k === "O") out.open = byCode(OPEN_CODE, v);
+    else if (k === "G") glass.type = byCode(GLASS_TYPE_CODE, v);
+    else if (k === "F") glass.frame = byCode(GLASS_FRAME_CODE, v);
+    else if (k === "E" && v) glass.led = v === "1";
+    else if (k === "S" && v) glass.shelves = v === "1";
+    else if (k === "D" && v) out.depth = Number(v);
+    else if (k === "H") out.hood = byCode(HOOD_CODE, v);
+    else if (k === "N" && v) out.rows = Number(v);
+    else if (k === "L" && v === "0") out.led = false;
+  }
+  if (Object.keys(glass).length) out.glass = glass;
+  return Object.keys(out).length ? out : null;
+}
+
 function encodeList(list: CabinetSpec[], zone: ModuleZone): string {
   if (!list.length) return "0";
   return list
     .map((e) => {
       // a tall unit standing in a base run: "T" + its tall code
       const code = moduleDef(e.tall ? "tall" : zone, e.type)?.code;
-      return code ? `${e.tall ? "T" : ""}${code}${Math.round(e.width)}` : "";
+      return code ? `${e.tall ? "T" : ""}${code}${Math.round(e.width)}${encodeOpts(e.opt)}` : "";
     })
     .join("");
 }
@@ -159,13 +227,59 @@ function encodeList(list: CabinetSpec[], zone: ModuleZone): string {
 function decodeList(s: string, zone: ModuleZone): CabinetSpec[] {
   if (s === "0") return [];
   const out: CabinetSpec[] = [];
-  const re = /(T?)([a-z]+)(\d{1,3})/g;
+  const re = /(T?)([a-z]+)(\d{1,3})((?:[A-SU-Z]\d{0,3})*)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(s)) && out.length < 40) {
     const tall = m[1] === "T";
-    // (sanitizeConfig drops a tall unit from any list but a wall's base run)
+    // (sanitizeConfig drops a tall unit from any list but a wall's base run, and options that do not apply)
     const def = moduleByCode(tall ? "tall" : zone, m[2]);
-    if (def) out.push(tall ? { type: def.id, width: Number(m[3]), tall: true } : { type: def.id, width: Number(m[3]) });
+    if (!def) continue;
+    const e: CabinetSpec = tall ? { type: def.id, width: Number(m[3]), tall: true } : { type: def.id, width: Number(m[3]) };
+    const opt = decodeOpts(m[4]);
+    if (opt) e.opt = opt as ElementOpts;
+    out.push(e);
+  }
+  return out;
+}
+
+function encodeHood(h: HoodSpec): string {
+  let out = "";
+  if (h.kind && h.kind !== "ugradbena") out += `k${HOOD_CODE[h.kind]}`;
+  if (h.finish) out += `f${HOOD_FINISH_CODE[h.finish]}`;
+  if (h.island === "kaseta") out += "i1";
+  return out;
+}
+
+function decodeHood(s: string): Record<string, unknown> | null {
+  const t = tokens(s);
+  if (!t) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of t) {
+    if (k === "k") out.kind = byCode(HOOD_CODE, v);
+    else if (k === "f") out.finish = byCode(HOOD_FINISH_CODE, v);
+    else if (k === "i") out.island = v === "1" ? "kaseta" : "dimnjak";
+  }
+  return out;
+}
+
+function encodeGlass(g: GlassSpec): string {
+  let out = "";
+  if (g.type) out += `t${GLASS_TYPE_CODE[g.type]}`;
+  if (g.frame) out += `r${GLASS_FRAME_CODE[g.frame]}`;
+  if (g.led !== undefined) out += `e${g.led ? 1 : 0}`;
+  if (g.shelves !== undefined) out += `s${g.shelves ? 1 : 0}`;
+  return out;
+}
+
+function decodeGlass(s: string): Record<string, unknown> | null {
+  const t = tokens(s);
+  if (!t) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of t) {
+    if (k === "t") out.type = byCode(GLASS_TYPE_CODE, v);
+    else if (k === "r") out.frame = byCode(GLASS_FRAME_CODE, v);
+    else if (k === "e" && v) out.led = v === "1";
+    else if (k === "s" && v) out.shelves = v === "1";
   }
   return out;
 }
@@ -228,6 +342,20 @@ export function encodeConfig(input: KitchenConfig): string {
     if (l?.length) parts.push(`t${endCode(e)}-${encodeList(l, "tall")}`);
   }
   if (c.heights) parts.push(`h-${encodeHeights(c.heights)}`);
+  if (c.hood) {
+    const n = encodeHood(c.hood);
+    if (n) parts.push(`n-${n}`);
+  }
+  if (c.glass) {
+    const g = encodeGlass(c.glass);
+    if (g) parts.push(`g-${g}`);
+  }
+  if (c.worktop?.thickness !== undefined) parts.push(`wt-${Math.round(c.worktop.thickness * 10)}`);
+  if (c.backsplash) {
+    const v = c.backsplash.finish ?? c.backsplash.kind;
+    if (SAFE_ID.test(v)) parts.push(`bs-${v}`);
+  }
+  if (c.rails?.length) parts.push(`rl-${c.rails.join("")}`);
   if (c.islandSpec) {
     const o = encodeIsland(c.islandSpec);
     if (o) parts.push(`o-${o}`);
@@ -311,17 +439,19 @@ function encodeHeights(h: HeightSpec): string {
     if (h.tallTop !== undefined) out += `t${Math.round(h.tallTop)}`;
   }
   if (h.worktop !== undefined) out += `p${Math.round(h.worktop)}`;
+  if (h.topDepth !== undefined) out += `d${Math.round(h.topDepth)}`;
   return out;
 }
 
 function decodeHeights(s: string): HeightSpec | null {
-  const m = /^([nsc])(?:u(\d{2,3}))?(?:t(\d{3}))?(?:p(\d{2,3}))?$/.exec(s);
+  const m = /^([nsc])(?:u(\d{2,3}))?(?:t(\d{3}))?(?:p(\d{2,3}))?(?:d(\d{2}))?$/.exec(s);
   if (!m) return null;
   const mode = (Object.keys(HEIGHT_MODE) as HeightSpec["mode"][]).find((k) => HEIGHT_MODE[k] === m[1]) ?? "standard";
   const out: HeightSpec = { mode };
   if (m[2]) out.upper = Number(m[2]);
   if (m[3]) out.tallTop = Number(m[3]);
   if (m[4]) out.worktop = Number(m[4]);
+  if (m[5]) out.topDepth = Number(m[5]);
   return out;
 }
 
@@ -446,7 +576,34 @@ export function decodeConfig(s: string): KitchenConfig | null {
         if (def) corners[co[1]] = def.id;
         continue;
       }
+      if (key === "n") {
+        const h = decodeHood(val);
+        if (h) cfg.hood = h;
+        continue;
+      }
+      if (key === "g") {
+        const g = decodeGlass(val);
+        if (g) cfg.glass = g;
+        continue;
+      }
+      if (key === "wt") {
+        if (/^\d{2,3}$/.test(val)) cfg.worktop = { thickness: Number(val) / 10 };
+        continue;
+      }
+      if (key === "rl") {
+        cfg.rails = [...val].filter((w) => WALL_IDS.includes(w as WallId));
+        continue;
+      }
       if (!SAFE_ID.test(val)) continue;
+      if (key === "bs") {
+        const kinds = ["ploca", "pola", "bez", "staklo", "plocice"];
+        if (kinds.includes(val)) cfg.backsplash = { kind: val };
+        else {
+          const d = backsplashDef(val);
+          if (d) cfg.backsplash = { kind: d.kind, finish: d.id };
+        }
+        continue;
+      }
       const fr = FRONT_KEYS.find(([x]) => x === key);
       if (fr) {
         zoneFronts[fr[1]] = val;

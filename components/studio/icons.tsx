@@ -23,6 +23,10 @@ function Svg({ children, viewBox = "0 0 24 24", ...rest }: P) {
   );
 }
 
+/** small circles (bottle ends of a wine rack) on a grid, as one path */
+const dots = (xs: number[], ys: number[], r: number) =>
+  ys.flatMap((y) => xs.map((x) => `M${x - r} ${y}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`)).join("");
+
 /* ------------------------------------------------------------------ layouts (top view) */
 
 export function LayoutIcon({ layout, ...rest }: P & { layout: Layout }) {
@@ -236,6 +240,74 @@ export function ModuleGlyph({ type, zone, ...rest }: P & { type: string; zone: s
         </>
       );
       break;
+    case "base:filer":
+      body = (
+        <>
+          <path d="M4.5 7h23" {...soft} />
+          <rect x="14" y="7" width="4" height="19" rx="0.5" {...line} />
+        </>
+      );
+      break;
+    case "base:vitrina":
+      body = (
+        <>
+          {box}
+          <rect x="9.5" y="9.5" width="13" height="14" rx="0.5" {...soft} />
+          <path d="M9.5 16.5h13" {...dash} />
+          <path d="M12 22l4.5-5.5M15.5 22.5l3-3.6" {...soft} />
+        </>
+      );
+      break;
+    case "base:vinoteka":
+      body = (
+        <>
+          <path d="M7 7v19h18V7" {...line} />
+          <path d="M7 7h18" {...soft} />
+          <path d={dots([11, 16, 21], [11.2, 16.5, 21.8], 1.8)} {...soft} />
+        </>
+      );
+      break;
+    case "base:police-zaobljene":
+      body = (
+        <>
+          <path d="M7 7h10.5a7.5 7.5 0 0 1 7.5 7.5V26H7Z" {...line} />
+          <path d="M7 13.5h17.3M7 20h18" {...soft} />
+        </>
+      );
+      break;
+    case "base:police-kose":
+      body = (
+        <>
+          <path d="M7 7h9l9 9v10H7Z" {...line} />
+          <path d="M7 13.5h15.5M7 20h18" {...soft} />
+        </>
+      );
+      break;
+    case "base:bocna":
+      body = (
+        <>
+          <path d="M4.5 9h8M4.5 26h8" {...dash} />
+          <rect x="12.5" y="6.5" width="7" height="19.5" rx="0.6" {...line} />
+        </>
+      );
+      break;
+    case "base:bocna-radna":
+      body = (
+        <>
+          <path d="M4.5 10.5h8M4.5 26h8" {...dash} />
+          <path d="M4.5 6.5h16v19.5h-4V10.5H4.5" {...line} />
+        </>
+      );
+      break;
+    case "base:bocna-rebrasta":
+      body = (
+        <>
+          <path d="M4.5 9h7M4.5 26h7" {...dash} />
+          <rect x="11.5" y="6.5" width="9" height="19.5" rx="0.6" {...line} />
+          <path d="M14.5 6.5v19.5M17.5 6.5v19.5" {...soft} />
+        </>
+      );
+      break;
     case "base:kutni":
       body = (
         <>
@@ -314,6 +386,7 @@ export function ModuleGlyph({ type, zone, ...rest }: P & { type: string; zone: s
       );
       break;
     case "upper:kutna-polica":
+    case "base:kutna-polica":
       body = (
         <>
           <path d="M5.5 6.5h20v9h-11v11h-9Z" {...dash} />
@@ -415,6 +488,56 @@ export function ModuleGlyph({ type, zone, ...rest }: P & { type: string; zone: s
     case "upper:prazno":
       body = <rect x="7" y="7" width="18" height="18" rx="1" {...dash} />;
       break;
+    case "upper:police-visece":
+      body = (
+        <>
+          <path d="M5.5 12.5h21M5.5 21h21" {...line} strokeWidth={2} />
+          <path d="M9 12.5V9h2.6v3.5M19 21v-3.6M21.2 21v-2.4" {...soft} />
+          <path d="M8 14.6h16M8 23.1h16" {...dash} />
+        </>
+      );
+      break;
+    case "upper:vinoteka":
+      body = (
+        <>
+          {upperBox}
+          <path d={dots([11, 16, 21], [11, 16, 21], 1.8)} {...soft} />
+        </>
+      );
+      break;
+    case "upper:polica-zaobljena":
+      body = (
+        <>
+          <path d="M7 7h10.5a7.5 7.5 0 0 1 7.5 7.5V25H7Z" {...line} />
+          <path d="M7 13h17.2M7 19h18" {...soft} />
+        </>
+      );
+      break;
+    case "upper:polica-kosa":
+      body = (
+        <>
+          <path d="M7 7h9l9 9v9H7Z" {...line} />
+          <path d="M7 13h15M7 19h18" {...soft} />
+        </>
+      );
+      break;
+    case "upper:bocna":
+      body = (
+        <>
+          <path d="M4.5 7h8M4.5 25h8" {...dash} />
+          <rect x="12.5" y="5.5" width="7" height="21" rx="0.6" {...line} />
+        </>
+      );
+      break;
+    case "upper:bocna-rebrasta":
+      body = (
+        <>
+          <path d="M4.5 7h7M4.5 25h7" {...dash} />
+          <rect x="11.5" y="5.5" width="9" height="21" rx="0.6" {...line} />
+          <path d="M14.5 5.5v21M17.5 5.5v21" {...soft} />
+        </>
+      );
+      break;
 
     // ---------------------------------------------------------------- tall
     case "tall:hladnjak":
@@ -499,6 +622,76 @@ export function ModuleGlyph({ type, zone, ...rest }: P & { type: string; zone: s
         </>
       );
       break;
+    case "tall:vitrina":
+      body = (
+        <>
+          {tallBox}
+          <rect x="12" y="6" width="8" height="20" rx="0.4" {...soft} />
+          <path d="M12 12.6h8M12 19.3h8" {...dash} />
+          <path d="M13.2 11l2.4-3M13.6 25l3-3.8" {...soft} />
+        </>
+      );
+      break;
+    case "tall:police":
+      body = (
+        <>
+          <path d="M10 3.5v25h12v-25" {...line} />
+          <path d="M10 3.5h12" {...soft} />
+          <path d="M10 9.7h12M10 15.9h12M10 22.1h12" {...line} />
+          <path d="M12.5 9.7V7.2h2v2.5M18.5 22.1v-2.7" {...soft} />
+        </>
+      );
+      break;
+    case "tall:vinoteka":
+      body = (
+        <>
+          <path d="M10 3.5v25h12v-25" {...line} />
+          <path d="M10 3.5h12" {...soft} />
+          <path d={dots([13.3, 18.7], [7.5, 12.3, 17.1, 21.9], 1.7)} {...soft} />
+          <path d="M11.5 26.3h9" {...dash} />
+        </>
+      );
+      break;
+    case "tall:kava":
+      body = (
+        <>
+          {tallBox}
+          <path d="M10 11.5h12M10 20.5h12" {...line} />
+          <rect x="12.8" y="13.6" width="4.6" height="5.6" rx="0.6" {...soft} />
+          <path d="M18.8 17.4h1.8v1.8h-1.8Z" {...soft} />
+          <path d="M11.2 12.6v6.8M20.8 12.6v6.8" {...dash} />
+          <path d="M14.4 7.5h3.2M14.4 23.8h3.2" {...line} />
+        </>
+      );
+      break;
+    case "tall:ormar-nisa":
+      body = (
+        <>
+          {tallBox}
+          <path d="M10 13.5h12M10 19.5h12" {...line} />
+          <path d="M11.5 14.6h9" {...dash} />
+          <rect x="13.5" y="16" width="5" height="3.5" rx="0.5" {...soft} />
+          <path d="M19.5 7.5v3M19.5 22v3" {...line} />
+        </>
+      );
+      break;
+    case "tall:bocna":
+      body = (
+        <>
+          <path d="M5 3.5h7.5M5 28.5h7.5" {...dash} />
+          <rect x="12.5" y="3.5" width="7" height="25" rx="0.6" {...line} />
+        </>
+      );
+      break;
+    case "tall:bocna-rebrasta":
+      body = (
+        <>
+          <path d="M5 3.5h6.5M5 28.5h6.5" {...dash} />
+          <rect x="11.5" y="3.5" width="9" height="25" rx="0.6" {...line} />
+          <path d="M14.5 3.5v25M17.5 3.5v25" {...soft} />
+        </>
+      );
+      break;
     default:
       body = z === "tall" ? tallBox : <rect x="7" y="7" width="18" height="18" rx="1" {...line} />;
   }
@@ -550,6 +743,17 @@ export function HandleGlyph({ style, ...rest }: P & { style: string }) {
         </>
       );
       break;
+    case "luft":
+      // the worktop, the carcass edge showing in the finger gap, the front starting lower
+      body = (
+        <>
+          <path d="M4 6.5h24" {...line} strokeWidth={1.6} />
+          <path d="M7 9.3h18" {...soft} strokeDasharray="1 1.8" />
+          <rect x="6" y="11.2" width="20" height="14.3" rx="0.8" {...line} />
+          <path d="M13.6 9.8c.8-1.1 4-1.1 4.8 0" {...soft} />
+        </>
+      );
+      break;
     default:
       body = (
         <>
@@ -565,6 +769,171 @@ export function HandleGlyph({ style, ...rest }: P & { style: string }) {
     </Svg>
   );
 }
+
+/* ------------------------------------------------------------------ hoods (KitchenConfig.hood) */
+
+/**
+ * A hood above the hob: "ugradbena" (in a wall unit, with its visor), "dimnjak" (chimney hood), "kosa" (angled glass, seen
+ * from the side), "ploca" (downdraft in the hob); above the island "otok" (canopy from the ceiling) and "kaseta" (flush in
+ * the ceiling)
+ */
+export function HoodGlyph({ kind, ...rest }: P & { kind: string }) {
+  const soft = { ...line, strokeOpacity: 0.45 };
+  const steam = <path d="M11.5 28c-.9-1.1.9-2 0-3.3M16 28c-.9-1.1.9-2 0-3.3M20.5 28c-.9-1.1.9-2 0-3.3" {...soft} />;
+  let body: ReactNode;
+  switch (kind) {
+    case "ugradbena":
+      body = (
+        <>
+          <rect x="6.5" y="4" width="19" height="14" rx="1" {...line} />
+          <path d="M6.5 18h19l-1.6 2.6H8.1Z" {...line} />
+          <path d="M14 7.5h4" {...soft} />
+          {steam}
+        </>
+      );
+      break;
+    case "dimnjak":
+      body = (
+        <>
+          <path d="M13.5 2.5v8.5h5V2.5" {...line} />
+          <path d="M6.5 18.5l6.4-7.5h6.2l6.4 7.5Z" {...line} />
+          <path d="M6.5 18.5h19v1.6h-19Z" {...soft} />
+          {steam}
+        </>
+      );
+      break;
+    case "kosa":
+      body = (
+        <>
+          <path d="M26.5 2.5v25" {...soft} />
+          <path d="M21 2.5v8h5.5" {...line} />
+          <path d="M26.5 10.5 8.5 16.5l1.3 2.4 16.7-3.4" {...line} />
+          <path d="M12.5 16.1l9-2.9" {...soft} />
+          {steam}
+        </>
+      );
+      break;
+    case "ploca":
+      body = (
+        <>
+          <path d="M11 10.5c1-1.6 3.4-2 5 .8M21 10.5c-1-1.6-3.4-2-5 .8" {...soft} />
+          <rect x="4.5" y="13" width="23" height="4.5" rx="1" {...line} />
+          <path d="M13.5 15.25h5" {...line} strokeWidth={2} />
+          <path d="M16 20v6.5M13.6 24.2 16 26.5l2.4-2.3" {...soft} />
+        </>
+      );
+      break;
+    case "kaseta":
+      body = (
+        <>
+          <path d="M3.5 5.5h25" {...line} />
+          <rect x="9" y="5.5" width="14" height="2.8" {...line} fill="currentColor" fillOpacity={0.18} />
+          <path d="M12 16c-1-1.3 1-2.4 0-3.8M16 16c-1-1.3 1-2.4 0-3.8M20 16c-1-1.3 1-2.4 0-3.8" {...soft} />
+          <path d="M5.5 25.5h21" {...line} />
+        </>
+      );
+      break;
+    default:
+      // the island canopy hanging from the ceiling
+      body = (
+        <>
+          <path d="M3.5 2.5h25" {...line} />
+          <path d="M14 2.5v8.5h4V2.5" {...line} />
+          <path d="M8.5 17.5l5-6.5h5l5 6.5Z" {...line} />
+          <path d="M12 23c-.9-1.1.9-2 0-3.3M16 23c-.9-1.1.9-2 0-3.3M20 23c-.9-1.1.9-2 0-3.3" {...soft} />
+          <path d="M5.5 27.5h21" {...line} />
+        </>
+      );
+  }
+  return (
+    <Svg viewBox="0 0 32 32" {...rest}>
+      {body}
+    </Svg>
+  );
+}
+
+/* ------------------------------------------------------------------ backsplash (KitchenConfig.backsplash) */
+
+/** the wall between the worktop and the wall units: worktop material (full / half), coloured glass, tiles, nothing */
+export function SplashGlyph({ kind, ...rest }: P & { kind: string }) {
+  const soft = { ...line, strokeOpacity: 0.45 };
+  const fill = { fill: "currentColor", fillOpacity: 0.16, stroke: "none" };
+  const frame = (
+    <>
+      <rect x="5" y="3.5" width="22" height="6" rx="0.8" {...line} />
+      <path d="M3.5 25.5h25" {...line} strokeWidth={1.6} />
+    </>
+  );
+  let body: ReactNode;
+  switch (kind) {
+    case "pola":
+      body = (
+        <>
+          {frame}
+          <rect x="5" y="17.5" width="22" height="8" {...fill} />
+          <path d="M5 17.5h22" {...line} />
+        </>
+      );
+      break;
+    case "staklo":
+      body = (
+        <>
+          {frame}
+          <rect x="5" y="9.5" width="22" height="16" {...fill} />
+          <path d="M9 22l7-9M14 23l5-6.5M21 15.5l2.5-3" {...soft} />
+        </>
+      );
+      break;
+    case "plocice":
+      body = (
+        <>
+          {frame}
+          <path d="M5 13.5h22M5 17.5h22M5 21.5h22M10.5 9.5v4M16 9.5v4M21.5 9.5v4M8 13.5v4M13.5 13.5v4M19 13.5v4M24.5 13.5v4M10.5 17.5v4M16 17.5v4M21.5 17.5v4M8 21.5v4M13.5 21.5v4M19 21.5v4M24.5 21.5v4" {...soft} />
+        </>
+      );
+      break;
+    case "bez":
+      body = (
+        <>
+          {frame}
+          <rect x="5" y="9.5" width="22" height="16" {...soft} strokeDasharray="1.5 2.2" />
+        </>
+      );
+      break;
+    default:
+      body = (
+        <>
+          {frame}
+          <rect x="5" y="9.5" width="22" height="16" {...fill} />
+          <path d="M5 9.5v16M27 9.5v16" {...soft} />
+        </>
+      );
+  }
+  return (
+    <Svg viewBox="0 0 32 32" {...rest}>
+      {body}
+    </Svg>
+  );
+}
+
+/** a glass door with a reflection (vitrine glass) */
+export const GlassIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="5.5" y="3.5" width="13" height="17" rx="1" {...line} />
+    <rect x="7.8" y="5.8" width="8.4" height="12.4" rx="0.4" {...line} strokeOpacity={0.45} />
+    <path d="M9.5 15l4-5M12 16.2l2.6-3.2" {...line} strokeOpacity={0.45} />
+  </Svg>
+);
+
+/** floating shelves with hooks below (rails, shelves on the wall) */
+export const RailIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M3.5 9h17" {...line} strokeWidth={1.6} />
+    <path d="M6 9v1.5M18 9v1.5" {...line} />
+    <path d="M8.5 9v3.5a1.5 1.5 0 1 0 3 0M13.5 9v3.5a1.5 1.5 0 1 0 3 0" {...line} strokeOpacity={0.6} />
+    <path d="M4 19.5h16" {...line} strokeOpacity={0.45} />
+  </Svg>
+);
 
 /* ------------------------------------------------------------------ ui */
 

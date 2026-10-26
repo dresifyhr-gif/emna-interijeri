@@ -11,9 +11,11 @@
  *
  * How far the customer got is remembered (hooks.ts useCoach: localStorage, in memory when it is blocked). The card
  * follows its target through ViewInfo (written straight into the DOM, never asking the engine to render); with nothing
- * to point at it waits in a corner of the 3D view (desktop: bottom left, phone: under the top bar). It never covers the
- * control in use — the selected element, its toolbar and picker, the focused control — and covers as few "+" as it can
- * (placeCard: below / above its target, shifted sideways, else a corner). It never takes focus; Escape inside it skips.
+ * to point at it waits in a corner of the 3D view (bottom left). It never covers the control in use — the selected
+ * element, its toolbar and picker, the focused control — and covers as few "+" as it can (placeCard: below / above its
+ * target, shifted sideways, else a corner). On a phone the 3D view is too small to share: the card rests on the top of
+ * the step sheet instead and never covers the kitchen (the ring, the pulsing "+" and the glowing labels point). It never
+ * takes focus; Escape inside it skips.
  *
  * Mark 1's cabinet: ViewInfo has no rects of elements that are not selected, so it is worked out from the "+" places the
  * engine projects (ViewInfo.gaps): a full row's joint ("seam") lies on the fronts of two cabinets, at their mid height —
@@ -165,6 +167,25 @@ export function CoachMarks({
         see(ls.some((l) => l.kind === "kitchen" && l.wall !== "isl"));
         at = (ls.find((l) => (l.kind ?? "room") === "room") ?? ls[0])?.label ?? null;
       }
+      // mark 1: a ring on the cabinet it points at
+      const dot = dotRef.current;
+      const ring = (p: { x: number; y: number } | null) => {
+        if (!dot) return;
+        if (i === 0 && p) {
+          dot.style.transform = `translate3d(${Math.round(p.x)}px, ${Math.round(p.y)}px, 0)`;
+          dot.dataset.on = "";
+        } else delete dot.dataset.on;
+      };
+      if (docked) {
+        // phone: the card never lies over the small 3D view — it rests on the top of the step sheet (the ring, the pulsing
+        // "+" and the glowing labels show what it is about); a folded sheet lower than the card: as low as the screen allows
+        const sheetTop = size.h - Math.max(0, ins.bottom);
+        const y = Math.max(A.y0, Math.min(sheetTop + 10, size.h - h - 10));
+        root.style.transform = `translate3d(${Math.round((size.w - w) / 2)}px, ${Math.round(y)}px, 0)`;
+        root.dataset.side = "none";
+        ring(at);
+        return;
+      }
       // what must stay in sight: the selected element, its toolbar (and picker), the focused control; the other "+"
       const keep: Rect[] = [];
       const sel = v?.selected;
@@ -184,16 +205,11 @@ export function CoachMarks({
       const allDots = [...document.querySelectorAll<HTMLElement>("[data-gap-btn][data-on]")].map(rectOf).filter((r): r is Rect => Boolean(r));
       /** the other "+" than the one pointed at */
       const dotsBut = (t: { x: number; y: number } | null) => allDots.filter((r) => !(t && Math.abs(r.x + r.w / 2 - t.x) < 2 && Math.abs(r.y + r.h / 2 - t.y) < 2));
-      const rest = docked
-        ? [
-            { x: (size.w - w) / 2, y: A.y0 + 4 },
-            { x: (size.w - w) / 2, y: A.y1 - h - 8 },
-          ]
-        : [
-            { x: A.x0 + 16, y: A.y1 - h - 8 },
-            { x: A.x0 + 16, y: A.y0 + 8 },
-            { x: A.x1 - w - 16, y: A.y0 + 8 },
-          ];
+      const rest = [
+        { x: A.x0 + 16, y: A.y1 - h - 8 },
+        { x: A.x0 + 16, y: A.y0 + 8 },
+        { x: A.x1 - w - 16, y: A.y0 + 8 },
+      ];
       let placed = placeCard({ w, h }, A, at, rest, keep, dotsBut(at));
       // mark 2: the first "+" the card can point at without covering what is in use (and the fewest others)
       for (const t of targets.slice(1, 8)) {
@@ -208,14 +224,7 @@ export function CoachMarks({
       if (at && side !== "none") root.style.setProperty("--caret-x", `${Math.round(clamp(at.x - x, 22, w - 22))}px`);
       root.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
       root.dataset.side = side;
-      // mark 1: a ring on the cabinet it points at
-      const dot = dotRef.current;
-      if (dot) {
-        if (i === 0 && at) {
-          dot.style.transform = `translate3d(${Math.round(at.x)}px, ${Math.round(at.y)}px, 0)`;
-          dot.dataset.on = "";
-        } else delete dot.dataset.on;
-      }
+      ring(at);
     },
     [i, docked, insetsRef, see, seams, plan],
   );
@@ -244,6 +253,7 @@ export function CoachMarks({
         ref={rootRef}
         className={s.coach}
         data-side="none"
+        data-docked={docked || undefined}
         role="region"
         aria-label={`Savjet ${i + 1} od ${MARKS.length}`}
         onKeyDown={(e) => {

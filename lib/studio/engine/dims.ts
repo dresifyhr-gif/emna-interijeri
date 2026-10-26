@@ -1,6 +1,7 @@
 /** Physical dimensions in metres (the engine works in metres, the plan in cm). */
 
 import { DIM, type KitchenPlan } from "../plan";
+import type { HandleStyle } from "../types";
 
 const cm = (v: number) => v / 100;
 
@@ -24,6 +25,11 @@ export const D = {
   golaH: 0.035,
   /** handleless wall units: fronts reach this far below the carcass as a finger grip */
   upperLip: 0.015,
+  /** "luft za prste" (HandleStyle "luft"): wall-unit fronts reach this far below the carcass, base fronts stop this far under the worktop */
+  luftLip: 0.025,
+  luftH: 0.03,
+  /** push-to-open fronts: half of their (wider, 4 mm) reveal — the latch needs the room */
+  pushGap: 0.002,
   plinthRecess: 0.06,
   wallT: 0.12,
   backsplashT: cm(DIM.backsplashT),
@@ -43,6 +49,16 @@ export const UPPER_FACE = D.upperCarcass + D.frontOff + D.frontT;
 
 export { cm };
 
+/** how far a wall unit's front reaches below its carcass for this opening style (Gola lip, finger gap, else none) */
+export function lipOf(handles: HandleStyle): number {
+  return handles === "bez" ? D.upperLip : handles === "luft" ? D.luftLip : 0;
+}
+
+/** how far a base front stops under the worktop for this opening style (the Gola channel, the finger gap, else 0) */
+export function gripGapOf(handles: HandleStyle): number {
+  return handles === "bez" ? D.golaH : handles === "luft" ? D.luftH : 0;
+}
+
 /**
  * A plan's cabinet heights in engine metres (plan.ts HeightPlan, KitchenConfig.heights). Base, island and tall
  * modules are always built for the standard 10 cm plinth (TOP_Y / WORK_Y above) and then stand `lift` higher
@@ -56,6 +72,10 @@ export interface EngineHeights {
   /** underside / surface of the worktop (m) */
   topY: number;
   workY: number;
+  /** worktop thickness (m; KitchenConfig.worktop, 0.04 for every older link) */
+  worktopT: number;
+  /** the "do stropa" top row's default depth (m, HeightSpec.topDepth; an element may have its own: BuildCtx.topDepth) */
+  topDepth: number;
   /** wall units, main row (m) */
   ub: number;
   ut: number;
@@ -73,11 +93,15 @@ export interface EngineHeights {
 export function heightsOf(plan: KitchenPlan): EngineHeights {
   const h = plan.heights;
   const lift = cm(h.plinth - DIM.plinth);
+  const T = cm(h.worktopT ?? DIM.worktopT);
   return {
     lift,
     plinth: cm(h.plinth),
     topY: TOP_Y + lift,
-    workY: WORK_Y + lift,
+    // (WORK_Y + lift for the 4 cm worktop of every older link)
+    workY: Math.abs(T - D.worktopT) < 1e-9 ? WORK_Y + lift : TOP_Y + lift + T,
+    worktopT: T,
+    topDepth: cm(h.topDepth ?? 35),
     ub: cm(h.upperBottom),
     ut: cm(h.upperTop),
     topRow: h.topRow ? { y0: cm(h.topRow.from), y1: cm(h.topRow.to) } : null,

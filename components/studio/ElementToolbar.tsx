@@ -3,7 +3,8 @@
 /**
  * Element toolbar — a small glass bar that floats right above the element selected in 3D, with the edits a customer
  * reaches for most: add a cabinet on the left / right (a picker of the types that fit there, with their widths — tall
- * units too, beside a base cabinet of a wall run), the width, another type in the same place (on a base cabinet or a
+ * units too, beside a base cabinet of a wall run; on a full row it says what gets narrower for the width chosen, and a
+ * tall unit makes room exactly as the "+" between the two elements would), the width, another type in the same place (on a base cabinet or a
  * wall unit of a wall run also a tall unit: it takes the place of both, and when that takes another element away a
  * short line asks first — "Ukloniti donji i gornji element i staviti visoki?"; a tall unit standing in the run can
  * become a base cabinet again), remove (with a 3 s "Poništi" toast; on a unit of a tall column with more units in it a
@@ -46,7 +47,8 @@ import { ChevronDown, CloseIcon, InsertIcon, ModuleGlyph, MoreIcon, PlayIcon, Sw
 import { clamp, columnSlots, elementsCount, isFlipped, isInRunTall, islandWord, noRoomText, rowOf, rowSlots } from "./meta";
 import { areaOf, keepAbove, moveFocus, useEngineView, type Area, type Insets } from "./overlay";
 import s from "./studio.module.css";
-import { baseChoices, tallSwap } from "./tallSwap";
+import { insertPreview, narrowedText, probeTypeFor } from "./optionsModel";
+import { baseChoices, narrowLine, tallSwap } from "./tallSwap";
 
 type Side = "left" | "right";
 type PopKind = "add-left" | "add-right" | "width" | "type" | "remove";
@@ -143,7 +145,9 @@ export function ElementToolbar({
   const [reason, setReason] = useState<{ id: string; kind: PopKind; text: string } | null>(null);
   const reasonText = reason && reason.id === slot.id && reason.kind === kind ? reason.text : null;
   /** a tall unit picked in "Zamijeni" that takes another element away too: the question waiting for its one click */
-  const [ask, setAsk] = useState<{ id: string; cfg: KitchenConfig; type: string; text: string; essentials: string[] } | null>(null);
+  const [ask, setAsk] = useState<{ id: string; cfg: KitchenConfig; type: string; text: string; essentials: string[]; narrow: string | null } | null>(null);
+  /** the width chosen in an add picker (its preselected one first): what the row makes narrower for it is said above it */
+  const [addW, setAddW] = useState<{ id: string; kind: PopKind; w: number | null } | null>(null);
   const asking = ask && ask.id === slot.id && ask.cfg === cfg && kind === "type" ? ask : null;
   const askRef = useRef<HTMLButtonElement>(null);
 
@@ -473,7 +477,7 @@ export function ElementToolbar({
     }
     if (sw.ask && !confirmed && !(asking && asking.type === t.id)) {
       setReason(null);
-      setAsk({ id: slot.id, cfg, type: t.id, text: sw.ask, essentials: sw.essentials });
+      setAsk({ id: slot.id, cfg, type: t.id, text: sw.ask, essentials: sw.essentials, narrow: narrowLine(sw.narrowed) });
       return;
     }
     const w = widthOf(sw.result);
@@ -560,6 +564,21 @@ export function ElementToolbar({
     const nb = row[row.findIndex((x) => x.id === slot.id) + (sd === "left" ? -1 : 1)];
     return !(nb && (nb.type === "slobodno" || nb.type === "prazno"));
   };
+  // an add picker on a full row: what gets narrower for the width chosen in it (planned as the insert does it)
+  const addSide: Side | null = kind === "add-left" ? "left" : kind === "add-right" ? "right" : null;
+  const addWidth = addW && addSide && addW.id === slot.id && addW.kind === kind ? addW.w : null;
+  const addTight = addSide ? tight(addSide) : false;
+  const addBefore = addSide ? (addSide === "left") !== flip : false;
+  const listId = slot.list?.id ?? null;
+  const preview = useMemo(() => {
+    const z = rowOf(slot).zone;
+    if (!addSide || !addTight || addWidth === null || !listId || z === "tall") return null;
+    const t = probeTypeFor(z === "island" ? "island" : z, addWidth);
+    if (!t) return null;
+    const r = (addBefore ? insertBefore : insertAfter)(cfg, slot.id, t, addWidth);
+    return r.ok ? insertPreview(plan, r, listId) : null;
+  }, [addSide, addTight, addWidth, addBefore, listId, cfg, plan, slot]);
+
   /** what the add picker on that side starts with (addModel bestWidth) */
   const addStretch = (sd: Side) => {
     const g = endGap(sd);
@@ -573,7 +592,11 @@ export function ElementToolbar({
       const sd: Side = k === "add-left" ? "left" : "right";
       const g = info.free < 15 ? endGap(sd) : null;
       if (g) return `${g.run === "isl" ? islandWord(cfg.layout) : "Kuhinja"} se produžuje do novog elementa — slobodno ${Math.floor(g.maxWidth)} cm.`;
-      if (tight(sd)) return `Nema slobodnog mjesta — ovaj element (${width} cm) suzit će se koliko treba.`;
+      if (tight(sd)) {
+        return preview?.length
+          ? `Nema slobodnog mjesta — ${preview.length > 1 ? "uži će biti" : "suzit će se"}: ${narrowedText(preview)}.`
+          : `Nema slobodnog mjesta — ovaj element (${width} cm) suzit će se koliko treba.`;
+      }
       return info.free >= 1 ? `Slobodno je još ${Math.floor(info.free)} cm.` : "Novi element zauzima slobodan prostor do njega.";
     }
     if (k === "width") return widthNote ?? `${name} · sada ${width} cm`;
@@ -745,6 +768,7 @@ export function ElementToolbar({
                     stretch={addStretch(kind === "add-left" ? "left" : "right")}
                     docked={docked}
                     onPick={(it, w) => doInsert(kind === "add-left" ? "left" : "right", it, w)}
+                    onWidth={(w) => setAddW({ id: slot.id, kind, w })}
                   />
                 )}
                 {kind === "width" && (
@@ -809,6 +833,7 @@ export function ElementToolbar({
                   {asking.essentials.length > 0 && (
                     <p className="mt-1 text-[11px] leading-snug text-[#E9AE9C]">Uklanja se i {asking.essentials.join(", ")}.</p>
                   )}
+                  {asking.narrow && <p className="mt-1 text-[11px] leading-snug text-fg/75">{asking.narrow}</p>}
                   <div className="mt-2 flex items-center gap-2">
                     <button
                       ref={askRef}

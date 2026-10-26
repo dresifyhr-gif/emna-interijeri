@@ -523,6 +523,107 @@ export function hobTexture(opts: TexOpts): THREE.CanvasTexture {
   });
 }
 
+/**
+ * Hexagonal tiles (flat-topped, `across` = the size across the flats) with grout, 2 × 2 periods per canvas: the texture
+ * repeats every (3 × r) × (√3 × r) × 2 with r = across / √3 — hexRepeat gives the UV repeat for a size in metres.
+ */
+export function hexTexture(id: string, tones: [string, string, string], grout: string, opts: TexOpts): THREE.CanvasTexture {
+  const rnd = mulberry32(hashSeed(id));
+  const S = opts.size;
+  return canvasTex(S, S, opts, (g, w, h) => {
+    const [base, dark, light] = tones;
+    // one period is 3 r wide and √3 r high; the canvas holds 2 × 2 periods
+    const r = 1;
+    const pw = 3 * r;
+    const ph = Math.sqrt(3) * r;
+    g.save();
+    g.scale(w / (2 * pw), h / (2 * ph));
+    g.fillStyle = grout;
+    g.fillRect(0, 0, 2 * pw, 2 * ph);
+    const hex = (cx: number, cy: number, rr: number) => {
+      g.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = (Math.PI / 3) * k;
+        const x = cx + rr * Math.cos(a);
+        const y = cy + rr * Math.sin(a);
+        if (k === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      }
+      g.closePath();
+    };
+    for (let col = -1; col <= 4; col++) {
+      for (let row = -1; row <= 3; row++) {
+        const cx = col * 1.5 * r;
+        const cy = row * ph + (Math.abs(col) % 2 ? ph / 2 : 0);
+        hex(cx, cy, r * 0.94);
+        const t = rnd();
+        g.fillStyle = t < 0.2 ? dark : t > 0.85 ? light : base;
+        g.globalAlpha = 1;
+        g.fill();
+        // a soft glaze highlight on each tile
+        const grd = g.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx, cy, r);
+        grd.addColorStop(0, light);
+        grd.addColorStop(1, "rgba(0,0,0,0)");
+        g.globalAlpha = 0.18;
+        g.fillStyle = grd;
+        g.fill();
+        g.globalAlpha = 1;
+      }
+    }
+    g.restore();
+  });
+}
+
+/** the UV repeat (per metre) of hexTexture for tiles `across` cm across the flats */
+export function hexRepeat(across: number): [number, number] {
+  const r = across / 100 / Math.sqrt(3);
+  return [1 / (6 * r), 1 / (2 * Math.sqrt(3) * r)];
+}
+
+/**
+ * Normal map of fluted (rebrasto) glass: vertical half-round ribs across the texture's u (one rib per texture width).
+ * Not colour data (no sRGB). Its mip levels are written by hand: the ribs flatten as they get smaller on screen — the
+ * GPU's own box-filtered levels keep one whole rib in every level down to 2 texels, so a door seen from across the room
+ * shimmered in a coarse moiré of half-sampled ribs; now it turns into smooth glass. No anisotropic filtering for the same
+ * reason (it reaches for a sharper level at grazing angles).
+ */
+export function ribsNormalTexture(): THREE.DataTexture {
+  const level = (w: number, h: number, amp: number) => {
+    const data = new Uint8Array(w * h * 4);
+    for (let x = 0; x < w; x++) {
+      const u = (x + 0.5) / w;
+      // the slope of a half-round rib across one period, scaled down on the smaller levels
+      const nx = Math.max(-0.95, Math.min(0.95, Math.cos(Math.PI * u))) * amp;
+      const nz = Math.sqrt(1 - nx * nx);
+      for (let y = 0; y < h; y++) {
+        const k = (y * w + x) * 4;
+        data[k] = Math.round((nx * 0.5 + 0.5) * 255);
+        data[k + 1] = 128;
+        data[k + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+        data[k + 3] = 255;
+      }
+    }
+    return { data, width: w, height: h };
+  };
+  // rib strength per level: 64 / 32 texels a rib keep it whole, 16 … 4 fade it, 2 and 1 are flat glass
+  const amps = [1, 1, 0.75, 0.4, 0.12, 0, 0];
+  const mips: { data: Uint8Array; width: number; height: number }[] = [];
+  for (let w = 64, h = 4, i = 0; ; w = Math.max(1, w >> 1), h = Math.max(1, h >> 1), i++) {
+    mips.push(level(w, h, amps[i] ?? 0));
+    if (w === 1 && h === 1) break;
+  }
+  const t = new THREE.DataTexture(mips[0].data, 64, 4, THREE.RGBAFormat);
+  t.mipmaps = mips as unknown as THREE.DataTexture["mipmaps"];
+  t.generateMipmaps = false;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 1;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
 /** soft rectangle for fake contact shadows (used as alphaMap: white = shadow) */
 export function contactShadowTexture(): THREE.DataTexture {
   const S = 128;

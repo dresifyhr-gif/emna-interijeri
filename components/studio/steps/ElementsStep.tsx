@@ -12,8 +12,10 @@
  */
 import { useEffect } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
-import { isEdited } from "@/lib/studio/edit";
+import { isEdited, setWallShelves } from "@/lib/studio/edit";
 import { planGaps, planKitchen, sanitizeConfig, type PlanSlot, type RunId } from "@/lib/studio/plan";
+import { elementOptionsText } from "@/lib/studio/summary";
+import type { WallId } from "@/lib/studio/types";
 import { Notes, Segmented, SectionLabel } from "../controls";
 import { ChevronRight, ModuleGlyph, PlusIcon, ResetIcon } from "../icons";
 import { isInRunTall, islandWord, rowName, rowSlots, runName, sideHint, type RowZone } from "../meta";
@@ -36,7 +38,7 @@ export interface ElementsUi {
 
 const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 
-export function ElementsStep({ cfg, plan, edit, compact, engine, elements }: StepProps & { elements: ElementsUi }) {
+export function ElementsStep({ cfg, plan, edit, compact, engine, advanced, elements }: StepProps & { elements: ElementsUi }) {
   const { selectedId, onOpen, onHover, onRunTab, onReset, onResetAll } = elements;
   // nothing stays lit when the step goes away
   useEffect(() => () => onHover(null), [onHover]);
@@ -129,10 +131,14 @@ export function ElementsStep({ cfg, plan, edit, compact, engine, elements }: Ste
             <ul aria-labelledby={labelId} className="mt-3 space-y-1.5">
               {list.map((sl, i) => (
                 <li key={sl.id}>
-                  <ElementRow slot={sl} index={i} on={sl.id === selectedId} onOpen={onOpen} onHover={onHover} />
+                  <ElementRow cfg={cfg} slot={sl} index={i} on={sl.id === selectedId} onOpen={onOpen} onHover={onHover} />
                 </li>
               ))}
             </ul>
+            {/* "Napredno": the wall units of the whole wall as floating shelves (and back) in one go */}
+            {z === "upper" && run !== "isl" && (advanced || list.some((sl) => sl.type === "police-visece")) && (
+              <WallShelves cfg={cfg} wall={run} has={list.some((sl) => sl.type === "police-visece")} edit={edit} />
+            )}
           </div>
         );
       })}
@@ -215,13 +221,37 @@ export function ElementsStep({ cfg, plan, edit, compact, engine, elements }: Ste
   );
 }
 
+/**
+ * "Napredno" → the wall units of a whole wall as floating shelves (edit.ts setWallShelves: every wall unit the shelves come
+ * in, not the hood or the corner unit), or — once there are some — back to wall units with doors
+ */
+function WallShelves({ cfg, wall, has, edit }: { cfg: StepProps["cfg"]; wall: WallId; has: boolean; edit: StepProps["edit"] }) {
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        edit(setWallShelves(cfg, wall, has ? null : {}), {
+          notify: true,
+          say: has ? `Zid ${wall.toUpperCase()}: gornji elementi s vratima.` : `Zid ${wall.toUpperCase()}: viseće police umjesto gornjih elemenata.`,
+        })
+      }
+      className="mt-2.5 inline-flex min-h-10 items-center gap-2 text-[12px] font-medium text-mut transition-colors duration-300 hover:text-fg"
+    >
+      <ModuleGlyph type={has ? "vrata" : "police-visece"} zone="upper" className="h-5 w-5" />
+      {has ? "Viseće police natrag u elemente s vratima" : "Cijeli zid: viseće police umjesto gornjih elemenata"}
+    </button>
+  );
+}
+
 function ElementRow({
+  cfg,
   slot,
   index,
   on,
   onOpen,
   onHover,
 }: {
+  cfg: StepProps["cfg"];
   slot: PlanSlot;
   index: number;
   on: boolean;
@@ -233,6 +263,8 @@ function ElementRow({
   const name = slot.corner && def && !def.corner ? `Kutni element: ${lower(def.name)}` : (def?.name ?? slot.type);
   /** a tall unit standing in the base run (listed with the base cabinets) */
   const tall = isInRunTall(slot);
+  /** what it has of its own: its glass, opening style, an end unit … (summary.ts) */
+  const own = elementOptionsText(cfg, slot);
   return (
     <button
       type="button"
@@ -242,7 +274,7 @@ function ElementRow({
       onPointerLeave={(e) => e.pointerType === "mouse" && onHover(null)}
       onFocus={() => onHover(slot.id)}
       onBlur={() => onHover(null)}
-      aria-label={`${index + 1}. ${name}${tall ? ", visoki element" : ""}, ${Math.round(slot.width)} cm. Uredi.`}
+      aria-label={`${index + 1}. ${name}${tall ? ", visoki element" : ""}, ${Math.round(slot.width)} cm${own ? ` (${own})` : ""}. Uredi.`}
       className={`group flex w-full items-center gap-3 rounded-xl border px-2.5 py-2 text-left transition-[border-color,background-color] duration-300 ease-premium ${
         on ? "border-accent/60 bg-accent/[0.08]" : "border-white/[0.07] hover:border-white/20 hover:bg-white/[0.03]"
       } ${spacer ? "border-dashed" : ""}`}
@@ -256,7 +288,10 @@ function ElementRow({
         className={`h-8 w-8 shrink-0 transition-colors duration-300 ${on ? "text-accent" : spacer ? "text-fg/35" : "text-fg/60 group-hover:text-fg"}`}
       />
       <span className={`flex min-w-0 flex-1 items-center gap-2 text-[13px] leading-tight ${spacer ? "text-fg/55" : on ? "text-fg" : "text-fg/85 group-hover:text-fg"}`}>
-        <span className="min-w-0">{name}</span>
+        <span className="min-w-0">
+          {name}
+          {own && <span className="mt-0.5 block truncate text-[11px] leading-snug text-mut">{own}</span>}
+        </span>
         {tall && <span className={`${css.tileBadge} shrink-0`}>visoki</span>}
       </span>
       <span className="shrink-0 text-[12px] tabular-nums text-mut">{Math.round(slot.width)} cm</span>

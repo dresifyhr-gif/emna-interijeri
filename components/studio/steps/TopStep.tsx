@@ -1,29 +1,23 @@
 "use client";
 
 /**
- * "Ploča i detalji": the worktop library, then the details as collapsed rows (progressive disclosure) —
- * handles with their finish, sink and tap, appliance fronts, plinth and LED (the room around the kitchen is in "Boje").
- * "Jednostavno" leaves the appliance fronts and the plinth out (unless one was chosen).
+ * "Ploča i detalji": the worktop library and its thickness, the wall behind it (worktop material, half height, coloured
+ * glass, tiles, nothing), the hood (picture tiles: hidden in a wall unit, chimney, angled glass, in the hob — TopOptions),
+ * then the details as collapsed rows (progressive disclosure) — sink and tap, appliance fronts, plinth, LED and the rail
+ * with hooks (the room around the kitchen and how the fronts open are in "Boje"). "Jednostavno" leaves the appliance
+ * fronts, the plinth, the rail and the island hood's style out (unless one was chosen).
  */
 import { useState, type ReactNode } from "react";
-import {
-  FINISH_DEFAULTS,
-  catalog,
-  defaultHandleColor,
-  finishDef,
-  handleColorDef,
-  handleDef,
-  moduleDef,
-  topDef,
-} from "@/lib/studio/catalog";
-import type { FinishSpec, HandleStyle } from "@/lib/studio/types";
-import { ChoiceChips, Disclosure, MoreOptions, RadioGrid, SectionLabel, Switch } from "../controls";
-import { CheckIcon, HandleGlyph, MoonIcon, SunIcon } from "../icons";
+import { FINISH_DEFAULTS, catalog, finishDef, moduleDef, topDef } from "@/lib/studio/catalog";
+import type { FinishSpec } from "@/lib/studio/types";
+import { ChoiceChips, Disclosure, MoreOptions, SectionLabel, Switch } from "../controls";
+import { MoonIcon, SunIcon } from "../icons";
 import { MaterialLibrary } from "../MaterialLibrary";
 import { stepIndex } from "../meta";
+import { HoodSection, RailsSection, SplashSection, ThicknessField } from "./TopOptions";
 import type { StepProps } from "./types";
 
-type Section = "rucke" | "sudoper" | "aparati" | "postolje" | "led";
+type Section = "sudoper" | "aparati" | "postolje" | "led" | "reling";
 
 const OVENS = new Set(["ploca-pecnica", "pecnica-donja", "pecnica", "pecnica-mikro", "mikrovalna"]);
 
@@ -47,18 +41,13 @@ function Label({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
-export function TopStep({ cfg, plan, update, goTo, mood, setMood, advanced }: StepProps) {
+export function TopStep({ cfg, plan, update, edit, goTo, mood, setMood, advanced, compact }: StepProps) {
   const [open, setOpen] = useState<Section | null>(null);
   const toggle = (k: Section) => setOpen((o) => (o === k ? null : k));
   const top = topDef(cfg.top);
 
   const f: FinishSpec = cfg.finish ?? {};
   const setFinish = (patch: FinishSpec) => update({ finish: { ...f, ...patch } });
-
-  const handle = handleDef(cfg.handles) ?? catalog.handles[0];
-  const hcId = f.handleColor ?? defaultHandleColor(cfg.handles);
-  const hc = handleColorDef(hcId);
-  const colourName = (c: { name: string; golaName: string }) => (cfg.handles === "bez" ? c.golaName : c.name);
 
   const hasSink = plan.slots.some((s) => moduleDef(s.zone, s.type)?.feature === "sink");
   const hasOven = plan.slots.some((s) => OVENS.has(s.type));
@@ -95,61 +84,15 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood, advanced }: St
         label="Radna ploča"
         idPrefix="studio-tops"
       />
-      <p className="mt-4 text-[12px] leading-relaxed text-mut">Isti materijal ide i na zid između ploče i gornjih elemenata.</p>
+      <ThicknessField cfg={cfg} edit={edit} />
+
+      {/* ---------------------------------------------------------------- the wall behind it, the hood */}
+      <SplashSection cfg={cfg} edit={edit} compact={compact} />
+      <HoodSection cfg={cfg} plan={plan} edit={edit} advanced={advanced} compact={compact} goTo={goTo} />
 
       {/* ---------------------------------------------------------------- details */}
       <SectionLabel className="mt-9">Detalji</SectionLabel>
       <div className="mt-4 space-y-2">
-        <Disclosure
-          title="Ručke"
-          value={`${handle.name}${handle.coloured && hc ? ` · ${colourName(hc).toLowerCase()}` : ""}`}
-          icon={<HandleGlyph style={cfg.handles} className="h-8 w-8" />}
-          open={open === "rucke"}
-          onToggle={() => toggle("rucke")}
-        >
-          <RadioGrid
-            label="Vrsta ručki"
-            items={catalog.handles}
-            value={cfg.handles}
-            onChange={(id) => update({ handles: id as HandleStyle })}
-            className="space-y-1.5"
-            itemClassName={(on) =>
-              `group flex w-full items-start gap-3 rounded-xl border px-2.5 py-2.5 text-left transition-[border-color,background-color] duration-300 ease-premium ${
-                on ? "border-accent/60 bg-accent/[0.08]" : "border-white/[0.07] hover:border-white/20 hover:bg-white/[0.03]"
-              }`
-            }
-          >
-            {(h, on) => (
-              <>
-                <HandleGlyph style={h.id} className={`h-8 w-8 shrink-0 transition-colors duration-300 ${on ? "text-accent" : "text-fg/60 group-hover:text-fg"}`} />
-                <span className="min-w-0 flex-1 pt-0.5">
-                  <span className={`block text-[13px] leading-tight ${on ? "text-fg" : "text-fg/80 group-hover:text-fg"}`}>{h.name}</span>
-                  {on && <span className="mt-1 block text-[11.5px] leading-snug text-mut">{h.note}</span>}
-                </span>
-                <span
-                  aria-hidden="true"
-                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-all duration-300 ${
-                    on ? "bg-accent text-ink" : "border border-white/15 text-transparent"
-                  }`}
-                >
-                  <CheckIcon className="h-3 w-3" />
-                </span>
-              </>
-            )}
-          </RadioGrid>
-          {handle.coloured && (
-            <>
-              <Label id="studio-hc-label">{cfg.handles === "bez" ? "Boja profila" : "Boja ručki"}</Label>
-              <ChoiceChips
-                labelledBy="studio-hc-label"
-                options={catalog.finishes.handleColors.map((c) => ({ id: c.id, name: colourName(c), swatch: c.swatch }))}
-                value={hcId}
-                onChange={(id) => setFinish({ handleColor: id })}
-              />
-            </>
-          )}
-        </Disclosure>
-
         <Disclosure
           title="Sudoper i slavina"
           value={hasSink ? `${sink?.name ?? ""} · slavina ${tap?.name.toLowerCase() ?? ""}` : "U kuhinji nema sudopera"}
@@ -255,8 +198,15 @@ export function TopStep({ cfg, plan, update, goTo, mood, setMood, advanced }: St
             </>
           )}
         </Disclosure>
+
+        <RailsSection cfg={cfg} edit={edit} advanced={advanced} open={open === "reling"} onToggle={() => toggle("reling")} />
       </div>
-      {!advanced && <MoreOptions what="Fronte pećnice i mikrovalne, boja postolja." className="mt-3" />}
+      {!advanced && (
+        <MoreOptions
+          what={`Fronte pećnice i mikrovalne, boja postolja, reling s kukama${plan.island ? `, napa iznad ${plan.island.kind === "poluotok" ? "poluotoka" : "otoka"}` : ""}.`}
+          className="mt-3"
+        />
+      )}
     </div>
   );
 }

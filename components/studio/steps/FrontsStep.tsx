@@ -3,8 +3,9 @@
 /**
  * "Boje": the front library (families as tabs, large swatches) and the two-tone switch. With two tones on, the
  * customer first picks the part of the kitchen (donji, gornji, visoki stup, otok), then its colour; each part keeps
- * its own colour from then on. Then, folded away, the room's walls (all of them or one) and floor — only for the look in
- * 3D (clicking a wall or the floor in 3D opens the same samples there).
+ * its own colour from then on. Then how the fronts open (Ručke / Na dodir / Gola / Luft za prste, FrontOptions), folded
+ * away the glass of vitrines, and the room's walls (all of them or one) and floor — only for the look in 3D (clicking a
+ * wall or the floor in 3D opens the same samples there).
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
@@ -17,6 +18,7 @@ import { PaletteIcon } from "../icons";
 import { MaterialLibrary } from "../MaterialLibrary";
 import { EASE, FRONT_FAMILY_TAB, FRONT_ZONE_LONG, FRONT_ZONE_NAME, WALL_HINT } from "../meta";
 import { FLOORS, RoomSwatches, WALL_FINISHES, WALL_PAINTS } from "../SurfacePicker";
+import { GlassSection, OpeningSection } from "./FrontOptions";
 import type { StepProps } from "./types";
 
 export interface FrontsUi {
@@ -43,7 +45,7 @@ export function withZoneFront(cfg: KitchenConfig, plan: KitchenPlan, zone: Front
   return { front: id, zoneFronts: zf };
 }
 
-export function FrontsStep({ cfg, plan, update, edit, engine, fronts }: StepProps & { fronts: FrontsUi }) {
+export function FrontsStep({ cfg, plan, update, edit, engine, advanced, fronts }: StepProps & { fronts: FrontsUi }) {
   const reduce = useReducedMotion();
   const zones = frontZones(plan);
   const pen = isPeninsula(cfg.layout);
@@ -156,6 +158,9 @@ export function FrontsStep({ cfg, plan, update, edit, engine, fronts }: StepProp
       />
 
       <p className="mt-5 text-[12px] leading-relaxed text-mut">Boje na zaslonu su približne.</p>
+
+      <OpeningSection cfg={cfg} plan={plan} update={update} />
+      <GlassSection cfg={cfg} edit={edit} advanced={advanced} />
 
       <RoomSection cfg={cfg} edit={edit} engine={engine} />
     </div>

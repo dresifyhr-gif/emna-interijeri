@@ -11,14 +11,15 @@
  * change caused (a window sill lowered, heights fitted under the ceiling, elements left out) stays next to these
  * controls until the room changes again — <WallsStep> keeps that note and leaves it out of its own list.
  *
- * "Jednostavno" shows the ceiling and "Kuhinja do stropa" only; the top of the tall column, the worktop height and the
- * wall-unit heights join them in "Napredno" (or while they are not the standard ones).
+ * "Jednostavno" shows the ceiling and "Kuhinja do stropa" only (with the depth of its top row — 30 / 35 / 45 / 60 cm,
+ * the owner's "plići ili dublji od visećih" — while that row is there); the top of the tall column, the worktop height
+ * and the wall-unit heights join them in "Napredno" (or while they are not the standard ones).
  */
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { heightChoices, setCeiling, setHeights, type HeightChoices } from "@/lib/studio/edit";
-import { DIM, limitsFor, planKitchen, type HeightPlan } from "@/lib/studio/plan";
+import { DIM, TOP_DEPTH_DEFAULT, limitsFor, planKitchen, type HeightPlan } from "@/lib/studio/plan";
 import type { HeightSpec, KitchenConfig } from "@/lib/studio/types";
-import { Disclosure, Notes, NumberField, Segmented, ToggleRow, rovingIndex } from "../controls";
+import { ChipRadio, Disclosure, Notes, NumberField, Segmented, ToggleRow, rovingIndex } from "../controls";
 import { HeightIcon, NoteIcon, ResetIcon } from "../icons";
 import { raiseForTall } from "../room";
 import type { StepEditOptions, StepProps } from "./types";
@@ -153,6 +154,29 @@ export function HeightsSection({
             </>
           }
         />
+
+        {choices.topDepth.shown && (
+          <div>
+            <p id={`${uid}-td`} className="mb-2.5 text-[13px] text-fg">
+              Dubina nadgradnih ormarića
+            </p>
+            <ChipRadio
+              labelledBy={`${uid}-td`}
+              describedBy={`${uid}-td-d`}
+              options={choices.topDepth.options.map((d) => ({
+                value: d,
+                label: `${d} cm`,
+                sub: d === TOP_DEPTH_DEFAULT ? "kao gornji" : d === 60 ? "kao visoki" : undefined,
+              }))}
+              value={choices.topDepth.value}
+              onChange={(v) => change({ topDepth: v }, { coalesce: "heights-topdepth", say: `Nadgradni ormarići duboki ${v} cm.` })}
+            />
+            <p id={`${uid}-td-d`} className="mt-2 text-[12px] leading-snug text-mut">
+              Gornji red do stropa može biti plići ili dublji od gornjih elemenata (35 cm) — 60 cm je u ravnini s visokim stupom. Jednom
+              ormariću dubinu mijenjate klikom na njega → Više.
+            </p>
+          </div>
+        )}
 
         {showWorktop && (
           <div>

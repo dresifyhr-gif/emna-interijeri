@@ -1,7 +1,8 @@
 /**
  * What the add picker (AddPicker.tsx) shows, as plain data — kept apart from React so it is tested
  * (lib/studio/ui.test.ts): the widths offered as chips and the one preselected, the six common elements first (a tall
- * unit among them whenever one fits) and the rest grouped for "Više elemenata", and the width each tile gets.
+ * unit among them whenever one fits), at a free end of a run the end units (završeci) in a block of their own, the rest
+ * grouped for "Više elemenata", and the width each tile gets.
  */
 import { groupsFor, type TypeChoice } from "@/lib/studio/edit";
 import type { PlanGap } from "@/lib/studio/plan";
@@ -65,10 +66,20 @@ export interface AddModel {
   top: AddItem[];
   rest: AddItem[];
   groups: { id: string; name: string; items: AddItem[] }[];
+  /**
+   * at a free end of a run (`ends`): the end units (završeci — catalog group "zavrsetak") that fit, shown in a block of their
+   * own right after the common tiles (they are then not under "Više elemenata"); empty elsewhere
+   */
+  ends: AddItem[];
 }
 
-export function addModel(items: AddItem[], zone: AddZone, stretch: number | null): AddModel {
-  const fit = items.filter((it) => widthsOf(it.t).length > 0 && it.t.width !== null);
+/** an end unit (catalog group "zavrsetak": rounded / angled open shelves, thick side panels) */
+export const isEndItem = (it: AddItem) => !it.tall && it.t.group === "zavrsetak";
+
+export function addModel(items: AddItem[], zone: AddZone, stretch: number | null, opts: { ends?: boolean } = {}): AddModel {
+  const all = items.filter((it) => widthsOf(it.t).length > 0 && it.t.width !== null);
+  const ends = opts.ends ? all.filter(isEndItem) : [];
+  const fit = ends.length ? all.filter((it) => !isEndItem(it)) : all;
   const chips = CHIP_WIDTHS.filter((w) => fit.some((it) => widthsOf(it.t).includes(w)));
   const best = bestWidth(chips, stretch);
   // the common ones (in their order), then the others in catalogue order to fill up to SHOWN
@@ -97,7 +108,7 @@ export function addModel(items: AddItem[], zone: AddZone, stretch: number | null
   };
   for (const it of rest.filter((x) => !x.tall)) push(it.t.group, names.get(it.t.group) ?? "Ostalo", it);
   for (const it of rest.filter((x) => x.tall)) push("tall", "Visoki elementi", it);
-  return { fit, chips, best, top: shown, rest, groups };
+  return { fit: ends.length ? all : fit, chips, best, top: shown, rest, groups, ends };
 }
 
 /** the list a picker of a row offers: its own types, and in a wall's base row the tall units after them */

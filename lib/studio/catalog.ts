@@ -17,7 +17,7 @@
  * Must stay free of three.js and DOM access (it is also imported server-side).
  */
 
-import type { HandleStyle } from "./types";
+import type { BacksplashKind, GlassFrame, GlassType, HandleStyle, HoodFinish, HoodKind, IslandHoodStyle } from "./types";
 
 /**
  * false until the owner has confirmed every rate in this file (see the TODO above).
@@ -218,12 +218,95 @@ export interface RoomFloorDef {
   };
 }
 
+/** a glass kind of glass-door elements (KitchenConfig.glass / CabinetSpec.opt.glass) */
+export interface GlassTypeDef {
+  id: GlassType;
+  name: string;
+  /** one-line explanation for the studio */
+  note: string;
+  swatch: string;
+  /** EUR per running metre of glass front, on top of the element — TODO(vlasnik) */
+  priceAdd: number;
+  /**
+   * how the engine draws it (lib/studio/engine/materials.ts glassOf): one cheap transparent material per kind (no
+   * transmission pass); `frosted` kinds are milky, hide what is inside and glow with a lit vitrine's LED in the evening;
+   * `ribs` = fluted (rebrasto) glass
+   */
+  render: { color: string; opacity: number; roughness: number; frosted?: boolean; ribs?: boolean };
+}
+
+export interface GlassFrameDef {
+  id: GlassFrame;
+  name: string;
+  swatch: string;
+  /** EUR per running metre of glass front — TODO(vlasnik) */
+  priceAdd: number;
+  /** the frame profile in the engine: the front material (4,5 cm, every older vitrine) or a thin 2 cm metal profile */
+  render: { width: number; metal?: FinishRender };
+}
+
+export interface HoodKindDef {
+  id: HoodKind;
+  name: string;
+  note: string;
+  /**
+   * EUR per hood of this kind beyond the cabinets — fitting, chimney cover, duct, a downdraft's plinth duct (the hood /
+   * hob itself is an appliance: not included). TODO(vlasnik)
+   */
+  priceAdd: number;
+}
+
+export interface HoodFinishDef {
+  id: HoodFinish;
+  name: string;
+  swatch: string;
+  render: FinishRender;
+}
+
+export interface IslandHoodStyleDef {
+  id: IslandHoodStyle;
+  name: string;
+  note: string;
+  /** EUR for mounting it (replaces catalog.extras.islandHoodInstall for this style) — TODO(vlasnik) */
+  install: number;
+}
+
+/** a back-painted glass colour or a tile of the backsplash (KitchenConfig.backsplash.finish) */
+export interface BacksplashDef {
+  id: string;
+  kind: Extract<BacksplashKind, "staklo" | "plocice">;
+  name: string;
+  swatch: string;
+  /** EUR per m², supplied and fitted — TODO(vlasnik) */
+  pricePerM2: number;
+  render: {
+    color: string;
+    roughness: number;
+    /** tiles: the pattern and one tile's size (cm: width × height; hex: across the flats) */
+    pattern?: "subway" | "hex" | "zellige";
+    tile?: [number, number];
+    /** tiles: [base, dark, light] and the grout */
+    tones?: [string, string, string];
+    grout?: string;
+  };
+}
+
+/** a worktop thickness the studio offers (KitchenConfig.worktop.thickness) */
+export interface WorktopThicknessDef {
+  /** cm */
+  value: number;
+  name: string;
+  note: string;
+  /** the worktop's (and its backsplash's) price per metre times this — TODO(vlasnik) */
+  priceFactor: number;
+}
+
 // ================================================================ module types
 
 export type ModuleZone = "base" | "upper" | "tall";
 
 /** what a module type is for — the studio groups the element picker by this */
-export type ModuleGroup = "ladice" | "vrata" | "voda" | "kuhanje" | "spremanje" | "otvoreno" | "aparati" | "kut" | "prazno";
+export type ModuleGroup = "ladice" | "vrata" | "voda" | "kuhanje" | "spremanje" | "otvoreno" | "aparati" | "zavrsetak" | "kut" | "prazno";
 
 export interface ModuleTypeDef {
   /** unique within its zone ("vrata" exists both as a base and as an upper type) */
@@ -269,6 +352,22 @@ export interface ModuleTypeDef {
    * type), "l" = an L-shaped unit with a bi-fold door, "diagonal" = a unit with a diagonal front
    */
   cornerShape?: "blind" | "l" | "diagonal";
+  /** glass doors: KitchenConfig.glass / CabinetSpec.opt.glass apply (glass type, frame, LED, shelves) */
+  glass?: boolean;
+  /**
+   * an end unit (završetak: rounded / angled open shelves, a thick side panel): at a free end of its run it takes the
+   * place of the run's 2 cm end panel (its outer side is open or is the panel itself — plan.ts PlanSlot.end); anywhere
+   * else it is drawn straight
+   */
+  endUnit?: boolean;
+  /** wall units: no top box above it in a "do stropa" second row (open shelves, side panels — those run up on their own) */
+  noTopBox?: boolean;
+  /** floating shelves: CabinetSpec.opt.rows (1–3) apply */
+  rows?: boolean;
+  /** an open unit with a light: CabinetSpec.opt.led applies */
+  lit?: boolean;
+  /** a side panel in the worktop material (price.ts adds its stone like a waterfall side) */
+  worktopMaterial?: boolean;
 }
 
 export interface CatalogExtras {
@@ -306,6 +405,14 @@ export interface CatalogExtras {
   backsplashShare: number;
   /** relative +/- of the estimate range */
   spread: number;
+  /** a side panel in the worktop material (catalog `worktopMaterial`): metres of worktop one piece counts as */
+  worktopPanelM: number;
+  /** floating shelves: EUR per metre of each board (the LED strip under it included) */
+  shelfBoardPerMeter: number;
+  /** a "do stropa" top box deeper / shallower than 35 cm: its price scales by (1 − k) + k × depth / 35, k = this */
+  topDepthShare: number;
+  /** hanging rail with hooks on the backsplash (KitchenConfig.rails): EUR per metre of rail, hooks and fitting included */
+  railPerMeter: number;
 }
 
 export interface Catalog {
@@ -326,6 +433,14 @@ export interface Catalog {
   room: { walls: RoomWallDef[]; floors: RoomFloorDef[] };
   modules: ModuleTypeDef[];
   moduleGroups: { id: ModuleGroup; name: string }[];
+  /** glass of glass-door elements: kinds and frames (KitchenConfig.glass, CabinetSpec.opt.glass) */
+  glass: { types: GlassTypeDef[]; frames: GlassFrameDef[] };
+  /** hoods (KitchenConfig.hood): kinds above a wall hob, finishes of a visible hood, island hood styles */
+  hoods: { kinds: HoodKindDef[]; finishes: HoodFinishDef[]; islandStyles: IslandHoodStyleDef[] };
+  /** back-painted glass colours and tiles of the backsplash (KitchenConfig.backsplash) */
+  backsplashes: BacksplashDef[];
+  /** worktop thicknesses (KitchenConfig.worktop.thickness), thinnest first; 4 cm = every older link */
+  worktopThickness: WorktopThicknessDef[];
   extras: CatalogExtras;
 }
 
@@ -368,6 +483,15 @@ function mod(d: Omit<ModuleTypeDef, "minWidth" | "maxWidth"> & { minWidth?: numb
  *          hladnjak, pećnica, pećnica + mikrovalna, perilica rublja   60
  *          dvokrilni hladnjak (side-by-side)                          96 = 2 cm obloga + 0,5 cm zrak + 91 cm aparat
  *                                                                          + 0,5 cm zrak + 2 cm obloga (see SBS below)
+ *
+ *   added in the "sve što možeš zamisliti" round (TODO(vlasnik): širine i doplate potvrditi):
+ *   base   donja vitrina 30–60 · vinoteka 15 20 30 45 60 · otvorena kutna polica 90 × 90 (corner)
+ *          završeci (group "zavrsetak", `endUnit`): zaobljene / kose police 30 40 · bočna ploča (fronta / radna ploča /
+ *          rebrasta) 4 6 8 — at a free end they take the place of the run's 2 cm end panel (plan.ts PlanSlot.end)
+ *   upper  viseće police 30–120 (1–3 boards, ElementOpts.rows) · zidna vinoteka 30 45 60 · završeci: zaobljene / kose
+ *          police 30 40, bočna ploča / rebrasta 4 6 8
+ *   tall   visoka vitrina 40–90 · visoke otvorene police 30–60 · vinski stup 30 45 60 · kava-kutak 60 80 90 (uvlačna
+ *          vrata) · visoki ormar s nišom 45 50 60 · bočna ploča / rebrasta 4 6 8 (the column's outer side)
  *
  * The planner's own fill still uses the classic 30–90 set (plan.ts STD_WIDTHS), so default kitchens look as before;
  * the wider and narrower widths are there for the customer's edits. A tall column takes any mix of these, up to
@@ -783,6 +907,14 @@ export const catalog: Catalog = {
       pricePerMeter: 60,
       coloured: false,
     },
+    // TODO(vlasnik): doplata za luft (glodani hvat / niži korpus) je procjena
+    {
+      id: "luft",
+      name: "Luft za prste",
+      note: "Bez ručki i bez profila: gornje fronte vise 2,5 cm ispod korpusa, donje završavaju 3 cm ispod radne ploče — hvat prstima.",
+      pricePerMeter: 50,
+      coloured: false,
+    },
   ],
 
   finishes: {
@@ -974,6 +1106,7 @@ export const catalog: Catalog = {
     { id: "aparati", name: "Aparati" },
     { id: "spremanje", name: "Spremanje" },
     { id: "otvoreno", name: "Otvoreno" },
+    { id: "zavrsetak", name: "Završeci" },
     { id: "kut", name: "Kutni elementi" },
     { id: "prazno", name: "Bez elementa" },
   ],
@@ -1143,6 +1276,97 @@ export const catalog: Catalog = {
       frontShare: 0.45,
       demo: false,
     }),
+    // ---- vitrine, wine rack and end units (završeci) — TODO(vlasnik): doplate su procjene
+    mod({
+      id: "vitrina",
+      name: "Donja vitrina sa staklom i LED",
+      zone: "base",
+      code: "g",
+      group: "otvoreno",
+      description: "Donji element sa staklenim vratima, staklenom policom i unutarnjom LED rasvjetom — za čaše i servis.",
+      priceAdd: 210,
+      widths: W_NARROW,
+      island: true,
+      glass: true,
+    }),
+    mod({
+      id: "vinoteka",
+      name: "Vinoteka",
+      zone: "base",
+      code: "vn",
+      group: "spremanje",
+      description: "Otvoreni element s pretincima za boce koje leže — vino uvijek pri ruci, i na kraju kuhinje.",
+      priceAdd: 150,
+      widths: [15, 20, 30, 45, 60],
+      island: true,
+      frontShare: 0.6,
+      demo: false,
+    }),
+    mod({
+      id: "police-zaobljene",
+      name: "Zaobljene otvorene police",
+      zone: "base",
+      code: "or",
+      group: "zavrsetak",
+      description: "Završetak kuhinje: otvorene police zaobljene prema van, u boji fronte — mekani kraj bez oštrog ruba.",
+      priceAdd: 90,
+      widths: [30, 40],
+      frontShare: 0.5,
+      demo: false,
+      endUnit: true,
+    }),
+    mod({
+      id: "police-kose",
+      name: "Kose otvorene police",
+      zone: "base",
+      code: "ok",
+      group: "zavrsetak",
+      description: "Završetak kuhinje: otvorene police koso odrezane prema kraju, u boji fronte.",
+      priceAdd: 80,
+      widths: [30, 40],
+      frontShare: 0.5,
+      demo: false,
+      endUnit: true,
+    }),
+    mod({
+      id: "bocna",
+      name: "Deblja bočna ploča",
+      zone: "base",
+      code: "bp",
+      group: "zavrsetak",
+      description: "Završetak kuhinje: masivna bočna ploča u boji fronte, od poda do radne ploče.",
+      priceAdd: 60,
+      widths: [4, 6, 8],
+      demo: false,
+      endUnit: true,
+    }),
+    mod({
+      id: "bocna-radna",
+      name: "Bočna ploča od radne ploče",
+      zone: "base",
+      code: "bw",
+      group: "zavrsetak",
+      description: "Završetak kuhinje: radna ploča se na kraju spušta do poda (slap) u istom materijalu.",
+      // the stone itself is priced like a waterfall side (price.ts, catalog.extras.worktopPanelM); this is the fitting
+      priceAdd: 70,
+      widths: [4, 6, 8],
+      frontShare: 0,
+      demo: false,
+      endUnit: true,
+      worktopMaterial: true,
+    }),
+    mod({
+      id: "bocna-rebrasta",
+      name: "Ukrasna rebrasta bočna ploča",
+      zone: "base",
+      code: "br",
+      group: "zavrsetak",
+      description: "Završetak kuhinje: deblja bočna ploča s glodanim okomitim rebrima, u boji fronte.",
+      priceAdd: 140,
+      widths: [4, 6, 8],
+      demo: false,
+      endUnit: true,
+    }),
     mod({
       id: "slobodno",
       name: "Slobodno mjesto",
@@ -1259,6 +1483,21 @@ export const catalog: Catalog = {
       priceAdd: 690,
       widths: [90],
     }),
+    // TODO(vlasnik): procjena
+    mod({
+      id: "kutna-polica",
+      name: "Otvorena kutna polica",
+      zone: "base",
+      code: "ko",
+      group: "kut",
+      corner: true,
+      cornerShape: "l",
+      description: "Otvorene police u obliku slova L, 90 × 90 cm, u boji fronte — kut ostaje prozračan.",
+      priceAdd: 120,
+      widths: [90],
+      frontShare: 0.45,
+      demo: false,
+    }),
 
     // ================================================================ upper
     mod({
@@ -1302,6 +1541,7 @@ export const catalog: Catalog = {
       priceAdd: 160,
       widths: [30, 40, 45, 50, 60, 80, 90, 100],
       cornerOk: true,
+      glass: true,
     }),
     mod({
       id: "nisa",
@@ -1313,6 +1553,7 @@ export const catalog: Catalog = {
       priceAdd: 60,
       widths: [15, 20, 30, 40, 45, 50, 60, ...W_TO120],
       demo: false,
+      lit: true,
     }),
     mod({
       id: "polica",
@@ -1325,6 +1566,93 @@ export const catalog: Catalog = {
       widths: [30, 40, 45, 50, 60, ...W_TO120],
       frontShare: 0.2,
       demo: false,
+      noTopBox: true,
+      lit: true,
+    }),
+    // ---- floating shelves, wine rack and end units (završeci) — TODO(vlasnik): doplate su procjene
+    mod({
+      id: "police-visece",
+      name: "Viseće police",
+      zone: "upper",
+      code: "pv",
+      group: "otvoreno",
+      description: "Lebdeće police bez nosača na pogled umjesto zidnog elementa — jedna do tri, s LED trakom ispod.",
+      // + catalog.extras.shelfBoardPerMeter per metre of each board (price.ts)
+      priceAdd: 40,
+      widths: W_FULL,
+      frontShare: 0,
+      demo: false,
+      noTopBox: true,
+      rows: true,
+      lit: true,
+      // at a free end of the row no end panel: the boards run on to the end
+      endUnit: true,
+    }),
+    mod({
+      id: "vinoteka",
+      name: "Zidna vinoteka",
+      zone: "upper",
+      code: "vn",
+      group: "spremanje",
+      description: "Zidni element s pretincima za boce koje leže.",
+      priceAdd: 120,
+      widths: [30, 45, 60],
+      frontShare: 0.6,
+      demo: false,
+    }),
+    mod({
+      id: "polica-zaobljena",
+      name: "Zaobljene zidne police",
+      zone: "upper",
+      code: "or",
+      group: "zavrsetak",
+      description: "Završetak zidnih elemenata: otvorene police zaobljene prema van, u boji fronte.",
+      priceAdd: 70,
+      widths: [30, 40],
+      frontShare: 0.5,
+      demo: false,
+      endUnit: true,
+      noTopBox: true,
+    }),
+    mod({
+      id: "polica-kosa",
+      name: "Kose zidne police",
+      zone: "upper",
+      code: "ok",
+      group: "zavrsetak",
+      description: "Završetak zidnih elemenata: otvorene police koso odrezane prema kraju, u boji fronte.",
+      priceAdd: 60,
+      widths: [30, 40],
+      frontShare: 0.5,
+      demo: false,
+      endUnit: true,
+      noTopBox: true,
+    }),
+    mod({
+      id: "bocna",
+      name: "Deblja bočna ploča",
+      zone: "upper",
+      code: "bp",
+      group: "zavrsetak",
+      description: "Završetak zidnih elemenata: masivna bočna ploča u boji fronte.",
+      priceAdd: 50,
+      widths: [4, 6, 8],
+      demo: false,
+      endUnit: true,
+      noTopBox: true,
+    }),
+    mod({
+      id: "bocna-rebrasta",
+      name: "Ukrasna rebrasta bočna ploča",
+      zone: "upper",
+      code: "br",
+      group: "zavrsetak",
+      description: "Završetak zidnih elemenata: deblja bočna ploča s glodanim okomitim rebrima.",
+      priceAdd: 110,
+      widths: [4, 6, 8],
+      demo: false,
+      endUnit: true,
+      noTopBox: true,
     }),
     mod({
       id: "cjedilo",
@@ -1393,6 +1721,7 @@ export const catalog: Catalog = {
       description: "Gornji kutni element 60 × 60 cm s kosim staklenim vratima, staklenim policama i LED rasvjetom.",
       priceAdd: 260,
       widths: [60],
+      glass: true,
     }),
     mod({
       id: "kutna-polica",
@@ -1522,6 +1851,289 @@ export const catalog: Catalog = {
       priceAdd: 200,
       widths: [60],
     }),
+    // ---- vitrine, open shelves, wine column, coffee nook, LED niche and end panels — TODO(vlasnik): doplate su procjene
+    mod({
+      id: "vitrina",
+      name: "Visoka vitrina sa staklom i LED",
+      zone: "tall",
+      code: "g",
+      group: "otvoreno",
+      description: "Visoki element sa staklenim vratima, staklenim policama i LED rasvjetom.",
+      priceAdd: 420,
+      widths: [40, 45, 50, 60, 80, 90],
+      glass: true,
+    }),
+    mod({
+      id: "police",
+      name: "Visoke otvorene police",
+      zone: "tall",
+      code: "op",
+      group: "otvoreno",
+      description: "Otvoreni visoki element s policama u boji fronte — za kraj visokog stupa ili knjige i posuđe na pogled.",
+      priceAdd: 120,
+      widths: [30, 40, 45, 50, 60],
+      frontShare: 0.6,
+      demo: false,
+      lit: true,
+    }),
+    mod({
+      id: "vinoteka",
+      name: "Vinski stup",
+      zone: "tall",
+      code: "vn",
+      group: "spremanje",
+      description: "Visoki otvoreni element s pretincima za boce od poda do vrha i LED rasvjetom.",
+      priceAdd: 380,
+      widths: [30, 45, 60],
+      frontShare: 0.6,
+      demo: false,
+      lit: true,
+    }),
+    mod({
+      id: "kava",
+      name: "Kava-kutak",
+      zone: "tall",
+      code: "kv",
+      group: "aparati",
+      description:
+        "Visoki element s uvlačnim vratima: otvore se i uvuku u bokove, a iza njih je niša s radnom pločom, mjestom za aparat za kavu i LED rasvjetom. Aparat nije uračunat u cijenu.",
+      priceAdd: 690,
+      widths: [60, 80, 90],
+    }),
+    mod({
+      id: "ormar-nisa",
+      name: "Visoki ormar s otvorenom nišom",
+      zone: "tall",
+      code: "on",
+      group: "spremanje",
+      description: "Visoki ormar s otvorenom nišom s LED-om u visini radne ploče — za mali aparat ili posude na pogled.",
+      priceAdd: 260,
+      widths: [45, 50, 60],
+      lit: true,
+    }),
+    mod({
+      id: "bocna",
+      name: "Deblja bočna ploča",
+      zone: "tall",
+      code: "bp",
+      group: "zavrsetak",
+      description: "Završetak visokog stupa: masivna bočna ploča u boji fronte, od poda do vrha.",
+      priceAdd: 120,
+      widths: [4, 6, 8],
+      demo: false,
+      endUnit: true,
+    }),
+    mod({
+      id: "bocna-rebrasta",
+      name: "Ukrasna rebrasta bočna ploča",
+      zone: "tall",
+      code: "br",
+      group: "zavrsetak",
+      description: "Završetak visokog stupa: deblja bočna ploča s glodanim okomitim rebrima.",
+      priceAdd: 260,
+      widths: [4, 6, 8],
+      demo: false,
+      endUnit: true,
+    }),
+  ],
+
+  // TODO(vlasnik): sve doplate ispod (staklo, okvir, nape, zidna obloga, debljina ploče) su procjene, nisu cjenik
+  glass: {
+    types: [
+      {
+        id: "prozirno",
+        name: "Prozirno staklo",
+        note: "Klasično prozirno staklo — sve unutra je na pogled.",
+        swatch: "linear-gradient(135deg,#dfe9ea,#9fb0b1)",
+        priceAdd: 0,
+        render: { color: "#9aa3a3", opacity: 0.28, roughness: 0.08 },
+      },
+      {
+        id: "satinirano",
+        name: "Satinirano staklo",
+        note: "Mliječno, matirano staklo: svjetlo prolazi, a sadržaj se samo nazire.",
+        swatch: "linear-gradient(135deg,#f3f4f2,#d4d8d6)",
+        priceAdd: 60,
+        render: { color: "#cdd4d2", opacity: 0.74, roughness: 0.5, frosted: true },
+      },
+      {
+        id: "dimljeno",
+        name: "Dimljeno staklo",
+        note: "Tamno sivo staklo — elegantno, sadržaj se vidi tek kad je LED upaljen.",
+        swatch: "linear-gradient(135deg,#5b5e60,#2a2c2e)",
+        priceAdd: 80,
+        render: { color: "#2e3133", opacity: 0.62, roughness: 0.06 },
+      },
+      {
+        id: "broncano",
+        name: "Brončano staklo",
+        note: "Toplo brončano zatamnjeno staklo, ide uz drvo i mesing.",
+        swatch: "linear-gradient(135deg,#a0805c,#5a4129)",
+        priceAdd: 90,
+        render: { color: "#5e4834", opacity: 0.6, roughness: 0.05 },
+      },
+      {
+        id: "rebrasto",
+        name: "Rebrasto staklo",
+        note: "Staklo s okomitim rebrima (fluted) — svjetlo se lomi, sadržaj se nazire.",
+        swatch: "repeating-linear-gradient(90deg,#e9eeee 0 3px,#c3cccc 3px 5px)",
+        priceAdd: 140,
+        render: { color: "#d3dbda", opacity: 0.66, roughness: 0.28, frosted: true, ribs: true },
+      },
+    ],
+    frames: [
+      { id: "fronta", name: "U boji fronte", swatch: "linear-gradient(135deg,#6f6a62,#3b3833)", priceAdd: 0, render: { width: 4.5 } },
+      {
+        id: "alu-crni",
+        name: "Tanki aluminijski, crni",
+        swatch: "linear-gradient(135deg,#3a3a3c,#111112)",
+        priceAdd: 110,
+        render: { width: 2, metal: { color: "#151516", roughness: 0.4, metalness: 0.6 } },
+      },
+      {
+        id: "inox",
+        name: "Tanki inox",
+        swatch: metalSwatch("#e2e2e0", "#a9a8a4", "#cfcecb"),
+        priceAdd: 120,
+        render: { width: 2, metal: { color: "#b4b2ad", roughness: 0.32, metalness: 1 } },
+      },
+      {
+        id: "zlatni",
+        name: "Tanki zlatni",
+        swatch: metalSwatch("#e6cf9a", "#a8864f", "#c9ab72"),
+        priceAdd: 160,
+        render: { width: 2, metal: { color: "#b8955a", roughness: 0.3, metalness: 1 } },
+      },
+      {
+        id: "bronca",
+        name: "Tanki brončani",
+        swatch: metalSwatch("#a88563", "#5e4330", "#86664a"),
+        priceAdd: 150,
+        render: { width: 2, metal: { color: "#6e5038", roughness: 0.38, metalness: 1 } },
+      },
+    ],
+  },
+
+  hoods: {
+    kinds: [
+      {
+        id: "ugradbena",
+        name: "Ugradbena napa",
+        note: "Napa skrivena u zidnom elementu iznad ploče, s izvlačnim vizirom — vidi se samo fronta.",
+        priceAdd: 0,
+      },
+      {
+        id: "dimnjak",
+        name: "Zidna napa s dimnjakom",
+        note: "Vidljiva napa s dimnjakom do stropa, široka kao ploča (60, 90 ili 120 cm); iznad ploče nema zidnih elemenata.",
+        priceAdd: 160,
+      },
+      {
+        id: "kosa",
+        name: "Kosa staklena napa",
+        note: "Zidna napa s kosim staklenim panelom — više mjesta za glavu iznad ploče; iznad nje nema zidnih elemenata.",
+        priceAdd: 160,
+      },
+      {
+        id: "ploca",
+        name: "Napa u ploči (downdraft)",
+        note: "Ploča za kuhanje s ugrađenim odsisom: para se odvodi prema dolje, iznad ploče nema nape.",
+        priceAdd: 120,
+      },
+    ],
+    finishes: [
+      { id: "inox", name: "Inox", swatch: metalSwatch("#e2e2e0", "#9c9c9a", "#c8c8c6"), render: { color: "#b9b9b7", roughness: 0.3, metalness: 1 } },
+      { id: "crna", name: "Crna mat", swatch: "linear-gradient(135deg,#3a3a3c,#111112)", render: { color: "#151516", roughness: 0.5, metalness: 0.3 } },
+      { id: "bijela", name: "Bijela", swatch: "linear-gradient(135deg,#ffffff,#dcd8d0)", render: { color: "#e9e7e2", roughness: 0.45, metalness: 0 } },
+    ],
+    islandStyles: [
+      {
+        id: "dimnjak",
+        name: "Otočna napa s dimnjakom",
+        note: "Napa visi sa stropa iznad ploče, s maskom dimnjaka do stropa.",
+        install: 180,
+      },
+      {
+        id: "kaseta",
+        name: "Stropna kaseta",
+        note: "Napa ugrađena u strop, u ravnini sa stropom — iznad otoka ništa ne visi.",
+        install: 260,
+      },
+    ],
+  },
+
+  backsplashes: [
+    // ---- back-painted glass (lakobel), up to the wall units
+    { id: "staklo-bijelo", kind: "staklo", name: "Bijelo staklo", swatch: "linear-gradient(135deg,#ffffff,#e4e2dc)", pricePerM2: 220, render: { color: "#ecebe6", roughness: 0.05 } },
+    { id: "staklo-crno", kind: "staklo", name: "Crno staklo", swatch: "linear-gradient(135deg,#2b2b2d,#050506)", pricePerM2: 220, render: { color: "#0d0d0e", roughness: 0.05 } },
+    { id: "staklo-sivo", kind: "staklo", name: "Sivo staklo", swatch: "linear-gradient(135deg,#9a9b9c,#5f6062)", pricePerM2: 220, render: { color: "#6e6f71", roughness: 0.05 } },
+    { id: "staklo-kadulja", kind: "staklo", name: "Staklo kadulja", swatch: "linear-gradient(135deg,#a5b09c,#768170)", pricePerM2: 230, render: { color: "#7f8b78", roughness: 0.05 } },
+    { id: "staklo-terakota", kind: "staklo", name: "Staklo terakota", swatch: "linear-gradient(135deg,#c07a5a,#8a4a31)", pricePerM2: 230, render: { color: "#9b5639", roughness: 0.05 } },
+    { id: "staklo-plavo", kind: "staklo", name: "Staklo noćno plavo", swatch: "linear-gradient(135deg,#3b4c66,#1a2232)", pricePerM2: 230, render: { color: "#222c3d", roughness: 0.05 } },
+    // ---- tiles (supplied and laid)
+    {
+      id: "subway-bijele",
+      kind: "plocice",
+      name: "Metro pločice, bijele",
+      swatch: "linear-gradient(0deg,#c9c5bd 0 1px,transparent 1px) 0 0/14px 7px,linear-gradient(90deg,#c9c5bd 0 1px,transparent 1px) 0 0/14px 7px,#f1efea",
+      pricePerM2: 95,
+      render: { color: "#ebe8e2", roughness: 0.22, pattern: "subway", tile: [15, 7.5], tones: ["#eeebe5", "#dcd8d0", "#f8f6f2"], grout: "#c4bfb5" },
+    },
+    {
+      id: "subway-zelene",
+      kind: "plocice",
+      name: "Metro pločice, zelene",
+      swatch: "linear-gradient(0deg,#b9c2b4 0 1px,transparent 1px) 0 0/14px 7px,linear-gradient(90deg,#b9c2b4 0 1px,transparent 1px) 0 0/14px 7px,#55705d",
+      pricePerM2: 110,
+      render: { color: "#56705d", roughness: 0.2, pattern: "subway", tile: [15, 7.5], tones: ["#56705e", "#41594a", "#6c8a74"], grout: "#c9cdc4" },
+    },
+    {
+      id: "hex-bijele",
+      kind: "plocice",
+      name: "Heksagon pločice, bijele",
+      swatch: "radial-gradient(circle,#f3f1ec 0 3px,#c7c2b9 3.5px) 0 0/8px 7px,#f3f1ec",
+      pricePerM2: 120,
+      render: { color: "#eceae4", roughness: 0.3, pattern: "hex", tile: [10, 10], tones: ["#efece6", "#dedad2", "#f8f6f2"], grout: "#bfb9af" },
+    },
+    {
+      id: "hex-crne",
+      kind: "plocice",
+      name: "Heksagon pločice, crne",
+      swatch: "radial-gradient(circle,#26262a 0 3px,#8d8b86 3.5px) 0 0/8px 7px,#26262a",
+      pricePerM2: 120,
+      render: { color: "#2a2a2d", roughness: 0.35, pattern: "hex", tile: [10, 10], tones: ["#2a2a2d", "#1c1c1e", "#3c3c40"], grout: "#8a8782" },
+    },
+    {
+      id: "zellige-bijele",
+      kind: "plocice",
+      name: "Zellige pločice, bijele",
+      swatch: "linear-gradient(0deg,#d6d1c6 0 1px,transparent 1px) 0 0/8px 8px,linear-gradient(90deg,#d6d1c6 0 1px,transparent 1px) 0 0/8px 8px,linear-gradient(135deg,#faf8f2,#e4ddd0)",
+      pricePerM2: 190,
+      render: { color: "#ece7dc", roughness: 0.12, pattern: "zellige", tile: [10, 10], tones: ["#efe9de", "#d9cfbd", "#fbf9f4"], grout: "#d2ccc0" },
+    },
+    {
+      id: "zellige-zelene",
+      kind: "plocice",
+      name: "Zellige pločice, zelene",
+      swatch: "linear-gradient(0deg,#c6cbc0 0 1px,transparent 1px) 0 0/8px 8px,linear-gradient(90deg,#c6cbc0 0 1px,transparent 1px) 0 0/8px 8px,linear-gradient(135deg,#5f8268,#2f4d38)",
+      pricePerM2: 190,
+      render: { color: "#476b52", roughness: 0.12, pattern: "zellige", tile: [10, 10], tones: ["#48705a", "#2f4f3b", "#6a957a"], grout: "#c4c8bf" },
+    },
+    {
+      id: "zellige-terakota",
+      kind: "plocice",
+      name: "Zellige pločice, terakota",
+      swatch: "linear-gradient(0deg,#d8c7b8 0 1px,transparent 1px) 0 0/8px 8px,linear-gradient(90deg,#d8c7b8 0 1px,transparent 1px) 0 0/8px 8px,linear-gradient(135deg,#c47a55,#8d4b30)",
+      pricePerM2: 190,
+      render: { color: "#a65d3e", roughness: 0.14, pattern: "zellige", tile: [10, 10], tones: ["#a85f40", "#7f432b", "#c98463"], grout: "#d6c8ba" },
+    },
+  ],
+
+  worktopThickness: [
+    { value: 1.2, name: "1,2 cm", note: "Tanka kompaktna ploča — vidi se tamna jezgra na rubu.", priceFactor: 0.95 },
+    { value: 2, name: "2 cm", note: "Tanka kamena ploča, moderan lagan rub.", priceFactor: 0.85 },
+    { value: 4, name: "4 cm", note: "Standardna debljina.", priceFactor: 1 },
+    { value: 6, name: "6 cm", note: "Masivna ploča s debelim rubom.", priceFactor: 1.4 },
   ],
 
   extras: {
@@ -1541,6 +2153,11 @@ export const catalog: Catalog = {
     islandHoodInstall: 180,
     backsplashShare: 1,
     spread: 0.08,
+    // TODO(vlasnik): procjene — bočna ploča od radne ploče, daske visećih polica, dublji / plići nadgradni, reling
+    worktopPanelM: 0.9,
+    shelfBoardPerMeter: 55,
+    topDepthShare: 0.4,
+    railPerMeter: 110,
   },
 };
 
@@ -1617,6 +2234,54 @@ export function moduleTypes(zone: ModuleZone | "island"): ModuleTypeDef[] {
 /** types a corner slot of this zone accepts (blind corners, L-shaped and diagonal units, and the `cornerOk` doors) */
 export function cornerTypes(zone: "base" | "upper"): ModuleTypeDef[] {
   return catalog.modules.filter((m) => m.zone === zone && (m.corner || m.cornerOk));
+}
+
+/** end units (završeci) of a zone: the catalogue's "zavrsetak" group — rounded / angled open shelves, thick side panels */
+export function endTypes(zone: ModuleZone): ModuleTypeDef[] {
+  return catalog.modules.filter((m) => m.zone === zone && m.group === "zavrsetak");
+}
+
+// ---------------------------------------------------------------- glass, hoods, backsplash, worktop
+
+/** what an absent GlassSpec field means: every older vitrine */
+export const GLASS_DEFAULTS = { type: "prozirno", frame: "fronta", led: true, shelves: true } as const;
+/** what an absent HoodSpec field means: every older link */
+export const HOOD_DEFAULTS = { kind: "ugradbena", finish: "inox", island: "dimnjak" } as const;
+/** worktop thickness of every older link (cm) */
+export const WORKTOP_THICKNESS = 4;
+
+export function glassTypeDef(id: string | undefined): GlassTypeDef | undefined {
+  return catalog.glass.types.find((g) => g.id === id);
+}
+export function glassFrameDef(id: string | undefined): GlassFrameDef | undefined {
+  return catalog.glass.frames.find((g) => g.id === id);
+}
+export function hoodKindDef(id: string | undefined): HoodKindDef | undefined {
+  return catalog.hoods.kinds.find((h) => h.id === id);
+}
+export function hoodFinishDef(id: string | undefined): HoodFinishDef | undefined {
+  return catalog.hoods.finishes.find((h) => h.id === id);
+}
+export function islandHoodStyleDef(id: string | undefined): IslandHoodStyleDef | undefined {
+  return catalog.hoods.islandStyles.find((h) => h.id === id);
+}
+export function backsplashDef(id: string | undefined): BacksplashDef | undefined {
+  return catalog.backsplashes.find((b) => b.id === id);
+}
+/** the glass colours ("staklo") or tiles ("plocice") of the backsplash, in catalogue order */
+export function backsplashesOf(kind: BacksplashDef["kind"]): BacksplashDef[] {
+  return catalog.backsplashes.filter((b) => b.kind === kind);
+}
+export function worktopThicknessDef(cm: number | undefined): WorktopThicknessDef | undefined {
+  return catalog.worktopThickness.find((t) => Math.abs(t.value - (cm ?? WORKTOP_THICKNESS)) < 1e-6);
+}
+
+/**
+ * Width of a visible wall hood above a hob `hobWidth` cm wide (cm): 60 up to a 60 cm hob, 90 up to 90, 120 above — the
+ * sizes chimney and angled hoods come in (the hob in its cabinet: 60 → 58, 80–90 → 78, ≥ 100 → 88 cm).
+ */
+export function hoodWidthFor(hobWidth: number): number {
+  return hobWidth <= 60 ? 60 : hobWidth <= 90 ? 90 : 120;
 }
 
 /** the footprint of a corner type (CORNER_FOOT): cm along wall A (= the corner slot's width) and along the neighbour */

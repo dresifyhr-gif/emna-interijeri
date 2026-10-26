@@ -11,10 +11,12 @@
 import * as THREE from "three";
 import {
   FINISH_DEFAULTS,
+  backsplashDef,
   catalog,
   defaultHandleColor,
   finishDef,
   frontDef,
+  glassTypeDef,
   handleColorDef,
   roomFloorDef,
   roomWallDef,
@@ -30,8 +32,11 @@ import {
   concreteTexture,
   contactShadowTexture,
   herringboneTexture,
+  hexRepeat,
+  hexTexture,
   hobTexture,
   marbleTexture,
+  ribsNormalTexture,
   plankTexture,
   stoneTexture,
   terrazzoTexture,
@@ -47,6 +52,8 @@ export const LED_ON = new THREE.Color("#ffd29a");
 /** LED strip brightness in HDR (bloom threshold is 2.2) */
 export const LED_GAIN = 7;
 export const LED_OFF = new THREE.Color("#26262a");
+/** emissive strength of a lit vitrine's frosted door in the evening (well under the bloom threshold: a soft glow) */
+const GLASS_GLOW = 0.42;
 
 function std(p: THREE.MeshStandardMaterialParameters) {
   return new THREE.MeshStandardMaterial(p);
@@ -88,6 +95,12 @@ export class Materials {
   private floors = new Map<string, Mat>();
   private wallMats = new Map<string, Mat>();
   private carcasses = new Map<string, THREE.MeshStandardMaterial>();
+  /** door glass per kind (catalog.glass.types), metal / hood finishes per key, backsplash glass and tiles per id — lazily */
+  private glasses = new Map<string, THREE.Material>();
+  /** the frosted door glass of lit vitrines (glassOf with `lit`): glassGlow drives their emissive */
+  private litGlass: THREE.MeshPhysicalMaterial[] = [];
+  private finishMats = new Map<string, THREE.MeshStandardMaterial>();
+  private splashes = new Map<string, Mat>();
   private textures: THREE.Texture[] = [];
   private highlights = new Map<THREE.Material, THREE.Material>();
   private surfaceHighlights = new Map<THREE.Material, THREE.Material>();
@@ -386,6 +399,113 @@ export class Materials {
     return new THREE.MeshStandardMaterial(p);
   }
 
+  // ---------------------------------------------------------- glass, metal finishes, backsplash (KitchenConfig.glass / hood / backsplash)
+
+  /**
+   * Door glass of a kind (catalog.glass.types); `lit` = the element's LED is on (GlassSpec.led). Clear glass is
+   * `doorGlass`, the glass every older vitrine has. The other kinds are cheap transparent materials, built only when a
+   * kitchen uses them: the tinted ones see-through with a little reflection (so they read as glass, not as an open
+   * cabinet in a darker colour); the frosted ones (satinirano, rebrasto — catalog render.frosted) milky, hiding what is
+   * inside. No transmission: a transmissive door made three.js render every opaque object a second time on each frame
+   * it was on screen (230 instead of 128 draw calls a frame in a one-vitrine kitchen), and its blur came out nearly
+   * black against the dark studio.
+   * In a lit vitrine a frosted door glows with the LED in the evening (glassGlow, driven by Lights.apply). The hover
+   * rim leaves every glass alone.
+   */
+  glassOf(type: string | undefined, lit = false): THREE.Material {
+    const def = glassTypeDef(type) ?? catalog.glass.types[0];
+    if (def.id === "prozirno") return this.doorGlass;
+    const r = def.render;
+    const glow = Boolean(r.frosted) && lit;
+    const key = glow ? `${def.id}:lit` : def.id;
+    let m = this.glasses.get(key);
+    if (!m) {
+      const p = new THREE.MeshPhysicalMaterial({
+        color: r.color,
+        roughness: r.roughness,
+        metalness: r.frosted ? 0 : 0.12,
+        transparent: true,
+        opacity: r.opacity,
+        depthWrite: false,
+      });
+      if (r.ribs) {
+        const t = ribsNormalTexture();
+        // one rib every 2 cm (geometry UVs are in metres)
+        t.repeat.set(50, 1);
+        this.textures.push(t);
+        p.normalMap = t;
+        p.normalScale.set(0.8, 0.8);
+      }
+      if (glow) {
+        p.emissive.set(LED_ON);
+        p.emissiveIntensity = 0;
+        this.litGlass.push(p);
+      }
+      p.userData.glass = true;
+      p.name = `glass:${key}`;
+      m = p;
+      this.glasses.set(key, m);
+    }
+    return m;
+  }
+
+  /** frosted doors of lit vitrines glow with the LED strips: `k` 0 (day / LED off) … 1 (evening), in the LED colour */
+  glassGlow(k: number, color: THREE.Color): void {
+    for (const m of this.litGlass) {
+      m.emissive.copy(color);
+      m.emissiveIntensity = GLASS_GLOW * k;
+    }
+  }
+
+  /** a hardware-like finish as its own material (thin glass-frame profiles, visible hoods), cached per key */
+  finishMat(key: string, r: FinishRender): THREE.MeshStandardMaterial {
+    let m = this.finishMats.get(key);
+    if (!m) {
+      m = std({ color: r.color, roughness: r.roughness, metalness: r.metalness });
+      this.finishMats.set(key, m);
+    }
+    return m;
+  }
+
+  /**
+   * A backsplash finish (catalog.backsplashes): back-painted glass (a clear-coated colour) or tiles (subway in running
+   * bond, hexagons, zellige) at their real size — geometry UVs are in metres.
+   */
+  backsplash(id: string | undefined): Mat {
+    const def = backsplashDef(id) ?? catalog.backsplashes[0];
+    let m = this.splashes.get(def.id);
+    if (!m) {
+      const r = def.render;
+      if (def.kind === "staklo") {
+        m = new THREE.MeshPhysicalMaterial({ color: r.color, roughness: r.roughness, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03 });
+      } else {
+        const key = `splash:${def.id}`;
+        const opts = { ...this.tex, size: Math.min(1024, this.tex.size) };
+        const tones = r.tones ?? [r.color, r.color, r.color];
+        const grout = r.grout ?? "#bbbbbb";
+        const [tw, th] = r.tile ?? [10, 10];
+        let t: THREE.Texture;
+        if (r.pattern === "hex") {
+          t = hexTexture(key, tones, grout, opts);
+          const [u, v] = hexRepeat(tw);
+          t.repeat.set(u, v);
+        } else if (r.pattern === "zellige") {
+          // small handmade squares: strong tone shifts per tile, glazed edges
+          t = tileTexture(key, tones, grout, opts, [6, 6], false, { cloud: 0.42, grout: 1 / 300, bevel: true });
+          t.repeat.set(1 / ((6 * tw) / 100), 1 / ((6 * th) / 100));
+        } else {
+          // subway (metro) tiles in running bond
+          t = tileTexture(key, tones, grout, opts, [4, 8], true, { cloud: 0.06, grout: 1 / 260, bevel: true });
+          t.repeat.set(1 / ((4 * tw) / 100), 1 / ((8 * th) / 100));
+        }
+        this.textures.push(t);
+        m = std({ map: t, color: new THREE.Color("#ffffff"), roughness: r.roughness });
+      }
+      this.splashes.set(def.id, m);
+    }
+    return m;
+  }
+
   // ---------------------------------------------------------- finishes
 
   /** the shared hardware materials and their target looks */
@@ -489,6 +609,9 @@ export class Materials {
     for (const m of this.floors.values()) all.add(m);
     for (const m of this.wallMats.values()) all.add(m);
     for (const m of this.carcasses.values()) all.add(m);
+    for (const m of this.glasses.values()) all.add(m);
+    for (const m of this.finishMats.values()) all.add(m);
+    for (const m of this.splashes.values()) all.add(m);
     for (const m of this.highlights.values()) all.add(m);
     for (const m of this.surfaceHighlights.values()) all.add(m);
     for (const v of Object.values(this)) if (v instanceof THREE.Material) all.add(v);
@@ -499,6 +622,10 @@ export class Materials {
     this.floors.clear();
     this.wallMats.clear();
     this.carcasses.clear();
+    this.glasses.clear();
+    this.litGlass = [];
+    this.finishMats.clear();
+    this.splashes.clear();
     this.highlights.clear();
     this.surfaceHighlights.clear();
     this.textures = [];

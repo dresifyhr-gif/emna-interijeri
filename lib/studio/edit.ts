@@ -57,12 +57,46 @@
  *   island / peninsula:       setIsland (any KitchenConfig.islandSpec field) and its shorthands setIslandFunctions (hob /
  *                             sink on it — moved off the walls), setSeating, setBar, setIslandHood, setPeninsula;
  *                             islandChoices lists what the controls can offer
+ *   hoods:                    setHood / hoodChoices (KitchenConfig.hood: hidden / chimney / angled glass / downdraft, the
+ *                             finish, the island's canopy or ceiling cassette); a hob's own: setElementOptions { hood }
+ *   element options:          setElementOptions / elementOptions (CabinetSpec.opt: opening style, glass, top-box depth, a
+ *                             hob's hood, shelf rows / LED) — kept through changeType / changeWidth where they still apply
+ *   glass, worktop, wall:     setGlass / glassChoices (KitchenConfig.glass), setWorktop / worktopChoices (thickness),
+ *                             setBacksplash / backsplashChoices, setRail / railChoices, setWallShelves (floating shelves
+ *                             over a whole wall); the top row's depth: setHeights { topDepth } / heightChoices().topDepth
  *
  * Planning is ~0.15 ms. slotEditInfo / allowedWidths / insertOptions check every option by planning it, but skip
  * widths that cannot fit (wider than the free room next to the element) and probe each width only once for inserts.
  */
 
-import { FINISH_DEFAULTS, catalog, cornerFoot, cornerTypes, moduleDef, moduleTypes, roomFloorDef, roomWallDef, widthAllowed, type ModuleGroup, type ModuleTypeDef } from "./catalog";
+import {
+  FINISH_DEFAULTS,
+  backsplashDef,
+  catalog,
+  cornerFoot,
+  cornerTypes,
+  moduleDef,
+  moduleTypes,
+  roomFloorDef,
+  roomWallDef,
+  widthAllowed,
+  type ModuleGroup,
+  type ModuleTypeDef,
+} from "./catalog";
+import {
+  SHELF_ROWS,
+  STANDARD_HEIGHTS,
+  TOP_DEPTHS,
+  backsplashOfCfg,
+  cleanOpts,
+  glassOf,
+  hoodFinishOf,
+  hoodKindOf,
+  openingOf,
+  shelvesOf,
+  topDepthOf,
+  worktopThickness,
+} from "./plan";
 import {
   FREE_MIN,
   GAP_LABEL,
@@ -124,12 +158,22 @@ import {
   type IslandPlan,
 } from "./plan";
 import type {
+  BacksplashKind,
   BarSpec,
   BaseRunId,
   CabinetSpec,
   DimTarget,
+  ElementOpts,
+  GlassFrame,
+  GlassSpec,
+  GlassType,
+  HandleStyle,
   HeightSpec,
+  HoodFinish,
+  HoodKind,
+  HoodSpec,
   IslandFunctions,
+  IslandHoodStyle,
   IslandSpec,
   KitchenConfig,
   KitchenExtent,
@@ -138,6 +182,9 @@ import type {
   SeatSide,
   WallId,
 } from "./types";
+
+/** the worktop height of every older link (cm) */
+const STANDARD_WORKTOP = STANDARD_HEIGHTS.worktop;
 
 export interface EditResult {
   /** the new config (sanitized); the unchanged input when `ok` is false */
@@ -296,6 +343,14 @@ function commitPlan(
   const cfg = sanitizeConfig(next);
   const plan = planKitchen(cfg);
   const l = planList(plan, id);
+  // a hood element above a hob that has a visible wall hood / a downdraft extractor (KitchenConfig.hood, its opt.hood):
+  // the planner leaves it out — say why instead of letting the element vanish
+  if (listZone(id) === "upper") {
+    const isHood = (t: string) => Boolean(moduleDef("upper", t)?.hood);
+    const want = (listOf(cfg, id) ?? []).filter((e) => isHood(e.type)).length;
+    const have = plan.slots.filter((s) => s.list?.id === id && isHood(s.type)).length;
+    if (want > have) return fail(before.cfg, "Ploča ispod ima vidljivu napu ili napu u ploči — element za ugradbenu napu tu nije potreban.", failSlot);
+  }
   // a tall column must not vanish because of an edit (removing its last unit is not done through here); the tall units
   // standing in base runs are entries of those lists (a left-out one counts in cutCount)
   const columns = (p: KitchenPlan) => new Set(p.slots.filter((s) => s.zone === "tall" && s.list && isTallList(s.list.id)).map((s) => s.list!.id));
@@ -404,6 +459,30 @@ function tidy(list: CabinetSpec[], zone: ListZone, keep?: CabinetSpec): CabinetS
     else out.push(e);
   }
   return out;
+}
+
+/**
+ * An end unit (catalog endUnit: rounded / angled shelves, thick side panels …) wants the end of its row: when nothing but
+ * empty space follows it in the list (or only empty space comes before it), that empty space moves to its inner side —
+ * a 60 cm wall unit at the end of the row changed into 40 cm rounded shelves stays at the end of the row, the 20 cm it
+ * gave up become bare wall between it and its neighbour (else they stood between it and the end, and the shelves were
+ * drawn straight, mid-row). Keeps entry objects.
+ */
+function endUnitOut(list: CabinetSpec[], el: CabinetSpec, zone: ListZone): void {
+  const i = list.indexOf(el);
+  if (i < 0 || !SPACER[zone]) return;
+  const spacers = (part: CabinetSpec[]) => part.length > 0 && part.every((e) => isSpacer(zone, e.type) && !e.tall);
+  const after = list.slice(i + 1);
+  const before = list.slice(0, i);
+  if (spacers(after) && !spacers(before)) {
+    const room = after.reduce((s, e) => s + e.width, 0);
+    list.splice(i + 1);
+    list.splice(i, 0, { type: SPACER[zone], width: room });
+  } else if (spacers(before) && !spacers(after)) {
+    const room = before.reduce((s, e) => s + e.width, 0);
+    list.splice(0, i);
+    list.splice(1, 0, { type: SPACER[zone], width: room });
+  }
 }
 
 /** a wider element takes the extra from empty space right after it, else right before it */
@@ -576,12 +655,16 @@ function changeTypeIn(ctx: Ctx, type: string, tallCap?: number, want?: "tall"): 
     if (w > room) continue;
     const next = list.map((e) => ({ ...e }));
     const el: CabinetSpec = entryOf(ls.zone, ez, type, w);
+    // the element's own options that still apply to the new type stay (its opening style, its glass …)
+    const opt = cleanOpts(cur.opt, ez, type);
+    if (opt) el.opt = opt;
     next[ls.index] = el;
     if (fromSpacer && cur.width - w >= 5) {
       // a cabinet into empty space: what it does not take stays empty
       next.splice(ls.index + 1, 0, { type: cur.type, width: cur.width - w });
     } else if (w < cur.width) keepRoom(next, ls.index, cur.width - w, ls.zone);
     else if (w > cur.width) growInto(next, ls.index, w - cur.width, ls.zone);
+    if (def.endUnit) endUnitOut(next, el, ls.zone);
     const final = tidy(next, ls.zone, el);
     // the hood above the hob turned into a wall unit: it stays where the hood hung (keepHoodPlace)
     const kept = slot.anchored && ls.zone === "upper" && !def.hood ? keepHoodPlace(cfg, ls.id, final, el, slot.x) : final;
@@ -1051,9 +1134,13 @@ function changeWidthIn(ctx: Ctx, width: number, tallCap?: number): EditResult {
   if (w > cur.width && w > roomAt(ctx, ls.id, list, ls.index, true, tallCap)) return fail(ctx.cfg, noRoomIn(ctx, ls.id, w), slot.id);
   const next = list.map((e) => ({ ...e }));
   const el: CabinetSpec = entryOf(ls.zone, ls.ez, def.id, w);
+  // a width change keeps the element's own options (its glass, opening style …)
+  const opt = cleanOpts(cur.opt, ls.ez, def.id);
+  if (opt) el.opt = opt;
   next[ls.index] = el;
   if (w < cur.width) keepRoom(next, ls.index, cur.width - w, ls.zone);
   else if (w > cur.width) growInto(next, ls.index, w - cur.width, ls.zone);
+  if (def.endUnit) endUnitOut(next, el, ls.zone);
   const final = tidy(next, ls.zone, el);
   const r = commit(ctx, withList(cfg, ls.id, final), ls.id, final.indexOf(el), "");
   return r.ok ? r : fail(ctx.cfg, noRoomIn(ctx, ls.id, w), slot.id);
@@ -1160,7 +1247,9 @@ function insertGrowColumn(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id:
 /**
  * insertWays for a tall unit into a wall's base list (it stands in the run, CabinetSpec.tall): into the free room; at a
  * free end of the run as that end's "+" does it (beside the element: a column standing there takes it on its inner
- * side); else with the element it goes next to narrower. The wall units above it go (commitTall).
+ * side); else the row makes room exactly as the "+" between the two elements does (insertTallGap: the two beside it
+ * first — the element it goes next to is one of them — then the run's other cabinets). The wall units above it go
+ * (commitTall).
  */
 function insertTallWays(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id: ListId, at: number, el: CabinetSpec): EditResult {
   const next = [...list.slice(0, at).map(copyEntry), el, ...list.slice(at).map(copyEntry)];
@@ -1171,9 +1260,9 @@ function insertTallWays(ctx: Ctx, cfg: KitchenConfig, list: CabinetSpec[], id: L
       if (r.ok) return grewNote(ctx.cfg, r, eg);
     }
   }
-  const sel = listSlot(ctx);
-  const selAt = sel && sel.id === id ? (sel.index >= at ? sel.index + 1 : sel.index) : -1;
-  return commitTall(ctx.cfg, ctx.plan, ctx.slot.id, cfg, id as WallId, list, next, at, { refuse: "", shrink: selAt >= 0 ? [selAt] : [], src: srcInsert(list.length, at) });
+  // the row makes room as the "+" between the two does it (insertTallGap): the two beside the new unit first — the selected
+  // element is one of them — then the run's other cabinets
+  return commitTall(ctx.cfg, ctx.plan, ctx.slot.id, cfg, id as WallId, list, next, at, { refuse: "", shrink: [at - 1, at + 1], wide: true, src: srcInsert(list.length, at) });
 }
 
 /** an insert at a run's free end that made the kitchen run (or the island) longer says so (once) */
@@ -1696,7 +1785,16 @@ function insertOptionsIn(ctx: Ctx, after: boolean, tallCap?: number, want?: "tal
     : zone === "tall"
       ? (planGaps(ctx.plan).find((g) => g.kind === "end" && g.tallList === t.id)?.outside ?? 0)
       : 0;
-  const reach = endGapFor(ctx, t.id, t.at, list.length) ? Infinity : Math.max(room, room + give) + grow;
+  // a tall unit standing in the run: the row makes room as its "+" does (insertTallWays → commitTall `wide`): the two
+  // beside it down to their narrowest width, the run's other cabinets down to SEAM_MIN — an upper bound, every width is probed
+  const rowGive = inRun
+    ? list.reduce((n, e, j) => {
+        const d = e.tall || isFillerEntry(e) ? null : seamDef("base", e.type);
+        const lo = d ? d.widths.filter((x) => x < e.width - 0.5 && x >= (j === t.at - 1 || j === t.at ? 0 : SEAM_MIN)) : [];
+        return lo.length ? n + e.width - Math.min(...lo) : n;
+      }, 0)
+    : 0;
+  const reach = endGapFor(ctx, t.id, t.at, list.length) ? Infinity : Math.max(room, room + (inRun ? Math.max(give, rowGive) : give)) + grow;
   // a tall unit standing in the run needs its cover panels too, unless it joins a column beside it
   const joins = Boolean(list[t.at - 1]?.tall || list[t.at]?.tall);
   const foot = (w: number) => (inRun && !joins ? w + 2 * DIM.panel : w);
@@ -1802,6 +1900,11 @@ export interface HeightChoices {
   tallTop: { min: number; max: number; value: number; maxReason: string; ceilingMax: number };
   /** what "do stropa" would give under this ceiling (for the toggle's hint: "gornji 105 cm + nadgradni 46 cm") */
   doStropa: HeightPlan;
+  /**
+   * depth of the "do stropa" second row of top cabinets (HeightSpec.topDepth; setHeights(cfg, { topDepth })), cm:
+   * TOP_DEPTHS, `shown` = the kitchen has that row now (an element may have its own: setElementOptions { depth })
+   */
+  topDepth: { value: number; options: number[]; shown: boolean };
   /** what the kitchen has now */
   current: HeightPlan;
 }
@@ -1842,6 +1945,8 @@ export function setHeights(input: KitchenConfig, patch: Partial<HeightSpec> | nu
     if (up !== undefined && !asNums(UPPER_HEIGHTS).includes(Math.round(up))) notes.push(`Gornji elementi dolaze u visinama od ${UPPER_HEIGHTS.join(", ")} cm.`);
     const tt = patch.tallTop;
     if (tt !== undefined && tt < DIM.tallTopMin) notes.push(`Visoki stup ide najmanje do ${DIM.tallTopMin} cm.`);
+    const td = patch.topDepth;
+    if (td !== undefined && !asNums(TOP_DEPTHS).includes(Math.round(td))) notes.push(`Nadgradni ormarići dolaze u dubinama od ${TOP_DEPTHS.join(", ")} cm.`);
   }
   const cfg = sanitizeConfig({ ...cfg0, heights: next });
   const plan = planKitchen(cfg);
@@ -1878,6 +1983,7 @@ export function heightChoices(input: KitchenConfig): HeightChoices {
     },
     doStropa,
     current,
+    topDepth: { value: current.topDepth, options: [...TOP_DEPTHS], shown: Boolean(current.topRow) },
   };
 }
 
@@ -2248,7 +2354,8 @@ export function islandChoices(input: KitchenConfig): IslandChoices | null {
   const wallEnd = I.side === "right" ? "left" : I.side === "left" ? "right" : null;
   const seatCur = spec.seatSide ?? "back";
   const hobOn = plan.slots.some((s) => s.zone === "island" && moduleDef("base", s.type)?.feature === "hob");
-  const hoodAbove = I.hood ? Math.round(I.hood.above) : (spec.hoodAbove ?? ISLAND_DEFAULTS.hoodAbove);
+  // (a ceiling cassette — KitchenConfig.hood.island "kaseta" — hangs at no height: the setting waits for a canopy hood)
+  const hoodAbove = I.hood && I.hood.style !== "kaseta" ? Math.round(I.hood.above) : (spec.hoodAbove ?? ISLAND_DEFAULTS.hoodAbove);
   const bar = spec.bar ?? null;
   return {
     kind: I.kind,
@@ -3316,4 +3423,366 @@ export function setRoomFinish(input: KitchenConfig, patch: { wall?: WallId | "al
     else room.floor = patch.floor;
   }
   return { cfg: sanitizeConfig({ ...cfg, room }), ok: true, warning: null, slotId: null };
+}
+
+// ---------------------------------------------------------------- hoods, glass, element options, worktop, backsplash, rails
+
+/**
+ * Hoods (KitchenConfig.hood): what the hood controls can offer and what the kitchen has now. `hobs` are the hobs of the
+ * kitchen with the hood each gets — its own (CabinetSpec.opt.hood, `own`) or the kitchen's — and a visible wall hood's
+ * width (follows the hob: catalog hoodWidthFor). `finishShown` / `islandShown`: whether that control means anything now.
+ */
+export interface HoodChoices {
+  kind: HoodKind;
+  kinds: { id: HoodKind; name: string; note: string; current: boolean }[];
+  finish: HoodFinish;
+  finishes: { id: HoodFinish; name: string; swatch: string; current: boolean }[];
+  island: IslandHoodStyle;
+  islandStyles: { id: IslandHoodStyle; name: string; note: string; current: boolean }[];
+  hobs: { slotId: string; run: RunRef; kind: HoodKind; own: boolean; width: number | null }[];
+  finishShown: boolean;
+  islandShown: boolean;
+}
+
+export function hoodChoices(input: KitchenConfig): HoodChoices {
+  const cfg = sanitizeConfig(input);
+  const plan = planKitchen(cfg);
+  const kind = cfg.hood?.kind ?? "ugradbena";
+  const finish = hoodFinishOf(cfg);
+  const island = cfg.hood?.island ?? "dimnjak";
+  const hobs = plan.slots
+    .filter((s) => (s.zone === "base" || s.zone === "island") && moduleDef("base", s.type)?.feature === "hob")
+    .map((s) => {
+      const k = hoodKindOf(cfg, s.opt);
+      const wall = plan.runs.flatMap((r) => r.hoods).find((h) => h.hob === s.id);
+      const width = wall ? wall.width : s.zone === "island" && plan.island?.hood ? plan.island.hood.width : null;
+      return { slotId: s.id, run: s.run as RunRef, kind: k, own: Boolean(s.opt?.hood), width };
+    });
+  return {
+    kind,
+    kinds: catalog.hoods.kinds.map((h) => ({ id: h.id, name: h.name, note: h.note, current: h.id === kind })),
+    finish,
+    finishes: catalog.hoods.finishes.map((f) => ({ id: f.id, name: f.name, swatch: f.swatch, current: f.id === finish })),
+    island,
+    islandStyles: catalog.hoods.islandStyles.map((h) => ({ id: h.id, name: h.name, note: h.note, current: h.id === island })),
+    hobs,
+    finishShown: plan.runs.some((r) => r.hoods.length > 0) || Boolean(plan.island?.hood),
+    islandShown: Boolean(plan.island?.hood) || (hasIsland(cfg.layout) && plan.slots.some((s) => s.zone === "island" && moduleDef("base", s.type)?.feature === "hob")),
+  };
+}
+
+/** Croatian notes on what a change of hoods did to the wall units and the plan (new planner notes) */
+function hoodNotes(before: KitchenPlan, after: KitchenPlan): string[] {
+  const notes: string[] = [];
+  const ups = (p: KitchenPlan, w: WallId) => p.slots.filter((s) => s.run === w && s.zone === "upper" && !moduleDef("upper", s.type)?.spacer).length;
+  for (const r of after.runs) {
+    const was = before.runs.find((x) => x.wall === r.wall);
+    if (r.hoods.length > (was?.hoods.length ?? 0)) {
+      const gone = ups(before, r.wall) - ups(after, r.wall);
+      notes.push(
+        gone > 0
+          ? `Zid ${r.wall.toUpperCase()}: iznad ploče je sada vidljiva napa — ${gone === 1 ? "jedan gornji element je maknut" : `${gone} gornja elementa su maknuta`}.`
+          : `Zid ${r.wall.toUpperCase()}: iznad ploče je sada vidljiva napa.`,
+      );
+    }
+  }
+  const old = new Set(before.warnings);
+  for (const w of after.warnings) if (!old.has(w)) notes.push(w);
+  return notes;
+}
+
+/**
+ * Change the kitchen's hoods (KitchenConfig.hood): `patch` merges into it (a field set to undefined goes back to its
+ * default); null = every older link (hidden in a wall unit, island canopy). A visible wall hood ("dimnjak" / "kosa")
+ * takes the place of the wall units above each hob (the planner re-flows them; an edited wall-unit list keeps them in
+ * the config, so going back to "ugradbena" brings them back), its width follows the hob; "ploca" = a downdraft hob, no
+ * hood at all (the island's neither). Per hob: setElementOptions(cfg, hobSlot, { hood }). Always ok; `warning` says what
+ * moved.
+ *
+ *   setHood(cfg, { kind: "dimnjak", finish: "crna" })   // black chimney hoods above the wall hobs
+ *   setHood(cfg, { island: "kaseta" })                   // a ceiling cassette above the island hob
+ */
+export function setHood(input: KitchenConfig, patch: Partial<HoodSpec> | null): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  const plan0 = planKitchen(cfg0);
+  const hood: HoodSpec | undefined = patch === null ? undefined : { ...(cfg0.hood ?? {}), ...patch };
+  if (hood) for (const k of Object.keys(hood) as (keyof HoodSpec)[]) if (hood[k] === undefined) delete hood[k];
+  const cfg = sanitizeConfig({ ...cfg0, hood });
+  const notes = hoodNotes(plan0, planKitchen(cfg));
+  return { cfg, ok: true, warning: notes.length ? notes.join(" ") : null, slotId: null };
+}
+
+/** Glass of glass-door elements: the kitchen's default (or one element's, with `slotId`) and what can be chosen. */
+export interface GlassChoices {
+  value: Required<GlassSpec>;
+  /** with `slotId`: what the element sets itself (CabinetSpec.opt.glass), else the kitchen's (KitchenConfig.glass) */
+  own: GlassSpec | null;
+  types: { id: GlassType; name: string; note: string; swatch: string; current: boolean }[];
+  frames: { id: GlassFrame; name: string; swatch: string; current: boolean }[];
+  /** glass-door elements in the kitchen (the kitchen's glass applies to them) */
+  elements: number;
+}
+
+export function glassChoices(input: KitchenConfig, slotId?: string): GlassChoices | null {
+  const cfg = sanitizeConfig(input);
+  const plan = planKitchen(cfg);
+  let opt: ElementOpts | undefined;
+  if (slotId) {
+    const s = plan.slots.find((x) => x.id === slotId);
+    if (!s || !moduleDef(s.zone, s.type)?.glass) return null;
+    opt = s.opt;
+  }
+  const value = glassOf(cfg, opt);
+  return {
+    value,
+    own: slotId ? (opt?.glass ?? null) : (cfg.glass ?? null),
+    types: catalog.glass.types.map((g) => ({ id: g.id, name: g.name, note: g.note, swatch: g.swatch, current: g.id === value.type })),
+    frames: catalog.glass.frames.map((f) => ({ id: f.id, name: f.name, swatch: f.swatch, current: f.id === value.frame })),
+    elements: plan.slots.filter((s) => moduleDef(s.zone, s.type)?.glass).length,
+  };
+}
+
+/**
+ * The kitchen's default glass for glass-door elements (KitchenConfig.glass): `patch` merges (undefined = back to the
+ * default of that field), null = clear glass in a front-coloured frame with LED and glass shelves (every older vitrine).
+ * Elements with their own glass (opt.glass) keep it, field by field. Always ok.
+ */
+export function setGlass(input: KitchenConfig, patch: Partial<GlassSpec> | null): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  const glass: GlassSpec | undefined = patch === null ? undefined : { ...(cfg0.glass ?? {}), ...patch };
+  if (glass) for (const k of Object.keys(glass) as (keyof GlassSpec)[]) if (glass[k] === undefined) delete glass[k];
+  return { cfg: sanitizeConfig({ ...cfg0, glass }), ok: true, warning: null, slotId: null };
+}
+
+/**
+ * What one element can have of its own (ElementOpts) — each null when it does not apply to the element's type — with
+ * the value it has now (`own`: set on the element, else the kitchen's). `editable` false for corner units: they are
+ * not list entries and follow the kitchen's settings.
+ */
+export interface ElementOptionsInfo {
+  slotId: string;
+  editable: boolean;
+  /** opening style (anything with fronts): KitchenConfig.handles or its own */
+  open: { value: HandleStyle; own: boolean; options: { id: HandleStyle; name: string; note: string }[] } | null;
+  /** glass-door elements */
+  glass: GlassChoices | null;
+  /** wall units with a top box: its depth in a "do stropa" second row (`shown`: the kitchen has that row now) */
+  depth: { value: number; own: boolean; options: number[]; shown: boolean } | null;
+  /** hobs: the hood above it, and a visible wall hood's width */
+  hood: { value: HoodKind; own: boolean; options: { id: HoodKind; name: string; note: string }[]; width: number | null } | null;
+  /** floating shelves: boards */
+  rows: { value: number; options: number[] } | null;
+  /** lit open units (floating shelves, open niches): LED */
+  led: { value: boolean } | null;
+}
+
+export function elementOptions(input: KitchenConfig, slotId: string): ElementOptionsInfo | null {
+  const ctx = context(input, slotId);
+  if (!ctx) return null;
+  const { cfg, plan, slot } = ctx;
+  const def = moduleDef(slot.zone, slot.type);
+  if (!def || def.spacer) return null;
+  const o = slot.opt;
+  const lit = def.lit || def.rows;
+  return {
+    slotId,
+    editable: Boolean(slot.list) && !slot.corner,
+    open:
+      def.demo !== false
+        ? { value: openingOf(cfg, o), own: Boolean(o?.open), options: catalog.handles.map((h) => ({ id: h.id, name: h.name, note: h.note })) }
+        : null,
+    glass: def.glass ? glassChoices(cfg, slotId) : null,
+    depth:
+      slot.zone === "upper" && !def.noTopBox
+        ? { value: topDepthOf(cfg, o), own: o?.depth !== undefined, options: [...TOP_DEPTHS], shown: Boolean(plan.heights.topRow) }
+        : null,
+    hood:
+      def.feature === "hob"
+        ? {
+            value: hoodKindOf(cfg, o),
+            own: Boolean(o?.hood),
+            options: catalog.hoods.kinds.map((h) => ({ id: h.id, name: h.name, note: h.note })),
+            width: plan.runs.flatMap((r) => r.hoods).find((h) => h.hob === slotId)?.width ?? null,
+          }
+        : null,
+    rows: def.rows ? { value: shelvesOf(o).rows, options: [...SHELF_ROWS] } : null,
+    led: lit ? { value: o?.led !== false } : null,
+  };
+}
+
+/**
+ * Set one element's own options (CabinetSpec.opt): `patch` merges into what it has (a field set to undefined goes back
+ * to the kitchen's; `glass` merges field by field, glass: undefined drops all of it), null = all back to the kitchen's.
+ * Only what applies to the element's type is kept (plan.ts cleanOpts). The first edit of a run makes it an explicit
+ * list, like every element edit. A hob's own hood re-flows the wall units above it (like setHood). Refused for corner
+ * units (they follow the kitchen's settings) and empty space.
+ *
+ *   setElementOptions(cfg, "a-upper-3", { glass: { type: "satinirano", frame: "alu-crni" } })
+ *   setElementOptions(cfg, "a-base-2", { open: "push" })
+ *   setElementOptions(cfg, "a-base-4", { hood: "dimnjak" })     // this hob: a chimney hood
+ *   setElementOptions(cfg, "b-upper-1", { rows: 3, led: false }) // floating shelves
+ */
+export function setElementOptions(input: KitchenConfig, slotId: string, patch: Partial<ElementOpts> | null): EditResult {
+  const ctx = context(input, slotId);
+  if (!ctx) return fail(sanitizeConfig(input), "Element više ne postoji.");
+  const ls = listSlot(ctx);
+  if (!ls || ctx.slot.corner) return fail(ctx.cfg, "Kutni element preuzima postavke cijele kuhinje.", slotId);
+  const def = defOf(ls.ez, ctx.slot.type);
+  if (!def || def.spacer) return fail(ctx.cfg, "Prazno mjesto nema postavki.", slotId);
+  const { cfg, list } = editable(ctx, ls.id);
+  const e = list[ls.index];
+  if (!e) return fail(ctx.cfg, "Element više ne postoji.", slotId);
+  let merged: Record<string, unknown> = {};
+  if (patch !== null) {
+    merged = { ...(e.opt ?? {}) };
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === "glass" && v && typeof v === "object") {
+        const g: Record<string, unknown> = { ...((e.opt?.glass as Record<string, unknown> | undefined) ?? {}) };
+        for (const [gk, gv] of Object.entries(v)) {
+          if (gv === undefined || gv === null) delete g[gk];
+          else g[gk] = gv;
+        }
+        merged.glass = g;
+      } else if (v === undefined || v === null) delete merged[k];
+      else merged[k] = v;
+    }
+  }
+  const opt = cleanOpts(merged, ls.ez, e.type);
+  if (opt) e.opt = opt;
+  else delete e.opt;
+  const next = sanitizeConfig(withList(cfg, ls.id, list));
+  const plan = planKitchen(next);
+  const placed = placedIndex(listOf(next, ls.id), planList(plan, ls.id), ls.index);
+  const sl = plan.slots.find((s) => s.list?.id === ls.id && s.list.index === placed);
+  if (!sl) return fail(ctx.cfg, "Ta postavka ne može se primijeniti na ovaj element.", slotId);
+  const notes = hoodNotes(ctx.plan, plan);
+  return { cfg: next, ok: true, warning: notes.length ? notes.join(" ") : null, slotId: sl.id };
+}
+
+/** worktop thicknesses (catalog.worktopThickness) and the one the kitchen has */
+export function worktopChoices(input: KitchenConfig): { value: number; options: { value: number; name: string; note: string; current: boolean }[] } {
+  const cfg = sanitizeConfig(input);
+  const value = worktopThickness(cfg);
+  return { value, options: catalog.worktopThickness.map((t) => ({ value: t.value, name: t.name, note: t.note, current: Math.abs(t.value - value) < 1e-6 })) };
+}
+
+/**
+ * The worktop's thickness (cm, catalog.worktopThickness: 1.2 / 2 / 4 / 6; other values snap to the nearest). The plinth
+ * takes the difference, so the worktop stays at its height (an 85 cm worktop 6 cm thick: 87 cm — the note says so).
+ */
+export function setWorktop(input: KitchenConfig, patch: { thickness?: number } | null): HeightsResult {
+  const cfg0 = sanitizeConfig(input);
+  const t = patch?.thickness;
+  const cfg = sanitizeConfig({ ...cfg0, worktop: patch === null || t === undefined ? undefined : { thickness: t } });
+  const plan = planKitchen(cfg);
+  const notes: string[] = [];
+  const want = cfg0.heights?.worktop ?? STANDARD_WORKTOP;
+  if (Math.abs(plan.heights.worktop - want) > 0.05) notes.push(`Uz ploču od ${worktopThickness(cfg)} cm radna je ploča na ${plan.heights.worktop} cm (postolje je najmanje 5 cm).`);
+  if (t !== undefined && !catalog.worktopThickness.some((x) => Math.abs(x.value - t) < 1e-6)) {
+    notes.push(`Radna ploča dolazi u debljinama ${catalog.worktopThickness.map((x) => x.name).join(", ")}.`);
+  }
+  return { cfg, ok: true, warning: notes.length ? notes.join(" ") : null, slotId: null, heights: plan.heights, notes };
+}
+
+/** the backsplash kinds, their finishes (glass colours / tiles) and what the kitchen has */
+export function backsplashChoices(input: KitchenConfig): {
+  kind: BacksplashKind;
+  finish: string | null;
+  kinds: { id: BacksplashKind; name: string; current: boolean }[];
+  finishes: { id: string; kind: "staklo" | "plocice"; name: string; swatch: string; current: boolean }[];
+} {
+  const cfg = sanitizeConfig(input);
+  const b = backsplashOfCfg(cfg);
+  const names: Record<BacksplashKind, string> = {
+    ploca: "Kao radna ploča",
+    pola: "Kao radna ploča, do pola visine",
+    staklo: "Staklo u boji",
+    plocice: "Pločice",
+    bez: "Bez obloge",
+  };
+  return {
+    kind: b.kind,
+    finish: b.finish,
+    kinds: (Object.keys(names) as BacksplashKind[]).map((id) => ({ id, name: names[id], current: id === b.kind })),
+    finishes: catalog.backsplashes.map((d) => ({ id: d.id, kind: d.kind, name: d.name, swatch: d.swatch, current: d.id === b.finish })),
+  };
+}
+
+/**
+ * What covers the wall between the worktop and the wall units (KitchenConfig.backsplash): a kind (with a finish for glass /
+ * tiles — a finish alone names its kind: { finish: "hex-crne" }), null = the worktop material up to the wall units
+ * (every older link). Refused for an unknown finish or one of another kind.
+ */
+export function setBacksplash(input: KitchenConfig, spec: { kind?: BacksplashKind; finish?: string } | null): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  if (spec === null) return { cfg: sanitizeConfig({ ...cfg0, backsplash: undefined }), ok: true, warning: null, slotId: null };
+  const f = spec.finish !== undefined ? backsplashDef(spec.finish) : undefined;
+  if (spec.finish !== undefined && !f) return fail(cfg0, "Nepoznata obloga.");
+  const kind = spec.kind ?? f?.kind ?? backsplashOfCfg(cfg0).kind;
+  if (f && f.kind !== kind) return fail(cfg0, "Ta obloga nije te vrste.");
+  const keep = backsplashOfCfg(cfg0);
+  const finish = f?.id ?? (keep.kind === kind ? (keep.finish ?? undefined) : undefined);
+  const next = sanitizeConfig({ ...cfg0, backsplash: { kind, ...(finish && (kind === "staklo" || kind === "plocice") ? { finish } : {}) } });
+  return { cfg: next, ok: true, warning: null, slotId: null };
+}
+
+/** per wall of the layout: whether it has a hanging rail with hooks, and whether one fits there (its length, cm) */
+export function railChoices(input: KitchenConfig): { wall: WallId; on: boolean; fits: boolean; length: number }[] {
+  const cfg = sanitizeConfig(input);
+  const all = planKitchen({ ...cfg, rails: wallsFor(cfg.layout) });
+  return all.runs.map((r) => ({
+    wall: r.wall,
+    on: Boolean(cfg.rails?.includes(r.wall)),
+    fits: Boolean(r.rail),
+    length: r.rail ? Math.round(r.rail.to - r.rail.from) : 0,
+  }));
+}
+
+/** A hanging rail with hooks on a wall's backsplash (KitchenConfig.rails), on or off; refused where none fits. */
+export function setRail(input: KitchenConfig, wall: WallId, on: boolean): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  const rails = new Set(cfg0.rails ?? []);
+  if (on) rails.add(wall);
+  else rails.delete(wall);
+  const next = sanitizeConfig({ ...cfg0, rails: [...rails] });
+  if (on && !planKitchen(next).runs.find((r) => r.wall === wall)?.rail) return fail(cfg0, `Na zidu ${wall.toUpperCase()} nema mjesta za reling (treba barem ${DIM.railMin + 20} cm radne ploče bez prozora).`);
+  return { cfg: next, ok: true, warning: null, slotId: null };
+}
+
+/**
+ * Floating shelves instead of the wall units of a whole wall ("viseće police" over the whole stretch): every wall unit of
+ * the wall's list (not empty space, the hood above the hob, the corner unit or a width the shelves do not come in)
+ * becomes floating shelves ("police-visece") of the same width, with `rows` boards (1–3) and the LED on / off. null =
+ * the floating shelves of that wall become wall units with doors again. Refused on a wall without wall units.
+ */
+export function setWallShelves(input: KitchenConfig, wall: WallId, opts: { rows?: number; led?: boolean } | null): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  const plan0 = planKitchen(cfg0);
+  const id = `${wall}:u` as ListId;
+  const l = planList(plan0, id);
+  if (!l || !l.entries.length) return fail(cfg0, `Na zidu ${wall.toUpperCase()} nema gornjih elemenata.`);
+  const cfg = materializeLists(cfg0, plan0, [id]);
+  const shelf = moduleDef("upper", "police-visece");
+  const door = moduleDef("upper", "vrata");
+  if (!shelf || !door) return fail(cfg0, "Viseće police nisu u katalogu.");
+  let changed = 0;
+  const list = (listOf(cfg, id) ?? []).map((e) => {
+    const d = moduleDef("upper", e.type);
+    if (!d || d.spacer || d.hood) return copyEntry(e);
+    if (opts === null) {
+      if (e.type !== shelf.id || !widthAllowed(door, e.width)) return copyEntry(e);
+      changed++;
+      const { rows: _r, led: _l, ...rest } = e.opt ?? {};
+      void _r;
+      void _l;
+      return Object.keys(rest).length ? { type: door.id, width: e.width, opt: rest } : { type: door.id, width: e.width };
+    }
+    if (!widthAllowed(shelf, e.width)) return copyEntry(e);
+    changed++;
+    const opt = cleanOpts({ ...(e.type === shelf.id ? e.opt : {}), ...(opts.rows !== undefined ? { rows: opts.rows } : {}), ...(opts.led !== undefined ? { led: opts.led } : {}) }, "upper", shelf.id);
+    return opt ? { type: shelf.id, width: e.width, opt } : { type: shelf.id, width: e.width };
+  });
+  if (!changed) return fail(cfg0, opts === null ? `Na zidu ${wall.toUpperCase()} nema visećih polica.` : `Na zidu ${wall.toUpperCase()} nema gornjih elemenata koje mogu zamijeniti police.`);
+  const next = sanitizeConfig(withList(cfg, id, list));
+  return { cfg: next, ok: true, warning: null, slotId: null };
 }

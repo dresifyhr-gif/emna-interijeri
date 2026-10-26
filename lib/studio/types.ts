@@ -11,10 +11,99 @@
  */
 export type Layout = "ravna" | "L" | "U" | "otok" | "poluotok" | "G";
 /**
+ * How the fronts open (KitchenConfig.handles, and per element CabinetSpec.opt.open):
  * bez = handleless with the Gola channel profile, letvica = bar handle, gumb = knob,
- * utor = routed edge grip (aluminium J-profile in the front's edge), push = push-to-open, no grip at all
+ * utor = routed edge grip (aluminium J-profile in the front's edge), push = push-to-open (TIP-ON: no grip, 4 mm reveals,
+ * the front pops out before it opens), luft = handleless with a finger gap ("luft za prste": wall-unit fronts reach
+ * 2,5 cm below the carcass, base fronts stop 3 cm under the worktop — no profile, the carcass edge shows)
  */
-export type HandleStyle = "bez" | "letvica" | "gumb" | "utor" | "push";
+export type HandleStyle = "bez" | "letvica" | "gumb" | "utor" | "push" | "luft";
+
+/**
+ * Cooker hood above a wall hob (KitchenConfig.hood.kind, per hob CabinetSpec.opt.hood):
+ *   ugradbena  hidden in a wall unit ("napa" element above the hob — every older link)
+ *   dimnjak    a visible chimney hood on the wall (60 / 90 / 120 cm, following the hob); the wall units above the hob go
+ *   kosa       a visible angled glass hood on the wall (same widths); the wall units above the hob go
+ *   ploca      a hob with a built-in downdraft extractor ("napa u ploči"): no hood at all, wall units may hang above it
+ */
+export type HoodKind = "ugradbena" | "dimnjak" | "kosa" | "ploca";
+/** visible hood finish (catalog.hoods.finishes) */
+export type HoodFinish = "inox" | "crna" | "bijela";
+/** the ceiling hood above an island / peninsula hob: canopy + chimney cover (every older link), or a flush ceiling cassette */
+export type IslandHoodStyle = "dimnjak" | "kaseta";
+
+/**
+ * Hoods of the kitchen. Every field optional; absent = every older link: a hood hidden in a wall unit above a wall hob, a
+ * ceiling canopy hood with a chimney cover above an island hob (IslandSpec.hood / hoodAbove still decide whether and how
+ * high). `kind` "ploca" (downdraft) means no hood anywhere — the island's too. Edit through lib/studio/edit.ts setHood.
+ */
+export interface HoodSpec {
+  /** wall hobs (and, "ploca", every hob); absent = "ugradbena" */
+  kind?: HoodKind;
+  /** visible wall / island hood finish; absent = inox (an island canopy without it keeps the appliance finish) */
+  finish?: HoodFinish;
+  /** the island / peninsula hood; absent = "dimnjak" */
+  island?: IslandHoodStyle;
+}
+
+/** glass of glass-door elements (vitrines): catalog.glass.types */
+export type GlassType = "prozirno" | "satinirano" | "dimljeno" | "broncano" | "rebrasto";
+/** the frame around the glass: in the front (every older vitrine) or a thin metal frame (catalog.glass.frames) */
+export type GlassFrame = "fronta" | "alu-crni" | "inox" | "zlatni" | "bronca";
+
+/**
+ * Glass-door elements (catalog modules with `glass`: vitrines, the diagonal corner vitrine …). Kitchen default
+ * (KitchenConfig.glass) and per element (CabinetSpec.opt.glass, field by field over the default). Absent fields = every
+ * older vitrine: clear glass in a front-coloured frame, inner LED, glass shelves.
+ */
+export interface GlassSpec {
+  type?: GlassType;
+  frame?: GlassFrame;
+  /** inner LED strip; absent = on */
+  led?: boolean;
+  /** glass shelves inside; absent = yes */
+  shelves?: boolean;
+}
+
+/**
+ * Per-element options of a list entry (CabinetSpec.opt). Only what applies to the entry's type is kept (sanitizeConfig);
+ * absent = the kitchen-level setting. Edit through lib/studio/edit.ts setElementOptions / elementOptions.
+ */
+export interface ElementOpts {
+  /** how this element's fronts open instead of KitchenConfig.handles (any element with fronts) */
+  open?: HandleStyle;
+  /** glass-door elements: overrides of KitchenConfig.glass */
+  glass?: GlassSpec;
+  /** wall units: depth (cm) of the top box above it in a "do stropa" second row (plan.ts TOP_DEPTHS); absent = HeightSpec.topDepth */
+  depth?: number;
+  /** hobs on a wall run: this hob's hood instead of KitchenConfig.hood.kind */
+  hood?: HoodKind;
+  /** floating shelves ("police-visece"): 1–3 boards; absent = 2 */
+  rows?: number;
+  /** open shelves with a light (floating shelves, open niches): LED under the boards; absent = on */
+  led?: boolean;
+}
+
+/** worktop thickness (cm): catalog.worktopThickness — 1,2 compact, 2 slim stone, 4 standard (every older link), 6 massive */
+export interface WorktopSpec {
+  /** cm; absent = 4 */
+  thickness?: number;
+}
+
+/**
+ * Between the worktop and the wall units (KitchenConfig.backsplash):
+ *   ploca    worktop material up to the wall units (every older link)
+ *   pola     worktop material up to half that height
+ *   bez      none (the wall shows)
+ *   staklo   back-painted glass in a colour (catalog.backsplashes, kind "staklo") up to the wall units
+ *   plocice  tiles (catalog.backsplashes, kind "plocice": subway / hex / zellige in a few colours) up to the wall units
+ */
+export type BacksplashKind = "ploca" | "pola" | "bez" | "staklo" | "plocice";
+export interface BacksplashSpec {
+  kind: BacksplashKind;
+  /** staklo / plocice: catalog.backsplashes id of that kind; absent = the first of that kind */
+  finish?: string;
+}
 export type Mood = "day" | "night";
 /** a = back wall, b = left wall (L and U), c = right wall (U only) */
 export type WallId = "a" | "b" | "c";
@@ -67,6 +156,8 @@ export interface CabinetSpec {
   width: number;
   /** a tall unit (catalog zone "tall") standing in a wall's base run; anywhere else it is dropped by sanitizeConfig */
   tall?: true;
+  /** per-element options (glass, opening style, top-box depth, hood of a hob, shelf rows / LED); absent = kitchen settings */
+  opt?: ElementOpts;
 }
 
 /** base cabinet runs: the three walls and the island (or the peninsula — layouts "poluotok" / "G" use the same run) */
@@ -119,6 +210,11 @@ export interface HeightSpec {
   tallTop?: number;
   /** worktop surface above the floor (cm); absent = 90 */
   worktop?: number;
+  /**
+   * "do stropa" with a second row of top cabinets: their depth (cm, plan.ts TOP_DEPTHS 30 / 35 / 45 / 60 — shallower or
+   * deeper than the 35 cm wall units, e.g. 60 flush with a tall column); absent = 35. Per element: CabinetSpec.opt.depth
+   */
+  topDepth?: number;
 }
 
 /** what the island / peninsula worktop holds besides plain cabinets (the planner places it and leaves it off the walls) */
@@ -283,6 +379,16 @@ export interface KitchenConfig {
    * "poluotok" and "G". Absent = the island of every older link.
    */
   islandSpec?: IslandSpec;
+  /** hoods: hidden / chimney / angled glass / downdraft, finish, island style; absent = every older link (see HoodSpec) */
+  hood?: HoodSpec;
+  /** glass-door elements' default glass, frame, LED and shelves; absent = clear glass in a front-coloured frame (GlassSpec) */
+  glass?: GlassSpec;
+  /** worktop thickness; absent = 4 cm */
+  worktop?: WorktopSpec;
+  /** what covers the wall between worktop and wall units; absent = the worktop material up to the wall units */
+  backsplash?: BacksplashSpec;
+  /** walls with a hanging rail with hooks on the backsplash (reling s kukama); absent = none */
+  rails?: WallId[];
 }
 
 export const DEFAULT_CONFIG: KitchenConfig = {

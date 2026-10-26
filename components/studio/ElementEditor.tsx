@@ -14,6 +14,10 @@
  * it under "Dodaj lijevo / desno"; a tall unit standing in the run can become a base cabinet again. A unit of a tall
  * column with more units in it offers "Ukloni cijeli visoki stup" next to its own "Ukloni".
  *
+ * Below the widths, what the element has of its own (ElementOptions): its glass, the hood above a hob, shelves and LED,
+ * the depth of its top box, how it opens — and at a free end of the run the end units (završeci) that can go there. The
+ * add picker says what the row makes narrower for the width chosen in it, the tall unit's question lists it too.
+ *
  * A refusal note goes stale once another action starts (it is not shown any more; a new refusal brings a new note), and
  * the tall unit's question is dropped by any other pick — what the editor shows is always about the last action.
  *
@@ -62,7 +66,9 @@ import { keepAbove, moveFocus } from "./overlay";
 import { PriceBlock } from "./Price";
 import { RunElevation } from "./RunElevation";
 import s from "./studio.module.css";
-import { baseChoices, tallSwap } from "./tallSwap";
+import { ElementOptionSections } from "./ElementOptions";
+import { insertPreview, narrowedText, probeTypeFor } from "./optionsModel";
+import { baseChoices, narrowLine, tallSwap } from "./tallSwap";
 
 export interface EditNote {
   text: string;
@@ -98,6 +104,8 @@ export interface ElementEditorProps {
   /** slotEditInfo(cfg, slotId) when the caller has it already (shared with the element toolbar) */
   info?: SlotEditInfo | null;
   desktop: boolean;
+  /** "Napredno" (hooks.ts StudioMode): every option of the element (glass shelves …) */
+  advanced?: boolean;
   /** the 3D view is there (mechanism demo) */
   engine: boolean;
   note: EditNote | null;
@@ -126,6 +134,7 @@ export function ElementEditor({
   slotId,
   info: shared,
   desktop,
+  advanced = false,
   engine,
   note,
   focusKey,
@@ -147,7 +156,9 @@ export function ElementEditor({
   const [adding, setAdding] = useState<{ id: string; side: Side } | null>(null);
   const addSide = adding && adding.id === slotId ? adding.side : null;
   /** a tall unit picked that takes another element away: the question waiting for its one click */
-  const [ask, setAsk] = useState<{ id: string; cfg: KitchenConfig; type: string; text: string; essentials: string[] } | null>(null);
+  const [ask, setAsk] = useState<{ id: string; cfg: KitchenConfig; type: string; text: string; essentials: string[]; narrow: string | null } | null>(null);
+  /** the width chosen in the add picker (its preselected one first), for what the row makes narrower */
+  const [addW, setAddW] = useState<{ id: string; side: Side; w: number | null } | null>(null);
   const asking = ask && ask.id === slotId && ask.cfg === cfg ? ask : null;
   const askRef = useRef<HTMLButtonElement>(null);
   const askingType = asking?.type ?? null;
@@ -167,6 +178,18 @@ export function ElementEditor({
   const info = shared !== undefined ? (shared && shared.slot.id === slotId ? shared : null) : own;
   // a tall unit standing in a base run: the base cabinets it can become again
   const backTypes = useMemo(() => (info && isInRunTall(info.slot) ? baseChoices(cfg, info.slot) : []), [cfg, info]);
+  // the add picker is open: what the row makes narrower for the width chosen in it (planned as the insert does it)
+  const addWidth = addW && addSide && info && addW.id === info.slot.id && addW.side === addSide ? addW.w : null;
+  const addPreview = useMemo(() => {
+    if (!info || !addSide || addWidth === null || addWidth <= info.free + 0.5 || !info.slot.list) return null;
+    const zone = rowOf(info.slot).zone;
+    if (zone === "tall") return null;
+    const t = probeTypeFor(zone === "island" ? "island" : zone, addWidth);
+    if (!t) return null;
+    const before = (addSide === "left") !== isFlipped(info.slot.run);
+    const r = (before ? insertBefore : insertAfter)(cfg, info.slot.id, t, addWidth);
+    return r.ok ? insertPreview(plan, r, info.slot.list.id) : null;
+  }, [info, addSide, addWidth, cfg, plan]);
 
   // the question before a tall unit takes another element away: focus on its "Da, zamijeni" (Enter confirms)
   useEffect(() => {
@@ -268,7 +291,7 @@ export function ElementEditor({
       return;
     }
     if (sw.ask && !confirmed && askingType !== t.id) {
-      setAsk({ id: slot.id, cfg, type: t.id, text: sw.ask, essentials: sw.essentials });
+      setAsk({ id: slot.id, cfg, type: t.id, text: sw.ask, essentials: sw.essentials, narrow: narrowLine(sw.narrowed) });
       return;
     }
     setAsk(null);
@@ -447,6 +470,7 @@ export function ElementEditor({
               {asking.text}
             </p>
             {asking.essentials.length > 0 && <p className="mt-1 text-[11.5px] leading-snug text-[#E9AE9C]">Uklanja se i {asking.essentials.join(", ")}.</p>}
+            {asking.narrow && <p className="mt-1 text-[11.5px] leading-snug text-fg/75">{asking.narrow}</p>}
             <div className="mt-2.5 flex items-center gap-2">
               <button
                 ref={askRef}
@@ -668,10 +692,12 @@ export function ElementEditor({
           Odustani
         </button>
       </div>
-      <p className="mt-2 text-[12px] leading-relaxed text-mut">
-        {info.free >= 1
-          ? `${slot.zone === "tall" && !inRunTall ? "U visokom stupu" : "Na ovom nizu"} slobodno je još ${Math.floor(info.free)} cm.`
-          : "Novi element zauzima slobodan prostor do njega."}
+      <p aria-live="polite" className="mt-2 text-[12px] leading-relaxed text-mut">
+        {addPreview?.length
+          ? `Za ${addWidth} cm ${addPreview.length > 1 ? "uži će biti" : "suzit će se"}: ${narrowedText(addPreview)}.`
+          : info.free >= 1
+            ? `${slot.zone === "tall" && !inRunTall ? "U visokom stupu" : "Na ovom nizu"} slobodno je još ${Math.floor(info.free)} cm.`
+            : "Novi element zauzima slobodan prostor do njega."}
       </p>
       <div
         ref={addRef}
@@ -689,6 +715,7 @@ export function ElementEditor({
           stretch={info.free >= 15 ? info.free : null}
           docked={!desktop}
           onPick={(it, w) => doInsert(addSide, it, w)}
+          onWidth={(w) => setAddW({ id: slot.id, side: addSide, w })}
         />
       </div>
     </div>
@@ -734,6 +761,7 @@ export function ElementEditor({
             {tallTiles}
             {backTiles}
             {widthChips}
+            <ElementOptionSections cfg={cfg} plan={plan} info={info} advanced={advanced} desktop={desktop} idBase={titleId} onEdit={onEdit} begin={begin} />
             {actions}
             {placeSection}
             {extras}

@@ -72,6 +72,8 @@ export class Lights {
   sweepIntensity = 0;
   /** LED strip colour in HDR (colour temperature finish × LED_GAIN) */
   private ledHot = new THREE.Color(LED_ON).multiplyScalar(LED_GAIN);
+  /** LED colour temperature (not HDR): the glow of lit frosted vitrine doors */
+  private ledColor = new THREE.Color(LED_ON);
 
   /**
    * @param windowLights false leaves the sun spot and the window area light out of the scene until a window
@@ -188,6 +190,7 @@ export class Lights {
   /** LED colour temperature (catalog.finishes.leds[].color): strips and their area lights */
   setLedColor(hex: string): void {
     this.ledHot.set(hex).multiplyScalar(LED_GAIN);
+    this.ledColor.set(hex);
     for (const r of this.pool) r.color.set(hex);
   }
 
@@ -218,6 +221,7 @@ export class Lights {
     scene.environmentIntensity = v.env;
     const led = v.led * ledScale;
     mats.led.color.copy(LED_OFF).lerp(this.ledHot, led);
+    mats.glassGlow(led, this.ledColor);
     this.pool.forEach((r, i) => (r.intensity = 26 * this.poolPower[i] * led * v.rect));
     this.sun.intensity = this.hasWindow ? 2.6 * v.sun : 0;
     this.winRect.intensity = this.hasWindow ? 5 * v.sun : 0;

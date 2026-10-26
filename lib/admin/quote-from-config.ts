@@ -9,7 +9,8 @@
  * details, each zone in its own front for two-tone kitchens, empty space left out as price.ts does; kitchens
  * "do stropa" add their top cabinets and the cornice strip), then mechanisms, worktop, backsplash, handles, finishes (handle colour, sink and tap, plinth), LED,
  * island / peninsula (its slab, outer row of cabinets, end panels, bar or lowered table, ceiling hood mounting —
- * price.ts islandCost) and installation.
+ * price.ts islandCost), the glass of vitrines (kind / frame), visible wall hoods and downdraft hobs, hanging rails, and
+ * installation. An element's own options (glass, opening style, top-box depth, hob hood, shelves) are named in its row.
  *
  * Every category total comes from price.ts `breakdown()`, so the quote adds up to what the studio
  * showed the customer even when the catalogue rates change; the per-metre rates are only used to
@@ -23,19 +24,55 @@
 import type { QuoteItem } from "@/lib/db/schema";
 import {
   FINISH_DEFAULTS,
+  backsplashDef,
   catalog,
   defaultHandleColor,
   finishDef,
   frontDef,
+  glassFrameDef,
+  glassTypeDef,
   handleColorDef,
   handleDef,
+  hoodFinishDef,
+  hoodKindDef,
   moduleDef,
   topDef,
+  worktopThicknessDef,
   type MaterialDef,
 } from "@/lib/studio/catalog";
-import { DIM, frontFor, hasTopBox, isPeninsula, kitchenRange, parseRunEnd, planKitchen, sanitizeConfig, tallListEnd, type PlanSlot } from "@/lib/studio/plan";
-import { TOP_BOX_HARDWARE, backsplashArea, breakdown, estimate, heightScale, islandCost } from "@/lib/studio/price";
-import { summarize } from "@/lib/studio/summary";
+import {
+  DIM,
+  backsplashOfCfg,
+  frontFor,
+  glassOf,
+  hasTopBox,
+  isPeninsula,
+  kitchenRange,
+  parseRunEnd,
+  planKitchen,
+  sanitizeConfig,
+  tallListEnd,
+  topDepthOf,
+  worktopThickness,
+  type PlanSlot,
+} from "@/lib/studio/plan";
+import {
+  TOP_BOX_HARDWARE,
+  backsplashArea,
+  backsplashRate,
+  boardsCost,
+  breakdown,
+  estimate,
+  glassCost,
+  heightScale,
+  hoodsCost,
+  islandCost,
+  railMetres,
+  slotHandle,
+  topDepthFactor,
+  worktopFactor,
+} from "@/lib/studio/price";
+import { elementOptionsText, summarize } from "@/lib/studio/summary";
 import type { FrontZone, KitchenConfig, Layout } from "@/lib/studio/types";
 
 export interface QuotePrefill {
@@ -121,10 +158,15 @@ function slotName(s: PlanSlot): string {
 }
 
 /** "kutni karusel 110, element za sudoper 80 (širine u cm)" — empty space ("slobodno mjesto") is named at the end */
-function slotList(slots: readonly PlanSlot[]): string {
+function slotList(slots: readonly PlanSlot[], cfg?: KitchenConfig): string {
   const cabinets = slots.filter((s) => !isSpacer(s));
   const free = slots.filter(isSpacer).reduce((sum, s) => sum + s.width, 0);
-  const list = cabinets.length ? `${cabinets.map((s) => `${slotName(s)} ${cmFmt.format(s.width)}`).join(", ")} (širine u cm)` : "";
+  // an element's own options (glass, opening style …: lib/studio/summary.ts elementOptionsText) in brackets after it
+  const own = (s: PlanSlot) => {
+    const t = cfg ? elementOptionsText(cfg, s) : null;
+    return t ? ` [${t}]` : "";
+  };
+  const list = cabinets.length ? `${cabinets.map((s) => `${slotName(s)} ${cmFmt.format(s.width)}${own(s)}`).join(", ")} (širine u cm)` : "";
   const gap = free >= 1 ? `bez elementa ${cmFmt.format(Math.round(free))} cm` : "";
   return [list, gap].filter(Boolean).join("; ");
 }
@@ -143,7 +185,7 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   const handle = handleDef(c.handles) ?? catalog.handles[0];
   if (!front || !top || !handle) throw new Error("catalogue is empty");
   if (!Array.isArray(plan.slots) || !Array.isArray(plan.runs) || !Array.isArray(plan.pieces)) throw new Error("unexpected plan shape");
-  for (const v of [b.cabinets, b.worktop, b.backsplash, b.handles, b.mechanisms, b.finishes ?? 0, b.led, b.install, b.island, b.total]) {
+  for (const v of [b.cabinets, b.worktop, b.backsplash, b.handles, b.mechanisms, b.finishes ?? 0, b.led, b.install, b.island, b.glass ?? 0, b.hoods ?? 0, b.rails ?? 0, b.total]) {
     if (!finite(v) || v < 0) throw new Error("unexpected breakdown");
   }
 
@@ -170,7 +212,7 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     const h = heightNote[zone];
     groups.push({
       description,
-      details: `${slotList(slots)}${h ? ` · ${h}` : ""} · fronta: ${f.name}`,
+      details: `${slotList(slots, c)}${h ? ` · ${h}` : ""} · fronta: ${f.name}`,
       metres: cmToM(priced.reduce((sum, s) => sum + s.width, 0)),
       gross: priced.reduce((sum, s) => sum + f.pricePerMeter * weight * frontedM(s), 0),
       catalogueRate: f.pricePerMeter * weight,
@@ -227,13 +269,17 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     const where = `${[u, t].filter(Boolean).join(" i ")} elemenata`;
     const rowH = hp.topRow ? hp.topRow.to - hp.topRow.from : hp.tallTop - (hp.tallSplit ?? hp.tallTop);
     const names = [...new Set([...(topUpper.length ? [fu.name] : []), ...(topTall.length ? [frontOf("tall").name] : [])])];
+    const depths = [...new Set(topUpper.map((s) => (s.corner ? 35 : topDepthOf(c, s.opt))))].sort((a, b) => a - b);
+    const depthNote = depths.length && !(depths.length === 1 && depths[0] === 35) ? `, dubina ${depths.join(" / ")} cm` : "";
     groups.push({
       description: "Nadgradni ormarići do stropa",
-      details: `${where}, visina ${cmFmt.format(rowH)} cm, s klapnom koja se diže · fronta: ${names.join(", ")}`,
+      details: `${where}, visina ${cmFmt.format(rowH)} cm${depthNote}, s klapnom koja se diže · fronta: ${names.join(", ")}`,
       metres: cmToM([...topUpper, ...topTall].reduce((sum, s) => sum + s.width, 0)),
       gross:
-        topUpper.reduce((sum, s) => sum + fu.pricePerMeter * ZONE_WEIGHT.upper * cmToM(s.width) * hs.top + TOP_BOX_HARDWARE, 0) +
-        topTall.length * TOP_BOX_HARDWARE,
+        topUpper.reduce(
+          (sum, s) => sum + fu.pricePerMeter * ZONE_WEIGHT.upper * cmToM(s.width) * hs.top * (s.corner ? 1 : topDepthFactor(topDepthOf(c, s.opt))) + TOP_BOX_HARDWARE,
+          0,
+        ) + topTall.length * TOP_BOX_HARDWARE,
       catalogueRate: 0,
     });
   }
@@ -306,6 +352,61 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   for (const m of mech.values()) {
     lines.push({ description: `Oprema – ${m.name}`, details: m.description, qty: m.count, unit: "kom", grossUnit: m.price });
   }
+  // floating shelves: their boards by the metre (price.ts boardsCost, in b.mechanisms)
+  const boards = cabinetsOnly.filter((s) => boardsCost(s) > 0);
+  if (boards.length) {
+    const boardM = round2(boards.reduce((sum, s) => sum + boardsCost(s), 0) / catalog.extras.shelfBoardPerMeter);
+    lines.push({
+      description: "Viseće police – daske s LED trakom",
+      details: `${boards.length} ${boards.length === 1 ? "element" : "elementa"}, ukupno ${cmFmt.format(boardM)} m dasaka`,
+      qty: boardM,
+      unit: "m",
+      grossUnit: catalog.extras.shelfBoardPerMeter,
+    });
+  }
+
+  /* ---------------- glass of glass-door elements: kind and frame surcharges (b.glass) */
+  if (b.glass > 0.5) {
+    const glassBy = new Map<string, { label: string; metres: number; gross: number }>();
+    for (const s of cabinetsOnly) {
+      const g = glassCost(c, s);
+      if (!(g > 0)) continue;
+      const v = glassOf(c, s.opt);
+      const key = `${v.type}:${v.frame}`;
+      const label = `${glassTypeDef(v.type)?.name ?? v.type}${v.frame !== "fronta" ? `, okvir ${(glassFrameDef(v.frame)?.name ?? v.frame).toLowerCase()}` : ""}`;
+      const hit = glassBy.get(key) ?? { label, metres: 0, gross: 0 };
+      hit.metres += cmToM(s.width);
+      hit.gross += g;
+      glassBy.set(key, hit);
+    }
+    for (const g of glassBy.values()) {
+      const qty = round2(g.metres);
+      if (!(qty > 0)) continue;
+      lines.push({ description: `Staklo vitrina – ${g.label}`, details: "doplata za vrstu stakla i okvir, po dužnom metru vitrine", qty, unit: "m", grossUnit: g.gross / qty });
+    }
+  }
+
+  /* ---------------- visible wall hoods, downdraft hobs (b.hoods); hanging rails (b.rails) */
+  for (const h of hoodsCost(plan)) {
+    if (!(h.each > 0.5)) continue;
+    const def = hoodKindDef(h.kind);
+    const finish = hoodFinishDef(c.hood?.finish ?? "inox")?.name.toLowerCase();
+    lines.push({
+      description: h.kind === "ploca" ? "Ploča s odsisom (downdraft) – ugradnja" : `${def?.name ?? h.kind} – montaža`,
+      details:
+        h.kind === "ploca"
+          ? "izrez, odvod kroz postolje — ploča s odsisom nije uključena"
+          : `pričvršćenje na zid, maska dimnjaka do stropa, odvod${finish ? ` · ${finish}` : ""} — napa nije uključena`,
+      qty: h.count,
+      unit: "kom",
+      grossUnit: h.each,
+    });
+  }
+  if (b.rails > 0.5) {
+    const qty = round2(railMetres(plan));
+    if (!(qty > 0)) throw new Error("rails without metres");
+    lines.push({ description: "Reling s kukama", details: "na zidnoj oblozi ispod gornjih elemenata, s kukama", qty, unit: "m", grossUnit: b.rails / qty });
+  }
 
   /* ---------------- worktop (walls by the metre, island slab as one piece) */
   // its pieces (tall units standing in a run interrupt it: RunPlan.worktops); an older plan shape: the one range
@@ -316,31 +417,48 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   let islandSlab = 0;
   // the bar / table top has its own line (it may be in another material)
   const barTop = ic?.barTop ?? 0;
-  if (b.worktop > 0) {
+  // the worktop's thickness (KitchenConfig.worktop) scales its price per metre (price.ts worktopFactor)
+  const wf = worktopFactor(c);
+  const topRate = top.pricePerMeter * wf;
+  const thick = c.worktop ? `, debljina ${worktopThicknessDef(worktopThickness(c))?.name ?? `${worktopThickness(c)} cm`}` : "";
+  // side panels in the worktop material at the end of a run (catalog worktopMaterial): their own line
+  const stonePanels = cabinetsOnly.filter((s) => defOf(s)?.worktopMaterial);
+  const panelStone = stonePanels.length * top.pricePerMeter * catalog.extras.worktopPanelM * wf;
+  const worktopRest = b.worktop - panelStone;
+  if (worktopRest > 0) {
     const wallQty = round2(wallTopM);
     if (plan.island && wallQty > 0) {
-      const wallPart = Math.min(b.worktop - barTop, top.pricePerMeter * wallTopM);
-      islandSlab = b.worktop - barTop - wallPart;
+      const wallPart = Math.min(worktopRest - barTop, topRate * wallTopM);
+      islandSlab = worktopRest - barTop - wallPart;
       lines.push({
         description: `Radna ploča – ${top.name}`,
-        details: `dubina ${cmFmt.format(DIM.worktopDepth)} cm, uz zidove`,
+        details: `dubina ${cmFmt.format(DIM.worktopDepth)} cm${thick}, uz zidove`,
         qty: wallQty,
         unit: "m",
-        grossUnit: rate(wallPart, wallQty, top.pricePerMeter),
+        grossUnit: rate(wallPart, wallQty, topRate),
       });
     } else if (plan.island) {
-      islandSlab = b.worktop - barTop;
+      islandSlab = worktopRest - barTop;
     } else if (wallQty > 0) {
       lines.push({
         description: `Radna ploča – ${top.name}`,
-        details: `dubina ${cmFmt.format(DIM.worktopDepth)} cm`,
+        details: `dubina ${cmFmt.format(DIM.worktopDepth)} cm${thick}`,
         qty: wallQty,
         unit: "m",
-        grossUnit: rate(b.worktop, wallQty, top.pricePerMeter),
+        grossUnit: rate(worktopRest, wallQty, topRate),
       });
     } else {
       throw new Error("worktop without metres");
     }
+  }
+  if (panelStone > 0.5) {
+    lines.push({
+      description: `Bočne ploče od radne ploče – ${top.name}`,
+      details: "završetak kuhinje: radna ploča se spušta do poda, rezanje i obrada rubova",
+      qty: stonePanels.length,
+      unit: "kom",
+      grossUnit: panelStone / stonePanels.length,
+    });
   }
   if (islandSlab > 0.5) {
     const len = plan.island?.length;
@@ -381,26 +499,55 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   if (b.backsplash > 0.5) {
     const area = round2(backsplashArea(plan));
     if (!(area > 0)) throw new Error("backsplash without area");
+    const bs = backsplashOfCfg(c);
+    const own = bs.kind === "staklo" || bs.kind === "plocice" ? backsplashDef(bs.finish ?? undefined) : undefined;
     lines.push({
-      description: `Zidna obloga – ${top.name}`,
-      details: "između radne ploče i gornjih elemenata, u materijalu radne ploče",
+      description: `Zidna obloga – ${own?.name ?? top.name}`,
+      details: own
+        ? bs.kind === "staklo"
+          ? "lakirano staklo između radne ploče i gornjih elemenata, izrada po mjeri i montaža"
+          : "pločice između radne ploče i gornjih elemenata, materijal i postavljanje"
+        : `između radne ploče i gornjih elemenata${bs.kind === "pola" ? ", do pola visine" : ""}, u materijalu radne ploče`,
       qty: area,
       unit: "m²",
-      grossUnit: rate(b.backsplash, area, (top.pricePerMeter / cmToM(DIM.worktopDepth)) * catalog.extras.backsplashShare),
+      grossUnit: rate(b.backsplash, area, backsplashRate(c)),
     });
   }
 
-  /* ---------------- handles (per metre of fronts) */
+  /* ---------------- handles (per metre of fronts, each element in its own opening style: CabinetSpec.opt.open) */
   const frontM = round2(cabinetsOnly.reduce((sum, s) => sum + frontedM(s), 0));
+  const styleM = new Map<string, number>();
+  for (const s of cabinetsOnly) {
+    const h = slotHandle(c, s);
+    if (h) styleM.set(h.id, (styleM.get(h.id) ?? 0) + frontedM(s));
+  }
   if (b.handles > 0.5) {
     if (!(frontM > 0)) throw new Error("handles without fronts");
-    lines.push({
-      description: `Ručke – ${handle.name}`,
-      details: "po dužnom metru fronti",
-      qty: frontM,
-      unit: "m",
-      grossUnit: rate(b.handles, frontM, handle.pricePerMeter),
-    });
+    const styles = [...styleM].filter(([, m]) => m > 0.005);
+    if (styles.length <= 1) {
+      lines.push({
+        description: `Ručke – ${handle.name}`,
+        details: "po dužnom metru fronti",
+        qty: frontM,
+        unit: "m",
+        grossUnit: rate(b.handles, frontM, handle.pricePerMeter),
+      });
+    } else {
+      // the kitchen's style first, then the elements that open their own way
+      styles.sort(([a], [z]) => (a === c.handles ? -1 : z === c.handles ? 1 : 0));
+      for (const [id, metres] of styles) {
+        const h = handleDef(id as KitchenConfig["handles"]) ?? handle;
+        const qty = round2(metres);
+        if (!(qty > 0)) continue;
+        lines.push({
+          description: `${id === c.handles ? "Ručke" : "Otvaranje elemenata"} – ${h.name}`,
+          details: id === c.handles ? "po dužnom metru fronti" : "elementi s vlastitim načinom otvaranja, po dužnom metru fronti",
+          qty,
+          unit: "m",
+          grossUnit: h.pricePerMeter,
+        });
+      }
+    }
   }
 
   /* ---------------- finishes: handle colour, sink and tap, plinth (b.finishes) */
@@ -408,11 +555,13 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     const f = c.finish ?? {};
     const finishLines: DraftLine[] = [];
     const hc = handleColorDef(f.handleColor ?? defaultHandleColor(c.handles));
-    if (handle.coloured && hc && hc.priceAdd > 0 && frontM > 0) {
+    // the colour on the fronts of every coloured style (price.ts: the same metres)
+    const colouredM = round2([...styleM].reduce((sum, [id, m]) => sum + (handleDef(id as KitchenConfig["handles"])?.coloured ? m : 0), 0));
+    if (hc && hc.priceAdd > 0 && colouredM > 0) {
       finishLines.push({
         description: c.handles === "bez" ? `Profil Gola – ${hc.golaName}` : `Boja ručki – ${hc.name}`,
         details: "doplata po dužnom metru fronti",
-        qty: frontM,
+        qty: colouredM,
         unit: "m",
         grossUnit: hc.priceAdd,
       });
@@ -503,13 +652,23 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
       );
     }
     if (ic && isl?.hood && ic.hood > 0.5) {
-      lines.push({
-        description: "Montaža otočne nape (stropna)",
-        details: `pričvršćenje na strop, maska dimnjaka do stropa, odvod — napa nije uključena · donji rub ${cmFmt.format(isl.hood.bottom)} cm od poda`,
-        qty: 1,
-        unit: "paušal",
-        grossUnit: ic.hood,
-      });
+      lines.push(
+        isl.hood.style === "kaseta"
+          ? {
+              description: "Montaža stropne kasete (napa u stropu)",
+              details: "izrez i ugradnja u strop iznad otoka, odvod — napa nije uključena",
+              qty: 1,
+              unit: "paušal",
+              grossUnit: ic.hood,
+            }
+          : {
+              description: "Montaža otočne nape (stropna)",
+              details: `pričvršćenje na strop, maska dimnjaka do stropa, odvod — napa nije uključena · donji rub ${cmFmt.format(isl.hood.bottom)} cm od poda`,
+              qty: 1,
+              unit: "paušal",
+              grossUnit: ic.hood,
+            },
+      );
     }
   }
 

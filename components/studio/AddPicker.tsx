@@ -3,15 +3,17 @@
 /**
  * The one "add an element" picker — the same at a "+" in 3D (GapLayer) and behind "+ lijevo / + desno" of the element
  * toolbar and editor: a row of widths, preselected to what fits the free place best, then big tiles of the six most
- * common elements that fit there, and "Više elemenata" for the rest (grouped). Tall units are among them wherever one
- * can stand (a "+" in a wall's base row, at a run's end, between two cabinets, beside a cabinet), with a small "visoki"
- * badge. A tile shows the width it will get — the chosen one, or the nearest its type comes in — and a click adds it
- * at once.
+ * common elements that fit there, at a free end of a run the end units ("Završetak kuhinje": rounded / angled open
+ * shelves, thick side panels) in a block of their own, and "Više elemenata" for the rest (grouped). Tall units are among
+ * them wherever one can stand (a "+" in a wall's base row, at a run's end, between two cabinets, beside a cabinet), with
+ * a small "visoki" badge. A tile shows the width it will get — the chosen one, or the nearest its type comes in — and a
+ * click adds it at once. `onWidth` hears the chosen width (the preselected one first), so the caller can say what the
+ * row makes narrower for it.
  *
  * Keyboard: the widths are row 0, the tiles the rows after it (overlay.moveFocus: arrows walk them, Home / End jump).
  * The caller focuses the first tile ([data-tile]) when it opens.
  */
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { addModel, widthFor, type AddItem, type AddZone } from "./addModel";
 import { ChevronDown, ModuleGlyph } from "./icons";
 import s from "./studio.module.css";
@@ -23,7 +25,9 @@ export function AddPicker({
   zone,
   stretch,
   docked,
+  ends = false,
   onPick,
+  onWidth,
 }: {
   /** what fits (types without a fitting width are left out by the picker) */
   items: AddItem[];
@@ -32,19 +36,33 @@ export function AddPicker({
   /** cm of the free place itself (addModel bestWidth); null when there is none (a run that grows) */
   stretch: number | null;
   docked: boolean;
+  /** a free end of a run: the end units get a block of their own */
+  ends?: boolean;
   onPick: (it: AddItem, width: number) => void;
+  /** the chosen width changed (also once with the preselected one) */
+  onWidth?: (w: number | null) => void;
 }) {
   const uid = useId();
-  const { fit, chips, best, top, rest, groups } = useMemo(() => addModel(items, zone, stretch), [items, zone, stretch]);
+  const { fit, chips, best, top, rest, groups, ends: endItems } = useMemo(() => addModel(items, zone, stretch, { ends }), [items, zone, stretch, ends]);
   const [chosen, setChosen] = useState<number | null>(null);
   const width = chosen !== null && chips.includes(chosen) ? chosen : best;
   const [more, setMore] = useState(false);
 
+  // the caller hears the width when it changes (its handler is a new function on every render: kept in a ref)
+  const onWidthRef = useRef(onWidth);
+  useEffect(() => {
+    onWidthRef.current = onWidth;
+  });
+  useEffect(() => {
+    onWidthRef.current?.(width);
+  }, [width]);
+
   if (!fit.length) return <p className="px-2.5 pb-2 text-[12px] leading-relaxed text-mut">Ovdje trenutno ne stane nijedan element.</p>;
 
-  // the keyboard rows (overlay.moveFocus): widths, the common tiles, "Više", each group's tiles
+  // the keyboard rows (overlay.moveFocus): widths, the common tiles, the end units, "Više", each group's tiles
   const topRow = chips.length > 1 ? 1 : 0;
-  const moreRow = topRow + Math.ceil(top.length / 3);
+  const endRow = topRow + Math.ceil(top.length / 3);
+  const moreRow = endRow + Math.ceil(endItems.length / 3);
   const groupRows = groups.reduce<number[]>((acc, g, k) => [...acc, k ? acc[k - 1] + Math.ceil(groups[k - 1].items.length / 3) : moreRow + 1], []);
   const tiles = (list: AddItem[], base: number) => {
     return (
@@ -104,6 +122,12 @@ export function AddPicker({
         </div>
       )}
       {tiles(top, topRow)}
+      {endItems.length > 0 && (
+        <div>
+          <p className="mb-1.5 px-1 text-[10px] font-medium uppercase tracking-[0.2em] text-mut/90">Završetak kuhinje</p>
+          {tiles(endItems, endRow)}
+        </div>
+      )}
       {groups.length > 0 && (
         <>
           <button

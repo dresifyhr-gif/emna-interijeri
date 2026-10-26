@@ -14,14 +14,15 @@
  */
 
 import * as THREE from "three";
-import { SBS, cornerFoot, moduleDef } from "../catalog";
+import { SBS, cornerFoot, glassFrameDef, moduleDef } from "../catalog";
 import { hasTopBox, type PlanSlot } from "../plan";
-import type { FrontZone, HandleStyle } from "../types";
-import { BASE_FACE, D, TOP_Y, UPPER_FACE, WORK_Y, type EngineHeights } from "./dims";
+import type { FrontZone, GlassSpec, HandleStyle, HoodKind } from "../types";
+import { BASE_FACE, D, TOP_Y, UPPER_FACE, gripGapOf, lipOf, type EngineHeights } from "./dims";
 import { boxes, disposeGeometries, mesh, roundedPanel, type BoxSpec, type GeoCache } from "./geo";
 import type { Mat, Materials } from "./materials";
 
-export type HolderKind = "door" | "drawer" | "flap" | "drop" | "pull" | "visor" | "swing" | "glide" | "fixed";
+/** pocket = a door that turns open and then slides back into the carcass beside it (the coffee nook) */
+export type HolderKind = "door" | "drawer" | "flap" | "drop" | "pull" | "visor" | "swing" | "glide" | "pocket" | "fixed";
 
 export interface Holder {
   node: THREE.Object3D;
@@ -30,7 +31,7 @@ export interface Holder {
   amount: number;
   /** seconds after the demo starts */
   delay: number;
-  /** "swing" / "glide": travel towards the room / sideways (m) */
+  /** "swing" / "glide" / "pocket": travel towards the room / sideways (m) */
   dz?: number;
   dx?: number;
   rest: { p: THREE.Vector3; r: THREE.Euler };
@@ -68,6 +69,10 @@ export interface ModuleRT {
   frontZone: FrontZone;
   /** empty-space slot: nothing but an invisible pick volume */
   ghost: boolean;
+  /** meshes in the worktop material (a side panel of worktop): they follow a worktop change */
+  tops: THREE.Mesh[];
+  /** how its fronts open (push-to-open: the demo pops the fronts first) */
+  open: HandleStyle;
 }
 
 export interface BuildCtx {
@@ -90,10 +95,24 @@ export interface BuildCtx {
    * the unit itself (module-local); a top box and the "do stropa" cornice above it come from buildHeightExtras.
    */
   h?: EngineHeights;
+  /** glass-door elements: the glass (KitchenConfig.glass with the element's own over it); absent = clear, front frame */
+  glass?: Required<GlassSpec>;
+  /** wall units: depth of the top box above it in a "do stropa" second row (m); absent = h.topDepth */
+  topDepth?: number;
+  /** hobs: the hood it has ("ploca" = a downdraft extractor in the hob) */
+  hood?: HoodKind;
+  /** the worktop material (side panels of worktop, catalog worktopMaterial); absent = none drawn */
+  top?: Mat;
+  /** this element's own options: floating shelves' boards / LED, a lit unit's LED */
+  opt?: { rows: number; led: boolean };
 }
 
 const T = D.board;
-const G = D.gap;
+/**
+ * half of the reveal between fronts: 1,5 mm (3 mm reveals), 2 mm for push-to-open fronts (the latch needs the room). Set
+ * by build / rebuildFronts for the module being built (building is synchronous).
+ */
+let G: number = D.gap;
 const FT = D.frontT;
 const BASE_FZ = D.carcass + D.frontOff + FT / 2;
 const UPPER_FZ = D.upperCarcass + D.frontOff + FT / 2;
@@ -338,7 +357,7 @@ class Mod {
   /** the grip of the current handle style on a front panel (nothing for Gola / push-to-open) */
   grip(panel: THREE.Mesh, fw: number, fh: number, at: GripAt): void {
     const st = this.ctx.handles;
-    if (st === "bez" || st === "push") return;
+    if (st === "bez" || st === "push" || st === "luft") return;
     if (st === "utor") {
       this.edgeProfile(panel, fw, fh, at);
       return;
@@ -374,21 +393,36 @@ class Mod {
     return h;
   }
 
+  /**
+   * a glass door: a frame in the front (4,5 cm, every older vitrine) or a thin metal profile (KitchenConfig.glass /
+   * opt.glass frame), and the glass of its kind (materials.glassOf)
+   */
   glassDoor(h: THREE.Object3D, fw: number, fh: number, lx: number, cx: number, cy: number, fz: number): THREE.Mesh {
-    const r = 0.045;
+    const fd = glassFrameDef(this.ctx.glass?.frame);
+    const metal = fd?.render.metal;
+    const r = metal ? fd.render.width / 100 : 0.045;
     const list: BoxSpec[] = [
       [-fw / 2, -fh / 2, -FT / 2, -fw / 2 + r, fh / 2, FT / 2],
       [fw / 2 - r, -fh / 2, -FT / 2, fw / 2, fh / 2, FT / 2],
       [-fw / 2 + r, -fh / 2, -FT / 2, fw / 2 - r, -fh / 2 + r, FT / 2],
       [-fw / 2 + r, fh / 2 - r, -FT / 2, fw / 2 - r, fh / 2, FT / 2],
     ];
-    const frame = mesh(boxes(list, [this.ox + cx, cy, fz]), this.ctx.front);
+    const frame = mesh(boxes(list, [this.ox + cx, cy, fz]), metal && fd ? this.mats.finishMat(`frame:${fd.id}`, metal) : this.ctx.front);
     frame.position.set(lx, 0, 0);
     h.add(frame);
-    this.m.panels.push(frame);
-    const glass = mesh(boxes([[-fw / 2 + r, -fh / 2 + r, -0.002, fw / 2 - r, fh / 2 - r, 0.002]]), this.mats.doorGlass, false, false);
+    // a metal frame keeps its finish through a front change (not one of the panels)
+    if (!metal) this.m.panels.push(frame);
+    const glass = mesh(boxes([[-fw / 2 + r, -fh / 2 + r, -0.002, fw / 2 - r, fh / 2 - r, 0.002]]), this.mats.glassOf(this.ctx.glass?.type, this.ctx.glass?.led !== false), false, false);
     frame.add(glass);
     return frame;
+  }
+
+  /** a glass-door element's inner LED and glass shelves are on (KitchenConfig.glass / opt.glass; on for every older one) */
+  get glassLed(): boolean {
+    return this.ctx.glass?.led !== false;
+  }
+  get glassShelves(): boolean {
+    return this.ctx.glass?.shelves !== false;
   }
 
   /** a drawer front with its box; `box`: the kind of drawer behind the front */
@@ -644,7 +678,8 @@ function buildBase(b: Mod, includeBody: boolean): void {
   const mats = ctx.mats;
   const gola = ctx.handles === "bez";
   const yb = D.plinth;
-  const yt = TOP_Y - (gola ? D.golaH : 0);
+  // the Gola channel or the finger gap ("luft") under the worktop
+  const yt = TOP_Y - gripGapOf(ctx.handles);
   const fz = BASE_FZ;
   const corner = m.slot.corner;
 
@@ -652,6 +687,8 @@ function buildBase(b: Mod, includeBody: boolean): void {
     if (includeBody) b.ghost(D.plinth, TOP_Y - 0.004, D.carcass);
     return;
   }
+  // the new elements: vitrines, wine racks, end units (rounded / angled shelves, side panels)
+  if (buildBaseExtra(b, includeBody, yb, yt, fz)) return;
   if (corner && cornerFoot("base", type).shape !== "blind") {
     buildShapedCorner(b, "base", includeBody);
     return;
@@ -709,7 +746,7 @@ function buildBase(b: Mod, includeBody: boolean): void {
       m.hole = { x0: b.ox + xc - bw / 2, x1: b.ox + xc + bw / 2, z0, z1 };
       // tap
       const tap = new THREE.Group();
-      tap.position.set(xc, WORK_Y, 0.075);
+      tap.position.set(xc, workY(ctx), 0.075);
       b.piece("tap:pipe", () => new THREE.CylinderGeometry(0.014, 0.017, 0.34, 24), mats.tap, 0, 0.17, 0, tap);
       const arc = b.piece("tap:arc", () => new THREE.TorusGeometry(0.09, 0.012, 14, 36, Math.PI), mats.tap, 0, 0.34, 0.09, tap);
       arc.rotation.y = -Math.PI / 2;
@@ -722,8 +759,13 @@ function buildBase(b: Mod, includeBody: boolean): void {
     if (type === "ploca" || type === "ploca-pecnica") {
       const hw = Math.min(w >= 0.99 ? 0.88 : w >= 0.8 ? 0.78 : 0.58, w - 0.04);
       const hob = mesh(new THREE.BoxGeometry(hw, 0.006, 0.51), mats.hob);
-      hob.position.set(w / 2, WORK_Y + 0.003, 0.33);
+      hob.position.set(w / 2, workY(ctx) + 0.003, 0.33);
       m.extras.add(hob);
+      // a downdraft hob (KitchenConfig.hood "ploca"): the extractor's slot across its middle
+      if (ctx.hood === "ploca") {
+        const bar = mesh(boxes([[w / 2 - hw / 2 + 0.02, workY(ctx) + 0.0055, 0.33 - 0.035, w / 2 + hw / 2 - 0.02, workY(ctx) + 0.009, 0.33 + 0.035]]), mats.trim, false, true);
+        m.extras.add(bar);
+      }
     }
 
     if (type === "ploca-pecnica" || type === "pecnica-donja") {
@@ -955,12 +997,12 @@ function buildShapedCorner(b: Mod, zone: "base" | "upper", includeBody: boolean)
   const fz = base ? BASE_FZ : UPPER_FZ;
   const across = foot.across / 100;
   const gola = ctx.handles === "bez";
-  const lip = !base && gola ? D.upperLip : 0;
+  const lip = !base ? lipOf(ctx.handles) : 0;
   // carcass and fronts, bottom → top
   const c0 = base ? D.plinth : ctx.ub;
   const c1 = base ? TOP_Y : ctx.ut;
   const f0 = base ? D.plinth : ctx.ub - lip;
-  const f1 = base ? TOP_Y - (gola ? D.golaH : 0) : ctx.ut;
+  const f1 = base ? TOP_Y - gripGapOf(ctx.handles) : ctx.ut;
   const X = (x: number) => (right ? w - x : x);
   const bx = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): BoxSpec =>
     right ? [w - x1, y0, z0, w - x0, y1, z1] : [x0, y0, z0, x1, y1, z1];
@@ -1006,7 +1048,7 @@ function buildShapedCorner(b: Mod, zone: "base" | "upper", includeBody: boolean)
     const sides: BoxSpec[] = [bx(w - T, c0, 0, w, c1, dc), bx(0, c0, across - T, dc, c1, across), bx(0, c0, 0, w, c1, D.back), bx(0, c0, 0, D.back, c1, across)];
     if (open) b.openCarcass(sides);
     else b.carcass(sides);
-    if (type === "kutni-dijagonalni-staklo") {
+    if (type === "kutni-dijagonalni-staklo" && b.glassLed) {
       const lx = X(dc * 0.4);
       b.ledInner(Math.min(lx, X(dc * 0.4 + 0.2)), Math.max(lx, X(dc * 0.4 + 0.2)), c1 - T, dc * 0.6);
     }
@@ -1124,7 +1166,8 @@ function buildUpper(b: Mod, includeBody: boolean): void {
   const ut = ctx.ut;
   const depth = D.upperCarcass;
   const fz = UPPER_FZ;
-  const lip = ctx.handles === "bez" ? D.upperLip : 0;
+  // the Gola lip or the finger gap ("luft") below the carcass
+  const lip = lipOf(ctx.handles);
   const y0 = ub - lip;
   const corner = m.slot.corner;
   const mats = ctx.mats;
@@ -1133,6 +1176,8 @@ function buildUpper(b: Mod, includeBody: boolean): void {
     if (includeBody) b.ghost(ub, ut, depth);
     return;
   }
+  // the new elements: floating shelves, wine rack, end units (rounded / angled shelves, side panels)
+  if (buildUpperExtra(b, includeBody, ub, ut, y0)) return;
   if (corner && cornerFoot("upper", type).shape !== "blind") {
     buildShapedCorner(b, "upper", includeBody);
     return;
@@ -1142,7 +1187,7 @@ function buildUpper(b: Mod, includeBody: boolean): void {
     if (type === "nisa") {
       const list = carcassBoxes(w, ub, ut - ub, depth, { shelves: [ub + (ut - ub) * 0.5 - T / 2] });
       b.body(boxes(list, [b.ox, 0, 0]), mats.oak);
-      b.ledInner(0.04, w - 0.04, ut - T, depth - 0.05);
+      if (ctx.opt?.led !== false) b.ledInner(0.04, w - 0.04, ut - T, depth - 0.05);
       if (w >= 0.3) b.vase(Math.max(w * 0.3, T + 0.07), ub + T, depth * 0.5);
       else b.jar(w / 2, ub + T, depth * 0.5);
       if (w >= 0.4) b.books(w * 0.62, ub + (ut - ub) * 0.5 + T / 2, depth * 0.2, depth * 0.85);
@@ -1151,7 +1196,7 @@ function buildUpper(b: Mod, includeBody: boolean): void {
       const s1 = ub + 0.04;
       const s2 = ub + (ut - ub) * 0.62;
       b.body(boxes([[0.002, ub, 0.004, w - 0.002, s1, depth - 0.02], [0.002, s2, 0.004, w - 0.002, s2 + 0.03, depth - 0.05]], [b.ox, 0, 0]), mats.oak);
-      b.ledInner(0.04, w - 0.04, s2 - 0.001, depth - 0.09);
+      if (ctx.opt?.led !== false) b.ledInner(0.04, w - 0.04, s2 - 0.001, depth - 0.09);
       b.plates(Math.max(w * 0.3, 0.115), s1, depth * 0.5, 3);
       if (w >= 0.45) b.plantPot(w * 0.72, s1, depth * 0.48);
       b.jar(w * 0.55, s2 + 0.03, depth * 0.45);
@@ -1190,12 +1235,16 @@ function buildUpper(b: Mod, includeBody: boolean): void {
       const shelves = type === "vitrina" || type === "klapna2" ? [] : [ub + (ut - ub) * 0.5];
       b.carcass(carcassBoxes(w, ub, ut - ub, depth, { shelves }));
       if (type === "vitrina") {
-        for (const f of [0.34, 0.67]) {
-          b.body(boxes([[T + 0.004, ub + (ut - ub) * f, 0.02, w - T - 0.004, ub + (ut - ub) * f + 0.006, depth - 0.02]]), mats.glassShelf);
+        // glass shelves and the inner LED: on unless the kitchen / the element says otherwise (KitchenConfig.glass)
+        if (b.glassShelves) {
+          for (const f of [0.34, 0.67]) {
+            b.body(boxes([[T + 0.004, ub + (ut - ub) * f, 0.02, w - T - 0.004, ub + (ut - ub) * f + 0.006, depth - 0.02]]), mats.glassShelf);
+          }
         }
-        b.ledInner(T + 0.02, w - T - 0.02, ut - T, depth - 0.05);
-        // a few glasses on the shelves
-        for (let k = 0; k < Math.floor((w - 0.08) / 0.11); k++) b.jar(T + 0.07 + k * 0.11, ub + (ut - ub) * 0.34 + 0.006, depth * 0.5);
+        if (b.glassLed) b.ledInner(T + 0.02, w - T - 0.02, ut - T, depth - 0.05);
+        // a few glasses on the shelves (on the bottom without shelves)
+        const gy = b.glassShelves ? ub + (ut - ub) * 0.34 + 0.006 : ub + T;
+        for (let k = 0; k < Math.floor((w - 0.08) / 0.11); k++) b.jar(T + 0.07 + k * 0.11, gy, depth * 0.5);
       }
       if (type === "klapna2") b.body(boxes([[T + 0.004, ub + (ut - ub) * 0.5, 0.02, w - T - 0.004, ub + (ut - ub) * 0.5 + T, depth - 0.03]], [b.ox, 0, 0]), ctx.carcass, true);
     }
@@ -1247,6 +1296,328 @@ function buildUpper(b: Mod, includeBody: boolean): void {
     }
     default:
       b.doors(y0, ut, fz, "bottom");
+  }
+}
+
+// ---------------------------------------------------------------- new elements (vitrines, wine, end units, shelves, coffee)
+
+/** module-local worktop surface (the module stands h.lift higher): the carcass top + the worktop's thickness */
+function workY(ctx: BuildCtx): number {
+  return TOP_Y + (ctx.h?.worktopT ?? D.worktopT);
+}
+
+/** the x range an end unit draws over (module-local m): its slot, and on its end side the run's end panel it took over */
+function endSpan(b: Mod): { x0: number; x1: number; side: "left" | "right" | null } {
+  const e = b.m.slot.end;
+  const pad = e ? e.pad / 100 : 0;
+  return { x0: e?.side === "left" ? -pad : 0, x1: e?.side === "right" ? b.w + pad : b.w, side: e?.side ?? null };
+}
+
+/**
+ * A thick side panel (catalog "bocna" / "bocna-radna" / "bocna-rebrasta") from y0 to y1, `depth` deep: in the front
+ * colour, or (stone) in the worktop material — the worktop running down to the floor at the end of the run. The fluted one
+ * has vertical ribs on its outer side (at a free end) and across its front. 1 mm in from a neighbour (no shared face).
+ */
+function sidePanel(b: Mod, y0: number, y1: number, depth: number, look: { stone?: boolean; ribs?: boolean }): void {
+  const { m, ctx } = b;
+  const { x0, x1, side } = endSpan(b);
+  const a = x0 + (side === "left" ? 0 : 0.001);
+  const c = x1 - (side === "right" ? 0 : 0.001);
+  if (look.stone && ctx.top) m.tops.push(b.body(boxes([[a, y0, 0.002, c, y1, depth]], [b.ox, 0, 0]), ctx.top));
+  else m.panels.push(b.body(boxes([[a, y0, 0.002, c, y1, depth]], [b.ox, 0, 0]), ctx.front));
+  if (!look.ribs) return;
+  const ribs: BoxSpec[] = [];
+  if (side) {
+    // ribs along the outer side, every 2,5 cm
+    const xf = side === "left" ? a : c;
+    for (let z = 0.03; z < depth - 0.03; z += 0.025) ribs.push(side === "left" ? [xf - 0.006, y0 + 0.002, z, xf, y1 - 0.002, z + 0.014] : [xf, y0 + 0.002, z, xf + 0.006, y1 - 0.002, z + 0.014]);
+  }
+  const n = Math.max(1, Math.floor((c - a) / 0.02));
+  const step = (c - a - 0.004) / n;
+  for (let i = 0; i < n; i++) {
+    const x = a + 0.002 + i * step + step * 0.15;
+    ribs.push([x, y0 + 0.002, depth, x + step * 0.7, y1 - 0.002, depth + 0.005]);
+  }
+  m.panels.push(b.body(boxes(ribs, [b.ox, 0, 0]), ctx.front));
+}
+
+/**
+ * Open shelves that end the run (catalog "police-zaobljene" / "-kose", "polica-zaobljena" / "-kosa"): at a free end
+ * (PlanSlot.end) their boards are rounded / cut at an angle towards the outside, over the end panel they took over;
+ * anywhere else plain straight open shelves. Front colour; a back panel; boards at `ys` (bottom faces).
+ */
+function endShelves(b: Mod, shape: "round" | "angled", ys: number[], y0: number, y1: number, depth: number): void {
+  const { m, ctx, w } = b;
+  const { x0, x1, side } = endSpan(b);
+  if (!side) {
+    b.openCarcass(carcassBoxes(w, y0, y1 - y0, depth, { shelves: ys.slice(1, -1) }));
+    return;
+  }
+  const outer = side === "left" ? x0 : x1;
+  const inner = side === "left" ? x1 - 0.001 : 0.001;
+  const sg = outer > inner ? 1 : -1;
+  const span = Math.abs(outer - inner);
+  const pts: [number, number][] = [
+    [inner, 0.004],
+    [outer, 0.004],
+  ];
+  if (shape === "round") {
+    const R = Math.min(span, depth) * 0.98;
+    const cx = outer - sg * R;
+    const cz = depth - R;
+    for (let k = 0; k <= 12; k++) {
+      const a = ((Math.PI / 2) * k) / 12;
+      pts.push([cx + sg * R * Math.cos(a), cz + R * Math.sin(a)]);
+    }
+  } else pts.push([outer, depth * 0.35]);
+  pts.push([inner, depth]);
+  for (const y of ys) m.panels.push(b.body(boardGeo(pts, y, y + T), ctx.front));
+  // the back panel between the boards
+  m.panels.push(b.body(boxes([[Math.min(inner, outer), y0, 0, Math.max(inner, outer), y1, 0.004]], [b.ox, 0, 0]), ctx.front));
+  // a few things on the boards
+  const mid = (inner + outer) / 2;
+  if (ys.length > 2) b.vase(mid, ys[1] + T, depth * 0.45);
+  b.jar(inner + (outer - inner) * 0.3, ys[0] + T, depth * 0.4);
+}
+
+/** a wine rack: an open carcass in the front colour with a grid of cubbies, bottles lying in most of them (necks out) */
+function wineRack(b: Mod, y0: number, y1: number, depth: number): void {
+  const { w } = b;
+  b.openCarcass(carcassBoxes(w, y0, y1 - y0, depth));
+  const ix0 = T + 0.001;
+  const ix1 = w - T - 0.001;
+  const iy0 = y0 + T;
+  const iy1 = y1 - T;
+  const cols = Math.max(1, Math.round((ix1 - ix0) / 0.105));
+  const rows = Math.max(1, Math.round((iy1 - iy0) / 0.105));
+  const cw = (ix1 - ix0) / cols;
+  const ch = (iy1 - iy0) / rows;
+  const t = 0.01;
+  const grid: BoxSpec[] = [];
+  for (let i = 1; i < cols; i++) grid.push([ix0 + i * cw - t / 2, iy0 + 0.0005, 0.02, ix0 + i * cw + t / 2, iy1 - 0.0005, depth - 0.012]);
+  for (let j = 1; j < rows; j++) grid.push([ix0 + 0.0005, iy0 + j * ch - t / 2, 0.021, ix1 - 0.0005, iy0 + j * ch + t / 2, depth - 0.013]);
+  if (grid.length) b.openCarcass(grid);
+  const len = Math.min(0.3, depth - 0.04);
+  if (cw < 0.08 || ch < 0.08) return;
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      if ((i * 7 + j * 3) % 5 === 0) continue;
+      const bt = b.piece(`bottle:lying:${len.toFixed(3)}`, () => bottleGeo(len), b.mats.bottle, ix0 + (i + 0.5) * cw, iy0 + j * ch + t / 2 + 0.038, depth - len - 0.02, b.m.body, false);
+      bt.rotation.x = Math.PI / 2;
+    }
+  }
+}
+
+/** the lathe of a wine bottle `len` m long (base at y 0) */
+function bottleGeo(len: number): THREE.BufferGeometry {
+  return new THREE.LatheGeometry(
+    [
+      new THREE.Vector2(0.0001, 0),
+      new THREE.Vector2(0.034, 0),
+      new THREE.Vector2(0.036, 0.01),
+      new THREE.Vector2(0.036, len * 0.62),
+      new THREE.Vector2(0.014, len * 0.8),
+      new THREE.Vector2(0.012, len),
+      new THREE.Vector2(0.0001, len),
+    ],
+    18,
+  );
+}
+
+/** a door that turns open and then slides back into the carcass beside its hinge (pocket door of the coffee nook) */
+function pocketDoor(b: Mod, x0: number, x1: number, y0: number, y1: number, fz: number, hinge: "left" | "right", delay: number): void {
+  const fw = x1 - x0 - 2 * G;
+  const fh = y1 - y0 - 2 * G;
+  const px = hinge === "left" ? x0 + G + 0.004 : x1 - G - 0.004;
+  const h = b.holder("pocket", px, (y0 + y1) / 2, fz, hinge === "left" ? -Math.PI / 2 : Math.PI / 2, delay);
+  b.lastHolder().dz = -(fw - 0.03);
+  const p = b.panel(h, fw, fh, hinge === "left" ? fw / 2 - 0.004 : -fw / 2 + 0.004, 0, (x0 + x1) / 2, (y0 + y1) / 2, fz);
+  b.grip(p, fw, fh, { edge: "mid", free: hinge === "left" ? fw / 2 - 0.035 : -fw / 2 + 0.035 });
+}
+
+/** base elements beyond the classic set; false = not one of them */
+function buildBaseExtra(b: Mod, includeBody: boolean, yb: number, yt: number, fz: number): boolean {
+  const { ctx, m, w } = b;
+  const type = m.slot.type;
+  const mats = ctx.mats;
+  const H = TOP_Y - D.plinth;
+  switch (type) {
+    case "vitrina": {
+      if (includeBody) {
+        b.plinth();
+        b.carcass(carcassBoxes(w, D.plinth, D.baseH, D.carcass));
+        if (b.glassShelves) b.body(boxes([[T + 0.004, D.plinth + H * 0.5, 0.02, w - T - 0.004, D.plinth + H * 0.5 + 0.006, D.carcass - 0.02]]), mats.glassShelf);
+        if (b.glassLed) b.ledInner(T + 0.02, w - T - 0.02, TOP_Y - T, D.carcass - 0.05);
+        b.plates(w / 2, D.plinth + T, D.carcass * 0.5, 3);
+        if (b.glassShelves) for (let k = 0; k < Math.floor((w - 0.08) / 0.11); k++) b.jar(T + 0.07 + k * 0.11, D.plinth + H * 0.5 + 0.006, D.carcass * 0.5);
+      }
+      if (ctx.handles === "bez") m.fronts.add(mesh(boxes([[0, yt + 0.001, D.carcass - 0.03, w, TOP_Y - 0.001, D.carcass + 0.001]]), mats.gola, false, true));
+      b.doors(yb, yt, fz, "top", true);
+      return true;
+    }
+    case "vinoteka":
+      if (includeBody) wineRack(b, D.plinth, TOP_Y, D.carcass + D.frontOff + FT);
+      return true;
+    case "police-zaobljene":
+    case "police-kose":
+      if (includeBody) {
+        endShelves(b, type === "police-zaobljene" ? "round" : "angled", [D.plinth, D.plinth + H * 0.36, D.plinth + H * 0.68, TOP_Y - T], D.plinth, TOP_Y, D.carcass + D.frontOff + FT);
+        // the plinth under the back of the boards
+        const { x0, x1 } = endSpan(b);
+        const pl = b.body(boxes([[x0 + 0.002, 0, 0.03, x1 - 0.002, D.plinth - 0.002, BASE_FACE * 0.5]], [b.ox, 0, 0]), ctx.plinth);
+        m.plinths.push(pl);
+      }
+      return true;
+    case "bocna":
+    case "bocna-radna":
+    case "bocna-rebrasta":
+      if (includeBody) sidePanel(b, 0, TOP_Y, BASE_FACE, { stone: type === "bocna-radna", ribs: type === "bocna-rebrasta" });
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** wall units beyond the classic set; false = not one of them */
+function buildUpperExtra(b: Mod, includeBody: boolean, ub: number, ut: number, y0: number): boolean {
+  const { ctx, m, w } = b;
+  const type = m.slot.type;
+  const depth = D.upperCarcass;
+  switch (type) {
+    case "police-visece": {
+      if (!includeBody) return true;
+      // floating shelves: 1–3 boards on hidden brackets, an LED strip under each (ElementOpts.rows / led)
+      const rows = Math.max(1, Math.min(3, ctx.opt?.rows ?? 2));
+      const H = ut - ub;
+      const ys = rows === 1 ? [ub + H * 0.15] : rows === 2 ? [ub + H * 0.08, ub + H * 0.6] : [ub + H * 0.06, ub + H * 0.4, ub + H * 0.74];
+      const t = 0.04;
+      const d = 0.27;
+      // at a free end of the row the boards run on over the end panel they took over (no panel beside floating shelves)
+      const { x0, x1, side } = endSpan(b);
+      const a = x0 + (side === "left" ? 0 : 0.002);
+      const c = x1 - (side === "right" ? 0 : 0.002);
+      m.panels.push(b.body(boxes(ys.map((y): BoxSpec => [a, y, 0.004, c, y + t, d]), [b.ox, 0, 0]), ctx.front));
+      ys.forEach((y, i) => {
+        if (ctx.opt?.led !== false) b.ledInner(0.04, w - 0.04, y - 0.001, d - 0.05);
+        if (i === 0) b.plates(Math.max(w * 0.3, 0.115), y + t, d * 0.5, 3);
+        else b.jar(w * 0.55, y + t, d * 0.45);
+        if (i === ys.length - 1 && w >= 0.45) b.plantPot(w * 0.75, y + t, d * 0.48);
+      });
+      return true;
+    }
+    case "vinoteka":
+      if (includeBody) wineRack(b, ub, ut, depth + D.frontOff + FT);
+      return true;
+    case "polica-zaobljena":
+    case "polica-kosa":
+      if (includeBody) endShelves(b, type === "polica-zaobljena" ? "round" : "angled", [ub, ub + (ut - ub) * 0.5 - T / 2, ut - T], ub, ut, depth + D.frontOff + FT);
+      return true;
+    case "bocna":
+    case "bocna-rebrasta": {
+      // up through a "do stropa" top row and the cornice: the panel ends the whole stack
+      const h = ctx.h;
+      const top = h?.cornice ? h.cornice.y1 : h?.topRow ? h.topRow.y1 : ut;
+      if (includeBody) sidePanel(b, ub, top, UPPER_FACE, { ribs: type === "bocna-rebrasta" });
+      // its lip below the carcass (Gola / luft) goes with the fronts — rebuilt when the opening style changes — in front
+      // of the backsplash, not in the stone
+      if (ub - y0 > 1e-6) {
+        const { x0, x1, side } = endSpan(b);
+        const me = mesh(boxes([[x0 + (side === "left" ? 0 : 0.001), y0, D.backsplashT + 0.0005, x1 - (side === "right" ? 0 : 0.001), ub, UPPER_FACE]], [b.ox, 0, 0]), ctx.front);
+        m.fronts.add(me);
+        m.panels.push(me);
+      }
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+/** tall elements beyond the classic set; false = not one of them. y0 / y1: the unit's bottom / top (module-local) */
+function buildTallExtra(b: Mod, includeBody: boolean, y0: number, y1: number, fz: number): boolean {
+  const { ctx, m, w } = b;
+  const type = m.slot.type;
+  const mats = ctx.mats;
+  const H = y1 - y0;
+  const hinge = ctx.tallHinge;
+  const lit = ctx.opt?.led !== false;
+  // the worktop surface, module-local (a niche at worktop height)
+  const wy = workY(ctx);
+  switch (type) {
+    case "vitrina": {
+      if (includeBody) {
+        b.plinth();
+        b.carcass(carcassBoxes(w, y0, H, D.carcass));
+        const levels = [0.22, 0.42, 0.62, 0.8].map((f) => y0 + H * f);
+        if (b.glassShelves) b.body(boxes(levels.map((y): BoxSpec => [T + 0.004, y, 0.02, w - T - 0.004, y + 0.006, D.carcass - 0.02])), mats.glassShelf);
+        if (b.glassLed) b.ledInner(T + 0.02, w - T - 0.02, y1 - T, D.carcass - 0.05);
+        for (const y of b.glassShelves ? levels.slice(0, 3) : [y0 + T]) {
+          for (let k = 0; k < Math.floor((w - 0.08) / 0.11); k++) b.jar(T + 0.07 + k * 0.11, y + 0.006, D.carcass * 0.5);
+        }
+      }
+      b.doors(y0, y1, fz, "mid", true);
+      return true;
+    }
+    case "police": {
+      if (includeBody) {
+        b.plinth();
+        const shelves = [0.2, 0.4, 0.6, 0.8].map((f) => y0 + H * f);
+        b.openCarcass(carcassBoxes(w, y0, H, D.carcass + D.frontOff + FT, { shelves }));
+        if (lit) b.ledInner(0.04, w - 0.04, y1 - T, D.carcass - 0.05);
+        b.plates(w / 2, shelves[1] + T, D.carcass * 0.55, 4);
+        if (w >= 0.4) b.vase(w * 0.5, shelves[2] + T, D.carcass * 0.5);
+        b.books(T + 0.02, shelves[3] + T, D.carcass * 0.2, D.carcass * 0.85);
+      }
+      return true;
+    }
+    case "vinoteka":
+      if (includeBody) {
+        b.plinth();
+        wineRack(b, y0, y1, D.carcass + D.frontOff + FT);
+        if (lit) b.ledInner(0.04, w - 0.04, y1 - T, D.carcass - 0.05);
+      }
+      return true;
+    case "ormar-nisa":
+    case "kava": {
+      // an open niche at worktop height (the coffee nook's behind pocket doors), drawers / a door below, a door above
+      const coffee = type === "kava";
+      const n0 = Math.min(Math.max(y0 + 0.5, wy), y1 - 0.75);
+      const n1 = Math.min(n0 + (coffee ? 0.55 : 0.45), y1 - 0.22);
+      if (includeBody) {
+        b.plinth();
+        b.carcass(carcassBoxes(w, y0, H, D.carcass, { shelves: [n0 - T, n1, n1 + (y1 - n1) * 0.5] }));
+        // the niche: a front-coloured floor and back, LED under its top
+        m.panels.push(b.body(boxes([[T + 0.001, n0, 0.02, w - T - 0.001, n0 + 0.004, D.carcass - 0.004]], [b.ox, 0, 0]), ctx.front));
+        if (lit || coffee) b.ledInner(T + 0.03, w - T - 0.03, n1 - 0.001, D.carcass - 0.08);
+        if (coffee) {
+          // the coffee machine and two cups
+          const cw = Math.min(0.3, w - 0.16);
+          b.body(boxes([[w / 2 - cw / 2, n0 + 0.004, 0.06, w / 2 + cw / 2, n0 + 0.38, 0.44]]), mats.blackGlass);
+          b.body(boxes([[w / 2 - cw / 2 + 0.02, n0 + 0.3, 0.44, w / 2 + cw / 2 - 0.02, n0 + 0.34, 0.442]]), mats.display);
+          b.jar(w / 2 + cw / 2 + 0.06 < w - T - 0.04 ? w / 2 + cw / 2 + 0.06 : w / 2, n0 + 0.004, 0.4);
+        } else b.vase(w / 2, n0 + 0.004, D.carcass * 0.5);
+      }
+      if (coffee) {
+        b.drawer(0, w, y0 + (n0 - y0) * 0.5, n0 - T, fz, 0.47, 0.18);
+        b.drawer(0, w, y0, y0 + (n0 - y0) * 0.5, fz, 0.47, 0.28);
+        if (w > 0.62) {
+          pocketDoor(b, 0, w / 2, n0 - T, n1 + T, fz, "left", 0);
+          pocketDoor(b, w / 2, w, n0 - T, n1 + T, fz, "right", 0.06);
+        } else pocketDoor(b, 0, w, n0 - T, n1 + T, fz, hinge, 0);
+      } else b.door(0, w, y0, n0 - T, fz, hinge, "top", 0.1);
+      b.door(0, w, n1 + T, y1, fz, hinge, "bottom", 0.2);
+      return true;
+    }
+    case "bocna":
+    case "bocna-rebrasta": {
+      // up to the top of the column, its top box and cornice included (buildHeightExtras leaves it alone)
+      const h = ctx.h;
+      const top = h ? (h.cornice ? h.cornice.y1 : h.tallTop) - h.lift : y1;
+      if (includeBody) sidePanel(b, 0, top, BASE_FACE, { ribs: type === "bocna-rebrasta" });
+      return true;
+    }
+    default:
+      return false;
   }
 }
 
@@ -1420,6 +1791,8 @@ function buildTall(b: Mod, includeBody: boolean): void {
     buildSbs(b, includeBody, y1);
     return;
   }
+  // the new elements: vitrine, open shelves, wine column, coffee nook, LED niche, side panels
+  if (buildTallExtra(b, includeBody, y0, y1, fz)) return;
 
   const freezer = Math.min(0.72, H * 0.34);
   const top = Math.max(0.2, H - freezer - 1.02);
@@ -1610,10 +1983,14 @@ function newModule(slot: PlanSlot): ModuleRT {
     anchor: new THREE.Vector3(w / 2, ay, az),
     frontZone: slot.zone,
     ghost: Boolean(moduleDef(slot.zone, slot.type)?.spacer),
+    tops: [],
+    open: "bez",
   };
 }
 
 function build(ctx: BuildCtx, m: ModuleRT, includeBody: boolean): void {
+  G = ctx.handles === "push" ? D.pushGap : D.gap;
+  m.open = ctx.handles;
   const b = new Mod(ctx, m);
   if (m.slot.zone === "upper") buildUpper(b, includeBody);
   else if (m.slot.zone === "tall") buildTall(b, includeBody);
@@ -1664,6 +2041,8 @@ export function rebuildFronts(ctx: BuildCtx, m: ModuleRT): void {
   m.wrappers = [];
   // the body keeps its front-material meshes (open shelves); only the fronts' panels go
   m.panels = m.panels.filter((p) => p.parent && isInside(p, m.body));
+  G = ctx.handles === "push" ? D.pushGap : D.gap;
+  m.open = ctx.handles;
   const b = new Mod(ctx, m);
   if (m.slot.zone === "upper") buildUpper(b, false);
   else if (m.slot.zone === "tall") buildTall(b, false);
@@ -1691,8 +2070,13 @@ function buildHeightExtras(b: Mod, includeBody: boolean): void {
   if (!h || m.ghost || (zone !== "upper" && zone !== "tall")) return;
   const upper = zone === "upper";
   if (upper && !hasTopBox(m.slot.type)) return;
+  // a side panel at the end of a column runs up to the top on its own
+  if (!upper && moduleDef("tall", m.slot.type)?.endUnit) return;
   const dy = upper ? 0 : h.lift;
-  const fz = upper ? UPPER_FZ : BASE_FZ;
+  // a top box deeper / shallower than the wall unit (HeightSpec.topDepth, opt.depth); corner units keep 35 cm
+  const td = upper && !m.slot.corner ? (ctx.topDepth ?? h.topDepth) : 0.35;
+  const tc = D.upperCarcass + (td - 0.35);
+  const fz = upper ? (Math.abs(td - 0.35) < 1e-6 ? UPPER_FZ : tc + D.frontOff + FT / 2) : BASE_FZ;
   const box = upper ? h.topRow : h.tallSplit !== null ? { y0: h.tallSplit, y1: h.tallTop } : null;
   if (box && box.y1 - box.y0 > 0.1) {
     const y0 = box.y0 - dy;
@@ -1714,7 +2098,7 @@ function buildHeightExtras(b: Mod, includeBody: boolean): void {
       const pb = b.fixedPanel(X(fz) - lb / 2, X(fz) + lb / 2, y0 + G, y1 - G, UPPER_FACE + G + lb / 2);
       pb.rotation.y = right ? -Math.PI / 2 : Math.PI / 2;
     } else {
-      if (includeBody) b.carcass(carcassBoxes(w, y0, y1 - y0, upper ? D.upperCarcass : D.carcass));
+      if (includeBody) b.carcass(carcassBoxes(w, y0, y1 - y0, upper ? (Math.abs(td - 0.35) < 1e-6 ? D.upperCarcass : tc) : D.carcass));
       if (corner) {
         // blind corner: the 5 cm filler beside the blind part, a door on the open part (as the unit below)
         const blind = 0.35;

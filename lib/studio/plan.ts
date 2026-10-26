@@ -37,6 +37,15 @@
  * them move with the footprint. planGaps lists every empty place the studio shows a "+" for — and one "+" on every full
  * row (an insert the row makes room for, or a replace where nothing can).
  *
+ * Options beyond the cabinets' types (all optional, absent = every older link): a visible wall hood (KitchenConfig.hood
+ * "dimnjak" / "kosa", or a hob's own CabinetSpec.opt.hood) stands above its hob as wide as the hob asks and the wall units
+ * make way for it like for a window (RunPlan.hoods; a hidden hood element of an edited list is left out while no hob of
+ * that wall wants one); a downdraft hob ("ploca") has no hood at all; the island's hood may be a ceiling cassette. End
+ * units (catalog `endUnit`) at a free end take the place of the run's end panel (PlanSlot.end); an entry's own options
+ * (CabinetSpec.opt: glass, opening style, top-box depth, shelves) ride on its slot (PlanSlot.opt) and, with the kitchen's
+ * glass / hood / top-row depth as they apply to it, make its PlanSlot.look. The worktop's thickness moves the plinth
+ * (HeightPlan.worktopT), the backsplash may be half height or none (RunPlan.backsplash), a rail hangs on it (RunPlan.rail).
+ *
  * Pure TypeScript (no three.js, no DOM): the 3D engine, the price estimate and
  * the summary all use the same plan, so what the customer sees is what is
  * priced and what is sent to the owner.
@@ -48,32 +57,51 @@
 
 import {
   FINISH_DEFAULTS,
+  GLASS_DEFAULTS,
+  HOOD_DEFAULTS,
   SBS,
+  WORKTOP_THICKNESS,
+  backsplashDef,
+  backsplashesOf,
   catalog,
   cornerFoot,
   cornerTypes,
   finishDef,
   frontDef,
+  glassFrameDef,
+  glassTypeDef,
   handleColorDef,
   handleDef,
+  hoodFinishDef,
+  hoodKindDef,
+  hoodWidthFor,
   isModuleTypeId,
+  islandHoodStyleDef,
   moduleDef,
   roomFloorDef,
   roomWallDef,
   topDef,
   widthAllowed,
+  worktopThicknessDef,
   type ModuleTypeDef,
 } from "./catalog";
 import {
   DEFAULT_CONFIG,
+  type BacksplashSpec,
   type BarSpec,
   type BaseRunId,
   type CabinetSpec,
   type CornerId,
+  type ElementOpts,
   type FinishSpec,
   type FrontZone,
+  type GlassSpec,
   type HandleStyle,
   type HeightSpec,
+  type HoodFinish,
+  type HoodKind,
+  type HoodSpec,
+  type IslandHoodStyle,
   type IslandSpec,
   type KitchenConfig,
   type KitchenExtent,
@@ -83,6 +111,7 @@ import {
   type SeatSide,
   type WallId,
   type WindowSpec,
+  type WorktopSpec,
 } from "./types";
 
 // ---------------------------------------------------------------- constants
@@ -197,6 +226,25 @@ export const DIM = {
   hoodCeilingMin: 5,
   /** run-local z of the hob's centre in a base cabinet (engine/modules.ts places the hob glass there) */
   hobCenterZ: 33,
+  /** stropna kaseta (KitchenConfig.hood.island "kaseta"): the cassette's depth below the ceiling */
+  hoodCassette: 8,
+
+  // ---- visible wall hoods (KitchenConfig.hood.kind "dimnjak" / "kosa": plan.ts WallHoodPlan)
+  /** chimney hood: canopy underside above the worktop, its depth from the wall and height */
+  chimneyAbove: 65,
+  chimneyDepth: 50,
+  chimneyBody: 8,
+  /** angled glass hood: the glass's lower front edge above the worktop, how far it reaches out, how high it rises to the wall */
+  angledAbove: 55,
+  angledDepth: 40,
+  angledBody: 40,
+  /** the chimney cover of a wall hood (up to the ceiling) */
+  wallChimneyW: 27,
+  wallChimneyD: 25,
+  /** a hanging rail with hooks (KitchenConfig.rails): above the worktop surface, its longest length, the least it needs */
+  railAbove: 40,
+  railMax: 150,
+  railMin: 40,
 
   // ---- room vs kitchen (KitchenConfig.extents)
   /**
@@ -253,15 +301,80 @@ export const MAX_TALL = 6;
 export const WORKTOP_HEIGHTS = [85, 90, 95] as const;
 /** wall-unit heights for custom heights (cm) */
 export const UPPER_HEIGHTS = [60, 72, 80, 90, 105, 120] as const;
+/** depths of the "do stropa" second row of top cabinets (HeightSpec.topDepth, CabinetSpec.opt.depth), cm; 35 = the wall units' */
+export const TOP_DEPTHS = [30, 35, 45, 60] as const;
+export const TOP_DEPTH_DEFAULT = 35;
+/** floating shelves (catalog `rows`): boards per element, and what an absent ElementOpts.rows means */
+export const SHELF_ROWS = [1, 2, 3] as const;
+export const SHELF_ROWS_DEFAULT = 2;
 /** the standard heights, as every older link has them */
 export const STANDARD_HEIGHTS: Readonly<Required<Pick<HeightSpec, "mode" | "worktop">>> = { mode: "standard", worktop: 90 };
 
-/** plinth and base carcass (cm) for a worktop height: 85 = 5 + 76 + 4, 90 = 10 + 76 + 4, 95 = 15 + 76 + 4 */
-export function baseHeights(worktop: number): { plinth: number; carcass: number } {
+/**
+ * plinth and base carcass (cm) for a worktop height and thickness: 85 = 5 + 76 + 4, 90 = 10 + 76 + 4, 95 = 15 + 76 + 4;
+ * a thinner / thicker worktop (KitchenConfig.worktop) moves the plinth the other way (90 with 2 cm: 12 + 76 + 2). The
+ * plinth stays at least 5 cm: 85 cm with a 6 cm worktop is 5 + 76 + 6 = 87 (planHeights reports the real surface).
+ */
+export function baseHeights(worktop: number, thickness: number = DIM.worktopT): { plinth: number; carcass: number } {
   // the 76 cm carcass (and every front on it) stays; the adjustable legs / plinth take the difference
   // TODO(vlasnik): 85 cm s postoljem od 5 cm — ili korpus 72 cm + postolje 9 cm (treba podršku u engine/modules.ts)
   const carcass = DIM.worktopTop - DIM.plinth - DIM.worktopT;
-  return { plinth: Math.max(5, Math.round(worktop) - carcass - DIM.worktopT), carcass };
+  return { plinth: Math.max(5, Math.round((worktop - carcass - thickness) * 10) / 10), carcass };
+}
+
+// ---------------------------------------------------------------- what each element looks like (options)
+
+/** the worktop thickness of a config (cm): KitchenConfig.worktop, else 4 (every older link) */
+export function worktopThickness(cfg: Pick<KitchenConfig, "worktop">): number {
+  return cfg.worktop?.thickness ?? WORKTOP_THICKNESS;
+}
+
+/** the glass of a glass-door element: the kitchen default (KitchenConfig.glass), the element's own (opt.glass) over it */
+export function glassOf(cfg: Pick<KitchenConfig, "glass">, opt?: ElementOpts): Required<GlassSpec> {
+  const k = cfg.glass ?? {};
+  const e = opt?.glass ?? {};
+  return {
+    type: e.type ?? k.type ?? GLASS_DEFAULTS.type,
+    frame: e.frame ?? k.frame ?? GLASS_DEFAULTS.frame,
+    led: e.led ?? k.led ?? GLASS_DEFAULTS.led,
+    shelves: e.shelves ?? k.shelves ?? GLASS_DEFAULTS.shelves,
+  };
+}
+
+/** how an element's fronts open: its own style (opt.open) or the kitchen's (KitchenConfig.handles) */
+export function openingOf(cfg: Pick<KitchenConfig, "handles">, opt?: ElementOpts): HandleStyle {
+  return opt?.open ?? cfg.handles;
+}
+
+/** the hood of a hob: its own (opt.hood), else the kitchen's (KitchenConfig.hood.kind), else hidden in a wall unit */
+export function hoodKindOf(cfg: Pick<KitchenConfig, "hood">, opt?: ElementOpts): HoodKind {
+  return opt?.hood ?? cfg.hood?.kind ?? HOOD_DEFAULTS.kind;
+}
+
+/** a visible wall hood (the wall units above the hob make way for it) */
+export const visibleHood = (k: HoodKind): k is "dimnjak" | "kosa" => k === "dimnjak" || k === "kosa";
+
+/** the finish of a visible hood (KitchenConfig.hood.finish, else inox) */
+export function hoodFinishOf(cfg: Pick<KitchenConfig, "hood">): HoodFinish {
+  return cfg.hood?.finish ?? HOOD_DEFAULTS.finish;
+}
+
+/** the depth (cm) of the top box above a wall unit in a "do stropa" second row: its own (opt.depth), the kitchen's, 35 */
+export function topDepthOf(cfg: Pick<KitchenConfig, "heights">, opt?: ElementOpts): number {
+  return opt?.depth ?? cfg.heights?.topDepth ?? TOP_DEPTH_DEFAULT;
+}
+
+/** floating shelves: boards (opt.rows, else 2) and whether an LED strip runs under them (opt.led, else on) */
+export function shelvesOf(opt?: ElementOpts): { rows: number; led: boolean } {
+  return { rows: opt?.rows ?? SHELF_ROWS_DEFAULT, led: opt?.led !== false };
+}
+
+/** the backsplash of a config, resolved: its kind and (glass / tiles) its catalogue finish */
+export function backsplashOfCfg(cfg: Pick<KitchenConfig, "backsplash">): { kind: BacksplashSpec["kind"]; finish: string | null } {
+  const b = cfg.backsplash;
+  if (!b) return { kind: "ploca", finish: null };
+  if (b.kind === "staklo" || b.kind === "plocice") return { kind: b.kind, finish: b.finish ?? backsplashesOf(b.kind)[0]?.id ?? null };
+  return { kind: b.kind, finish: null };
 }
 /**
  * an explicit run's remainder at least this wide stays free space (no filler); a narrower one is closed with a filler at
@@ -429,8 +542,17 @@ export function listOf(cfg: KitchenConfig, id: ListId): CabinetSpec[] | undefine
   if (id.endsWith(":u")) return cfg.upperRuns?.[id[0] as WallId];
   return cfg.runs?.[id as BaseRunId];
 }
-/** a copy of an entry (only what a list stores: type, width and the tall mark) */
-export const copyEntry = (e: CabinetSpec): CabinetSpec => (e.tall ? { type: e.type, width: e.width, tall: true } : { type: e.type, width: e.width });
+/** a copy of an entry (only what a list stores: type, width, the tall mark and the element's own options) */
+export const copyEntry = (e: CabinetSpec): CabinetSpec => {
+  const out: CabinetSpec = e.tall ? { type: e.type, width: e.width, tall: true } : { type: e.type, width: e.width };
+  if (e.opt) out.opt = copyOpts(e.opt);
+  return out;
+};
+
+/** a deep copy of an entry's options */
+export function copyOpts(o: ElementOpts): ElementOpts {
+  return o.glass ? { ...o, glass: { ...o.glass } } : { ...o };
+}
 
 /** the filler strip of an edited base run (catalog "filer"): it holds its place, and gives way first when room is needed */
 export const isFillerEntry = (e: CabinetSpec | undefined): boolean => Boolean(e && !e.tall && moduleDef("base", e.type)?.filler);
@@ -478,7 +600,8 @@ function explicitWallBase(cfg: KitchenConfig, walls: WallId[]): boolean {
 // ---------------------------------------------------------------- sanitize
 
 const LAYOUTS: Layout[] = ["ravna", "L", "U", "otok", "poluotok", "G"];
-const HANDLES: HandleStyle[] = ["bez", "letvica", "gumb", "utor", "push"];
+const HANDLES: HandleStyle[] = ["bez", "letvica", "gumb", "utor", "push", "luft"];
+const HOOD_KINDS: HoodKind[] = ["ugradbena", "dimnjak", "kosa", "ploca"];
 const WALLS: WallId[] = ["a", "b", "c"];
 const BASE_RUNS: BaseRunId[] = ["a", "b", "c", "isl"];
 const CORNER_IDS: CornerId[] = ["base-l", "base-r", "upper-l", "upper-r"];
@@ -531,13 +654,100 @@ function cleanList(v: unknown, zone: ListZone): CabinetSpec[] | undefined {
     if (e.tall === true) {
       if (zone !== "base") continue;
       const c = cleanEntry("tall", e.type, e.width);
-      if (c) out.push({ ...c, tall: true });
+      if (c) {
+        const opt = cleanOpts(e.opt, "tall", c.type);
+        out.push(opt ? { ...c, tall: true, opt } : { ...c, tall: true });
+      }
       continue;
     }
     const c = cleanEntry(zone, e.type, e.width);
-    if (c) out.push(c);
+    if (c) {
+      const opt = cleanOpts(e.opt, zone, c.type);
+      out.push(opt ? { ...c, opt } : c);
+    }
   }
   return out;
+}
+
+/** a valid GlassSpec (only known values), or undefined when nothing is set */
+function cleanGlass(v: unknown): GlassSpec | undefined {
+  if (!isObj(v)) return undefined;
+  const out: GlassSpec = {};
+  if (typeof v.type === "string" && glassTypeDef(v.type)) out.type = v.type as GlassSpec["type"];
+  if (typeof v.frame === "string" && glassFrameDef(v.frame)) out.frame = v.frame as GlassSpec["frame"];
+  if (typeof v.led === "boolean") out.led = v.led;
+  if (typeof v.shelves === "boolean") out.shelves = v.shelves;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * The options an entry of `type` in a list zone may carry (ElementOpts), or undefined. Each option only where it applies:
+ * `open` on an element with fronts (something moves), `glass` on glass-door types, `depth` on wall units that carry a
+ * top box, `hood` on hobs of a wall run (and the island's: "ploca" = no ceiling hood above it), `rows` on floating
+ * shelves, `led: false` on lit open units. Values equal to the kitchen's are kept (the element keeps them when the
+ * kitchen's change); values equal to an option's own default are dropped (rows 2, led on).
+ */
+export function cleanOpts(v: unknown, zone: ListZone, type: string): ElementOpts | undefined {
+  if (!isObj(v)) return undefined;
+  const def = moduleDef(zone === "island" ? "base" : zone, type);
+  if (!def || def.spacer || def.filler) return undefined;
+  const out: ElementOpts = {};
+  if (typeof v.open === "string" && HANDLES.includes(v.open as HandleStyle) && def.demo !== false) out.open = v.open as HandleStyle;
+  if (def.glass) {
+    const g = cleanGlass(v.glass);
+    if (g) out.glass = g;
+  }
+  if (zone === "upper" && !def.noTopBox) {
+    const d = num(v.depth, NaN);
+    if (Number.isFinite(d)) out.depth = nearest(TOP_DEPTHS, d);
+  }
+  if (def.feature === "hob" && typeof v.hood === "string" && HOOD_KINDS.includes(v.hood as HoodKind)) out.hood = v.hood as HoodKind;
+  if (def.rows) {
+    const r = num(v.rows, NaN);
+    if (Number.isFinite(r)) {
+      const x = Math.round(clamp(r, SHELF_ROWS[0], SHELF_ROWS[SHELF_ROWS.length - 1]));
+      if (x !== SHELF_ROWS_DEFAULT) out.rows = x;
+    }
+  }
+  if (def.lit && v.led === false) out.led = false;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** a valid HoodSpec without its defaults, or undefined (every older link) */
+function cleanHood(v: unknown): HoodSpec | undefined {
+  if (!isObj(v)) return undefined;
+  const out: HoodSpec = {};
+  if (typeof v.kind === "string" && hoodKindDef(v.kind) && v.kind !== HOOD_DEFAULTS.kind) out.kind = v.kind as HoodKind;
+  // a finish is kept even when it is inox: set, the island canopy wears it instead of the appliance finish
+  if (typeof v.finish === "string" && hoodFinishDef(v.finish)) out.finish = v.finish as HoodFinish;
+  if (typeof v.island === "string" && islandHoodStyleDef(v.island) && v.island !== HOOD_DEFAULTS.island) out.island = v.island as IslandHoodStyle;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** a valid WorktopSpec without its default (4 cm), or undefined */
+function cleanWorktop(v: unknown): WorktopSpec | undefined {
+  if (!isObj(v)) return undefined;
+  const t = num(v.thickness, NaN);
+  if (!Number.isFinite(t)) return undefined;
+  const x = nearest(
+    catalog.worktopThickness.map((d) => d.value),
+    t,
+  );
+  return x === WORKTOP_THICKNESS || !worktopThicknessDef(x) ? undefined : { thickness: x };
+}
+
+/** a valid BacksplashSpec, or undefined (the worktop material up to the wall units — every older link) */
+function cleanBacksplash(v: unknown): BacksplashSpec | undefined {
+  if (!isObj(v)) return undefined;
+  const k = v.kind;
+  if (k === "pola" || k === "bez") return { kind: k };
+  if (k === "staklo" || k === "plocice") {
+    const f = typeof v.finish === "string" ? backsplashDef(v.finish) : undefined;
+    // the first finish of its kind is what an absent `finish` means: dropped
+    const first = backsplashesOf(k)[0]?.id;
+    return f && f.kind === k && f.id !== first ? { kind: k, finish: f.id } : { kind: k };
+  }
+  return undefined;
 }
 
 function cleanFinish(v: unknown): FinishSpec | undefined {
@@ -577,7 +787,13 @@ function cleanHeights(v: unknown): HeightSpec | undefined {
     const tt = num(v.tallTop, NaN);
     if (Number.isFinite(tt)) out.tallTop = Math.round(clamp(tt, DIM.tallTopMin, 350));
   }
-  if (mode === "standard" && out.worktop === undefined) return undefined;
+  // the second row's depth: kept in every mode (it only shows "do stropa" on a tall ceiling), the default dropped
+  const td = num(v.topDepth, NaN);
+  if (Number.isFinite(td)) {
+    const x = nearest(TOP_DEPTHS, td);
+    if (x !== TOP_DEPTH_DEFAULT) out.topDepth = x;
+  }
+  if (mode === "standard" && out.worktop === undefined && out.topDepth === undefined) return undefined;
   return out;
 }
 
@@ -832,6 +1048,18 @@ function sanitizeShallow(input: unknown): KitchenConfig {
   if (heights) cfg.heights = heights;
   const islandSpec = cleanIslandSpec(src.islandSpec);
   if (islandSpec) cfg.islandSpec = islandSpec;
+  const hood = cleanHood(src.hood);
+  if (hood) cfg.hood = hood;
+  const glass = cleanGlass(src.glass);
+  if (glass) cfg.glass = glass;
+  const worktop = cleanWorktop(src.worktop);
+  if (worktop) cfg.worktop = worktop;
+  const backsplash = cleanBacksplash(src.backsplash);
+  if (backsplash) cfg.backsplash = backsplash;
+  if (Array.isArray(src.rails)) {
+    const rails = WALLS.filter((w) => (src.rails as unknown[]).includes(w));
+    if (rails.length) cfg.rails = rails;
+  }
   return cfg;
 }
 
@@ -866,8 +1094,8 @@ export function geometryKey(cfg: KitchenConfig): string {
     // the tall column's width moves the base runs and the worktop
     cfg.tall ? (cfg.tallRun ? cfg.tallRun.map((t) => t.width) : 1) : 0,
     hasIsland(cfg.layout) ? cfg.island : 0,
-    // cabinet heights: every module, the worktop and the walls' framing change
-    cfg.heights ? [cfg.heights.mode, cfg.heights.worktop ?? 0, cfg.heights.upper ?? 0, cfg.heights.tallTop ?? 0] : 0,
+    // cabinet heights: every module, the worktop and the walls' framing change (the top row's depth: its boxes, the cornice)
+    cfg.heights ? [cfg.heights.mode, cfg.heights.worktop ?? 0, cfg.heights.upper ?? 0, cfg.heights.tallTop ?? 0, cfg.heights.topDepth ?? 0] : 0,
     // the island / peninsula options move its body, worktop, seats, bar and hood, and (hob / sink on it) the wall runs;
     // the hood also follows the island hob when an element edit moves it (the engine syncs that in relayout)
     ...(cfg.islandSpec && hasIsland(cfg.layout) ? [cfg.islandSpec] : []),
@@ -875,6 +1103,10 @@ export function geometryKey(cfg: KitchenConfig): string {
     ...(cfg.extents ? [["e", walls.map((w) => kitchenRange(cfg, w)).map((r) => [r.from, r.to])]] : []),
     ...(cfg.tallAt ? [["tp", cfg.tallAt]] : []),
     ...(cfg.tallRuns ? [["tr", RUN_ENDS.map((e) => cfg.tallRuns?.[e]?.map((t) => t.width) ?? 0)]] : []),
+    // hoods (the wall units make way for a visible one; the island's style) and the worktop's thickness (every base
+    // module stands higher / lower) — absent for every older link: the same key
+    ...(cfg.hood ? [["h", cfg.hood.kind ?? 0, cfg.hood.finish ?? 0, cfg.hood.island ?? 0]] : []),
+    ...(cfg.worktop ? [["w", worktopThickness(cfg)]] : []),
   ]);
 }
 
@@ -911,6 +1143,18 @@ export interface PlanSlot {
   list?: { id: ListId; index: number };
   /** the hood above the hob: it follows the hob, it cannot be moved on its own */
   anchored?: boolean;
+  /** the entry's own options (CabinetSpec.opt): glass, opening style, top-box depth, the hob's hood, shelf rows / LED */
+  opt?: ElementOpts;
+  /**
+   * an end unit (catalog `endUnit`) at a free end of its run: the side it ends the run on, and the cm of the run's end
+   * panel it takes the place of (the engine draws it that much further out; no panel piece is listed there)
+   */
+  end?: { side: "left" | "right"; pad: number };
+  /**
+   * everything beyond type, width and place that changes how the engine builds this element (resolved options, the end
+   * it stands at): equal looks = the same meshes. Absent = nothing beyond the catalogue type (every older link)
+   */
+  look?: string;
 }
 
 export interface PlanPiece {
@@ -934,6 +1178,36 @@ export interface BacksplashPiece extends Range {
 }
 
 /**
+ * A visible wall hood (KitchenConfig.hood.kind or the hob's opt.hood "dimnjak" / "kosa") centred above a hob of a wall
+ * run, run-local cm. The wall units leave its stretch free (end panels close them beside it, like beside a window).
+ */
+export interface WallHoodPlan {
+  kind: "dimnjak" | "kosa";
+  /** slot id of the hob below */
+  hob: string;
+  /** run-local stretch of the hood (= its width, centred on the hob) */
+  from: number;
+  to: number;
+  /** catalog hoodWidthFor(hob width): 60 / 90 / 120 */
+  width: number;
+  /** how far it reaches out from the wall (chimney: the canopy; angled: the glass's lower front edge) */
+  depth: number;
+  /** above the floor: the canopy / the glass's lower edge, and where the body meets the chimney cover */
+  bottom: number;
+  top: number;
+  /** the chimney cover runs from `top` up to here */
+  ceiling: number;
+  chimney: { width: number; depth: number };
+  finish: HoodFinish;
+}
+
+/** a hanging rail with hooks on the backsplash (KitchenConfig.rails), run-local cm */
+export interface RailPlan extends Range {
+  /** its centre above the floor */
+  y: number;
+}
+
+/**
  * The cabinet heights of a plan (cm above the floor) — what KitchenConfig.heights asks for, fitted under the ceiling.
  * The engine, the price and the summary read these, never the config.
  */
@@ -941,6 +1215,10 @@ export interface HeightPlan {
   mode: HeightSpec["mode"];
   /** worktop surface */
   worktop: number;
+  /** worktop thickness (KitchenConfig.worktop; 4 cm for every older link) */
+  worktopT: number;
+  /** depth of the "do stropa" top row's boxes (HeightSpec.topDepth; an element may have its own: topDepthOf) */
+  topDepth: number;
   plinth: number;
   /** base carcass (plinth + carcass + DIM.worktopT = worktop) */
   carcass: number;
@@ -1012,6 +1290,10 @@ export interface RunPlan {
   /** open (non-wall) ends of the wall, used to extend the wall plane visually */
   openLeft: boolean;
   openRight: boolean;
+  /** visible wall hoods above this run's hobs (KitchenConfig.hood); [] for hidden hoods / downdraft hobs (every older link) */
+  hoods: WallHoodPlan[];
+  /** the hanging rail with hooks on this wall (KitchenConfig.rails), or null */
+  rail: RailPlan | null;
 }
 
 export interface WindowPlan extends WindowSpec {
@@ -1076,6 +1358,10 @@ export interface IslandHoodPlan {
   above: number;
   /** the hood's underside below the ceiling (cm): how far it hangs down — edit.ts setIslandHood takes either */
   fromCeiling: number;
+  /** canopy with a chimney cover (every older link), or a cassette flush with the ceiling (no chimney) */
+  style: IslandHoodStyle;
+  /** KitchenConfig.hood.finish; null = the appliance finish (every older island hood) */
+  finish: HoodFinish | null;
 }
 
 /**
@@ -1220,7 +1506,7 @@ interface Span {
  * panels (the column's cover panels); a filler with `src` is a "filer" entry of the edited list.
  */
 type Item =
-  | { kind: "module"; width: number; type: string; feature?: Feature; src?: number; anchored?: boolean; tall?: boolean }
+  | { kind: "module"; width: number; type: string; feature?: Feature; src?: number; anchored?: boolean; tall?: boolean; opt?: ElementOpts }
   | { kind: "filler"; width: number; src?: number }
   | { kind: "panel"; width: number; tall?: boolean }
   | { kind: "gap"; width: number };
@@ -1307,14 +1593,26 @@ function wrapSpan(span: Span, modules: Item[]): Item[] {
   const out: Item[] = [];
   // order: [outer panel?] [rest at left] ... modules ... [rest at right] [outer panel?]
   // for a window edge the gap sits between the window and the panel.
+  // An end unit (catalog endUnit) right at a paneled end keeps the panel beside it (it takes the panel's place, PlanSlot.end):
+  // the filler goes in on its other side.
+  const mods = [...modules];
+  const inner = (s: "left" | "right") => (s === "left" ? panelL : panelR) && restItem && kind !== "window" && side === s && isEndItem(mods[s === "left" ? 0 : mods.length - 1]);
   if (side === "left" && restItem && kind === "window") out.push(restItem);
   if (panelL) out.push({ kind: "panel", width: DIM.panel });
-  if (side === "left" && restItem && kind !== "window") out.push(restItem);
-  out.push(...modules);
-  if (side === "right" && restItem && kind !== "window") out.push(restItem);
+  if (inner("left") && restItem) mods.splice(1, 0, restItem);
+  else if (side === "left" && restItem && kind !== "window") out.push(restItem);
+  if (inner("right") && restItem) mods.splice(mods.length - 1, 0, restItem);
+  out.push(...mods);
+  if (side === "right" && restItem && kind !== "window" && !inner("right")) out.push(restItem);
   if (panelR) out.push({ kind: "panel", width: DIM.panel });
   if (side === "right" && restItem && kind === "window") out.push(restItem);
   return out;
+}
+
+/** a module item of an end-unit type (catalog endUnit; never a tall unit standing in a base run) */
+function isEndItem(it: Item | undefined): boolean {
+  if (!it || it.kind !== "module" || it.tall) return false;
+  return Boolean(moduleDef("base", it.type)?.endUnit || moduleDef("upper", it.type)?.endUnit);
 }
 
 /**
@@ -1346,13 +1644,19 @@ function wrapExplicit(span: Span, modules: Item[]): Item[] {
 /**
  * Wall units of an edited list: an end panel closes the last real cabinet, not the empty space ("Bez gornjeg elementa")
  * beyond it — [panel][prazno][vrata] becomes [prazno][panel][vrata] — and a stretch of empty space alone has no end
- * panels at all (they would stand on the bare wall). Only where the panels stand changes, never a cabinet.
+ * panels at all (they would stand on the bare wall). A filler strip the planner put at the wall end beyond that empty
+ * space becomes bare wall too ([vrata][prazno][filer 6][panel] stood a 6 + 2 cm strip alone on the wall after the last
+ * wall unit was removed or narrowed). Only where the panels stand changes, never a cabinet.
  */
 function hugPanels(items: Item[]): Item[] {
   const spacer = (it: Item) => it.kind === "module" && isSpacer("upper", it.type);
   const real = (it: Item) => it.kind === "module" && !spacer(it);
+  // what may lie between the last cabinet and the end panel: empty space, and the planner's filler strip at the wall end
+  // (closing a remainder under FREE_MIN) — beyond empty space that strip would stand alone on the wall with its panel
+  const loose = (it: Item) => spacer(it) || it.kind === "filler" || it.kind === "gap";
+  const bare = (it: Item): Item => (it.kind === "filler" ? { kind: "gap", width: it.width } : it);
   if (!items.some(spacer)) return items;
-  if (!items.some(real)) return items.map((it): Item => (it.kind === "panel" ? { kind: "gap", width: it.width } : it));
+  if (!items.some(real)) return items.map((it): Item => (it.kind === "panel" ? { kind: "gap", width: it.width } : bare(it)));
   const out = [...items];
   const fi = out.findIndex(real);
   let li = -1;
@@ -1360,12 +1664,18 @@ function hugPanels(items: Item[]): Item[] {
     if (real(it)) li = i;
   });
   const rp = out.findIndex((it, i) => i > li && it.kind === "panel");
-  if (rp > li + 1 && out.slice(li + 1, rp).every(spacer)) out.splice(li + 1, 0, ...out.splice(rp, 1));
+  if (rp > li + 1 && out.slice(li + 1, rp).every(loose) && out.slice(li + 1, rp).some(spacer)) {
+    const between = out.slice(li + 1, rp).map(bare);
+    out.splice(li + 1, rp - li, out[rp], ...between);
+  }
   let lp = -1;
   out.forEach((it, i) => {
     if (i < fi && it.kind === "panel") lp = i;
   });
-  if (lp >= 0 && lp < fi - 1 && out.slice(lp + 1, fi).every(spacer)) out.splice(fi - 1, 0, ...out.splice(lp, 1));
+  if (lp >= 0 && lp < fi - 1 && out.slice(lp + 1, fi).every(loose) && out.slice(lp + 1, fi).some(spacer)) {
+    const between = out.slice(lp + 1, fi).map(bare);
+    out.splice(lp, fi - lp, ...between, out[lp]);
+  }
   return out;
 }
 
@@ -1607,7 +1917,7 @@ function listItems(list: CabinetSpec[], zone: ListZone): ModItem[] {
   return list.map((e, i) => {
     const def = moduleDef(zone === "island" ? "base" : zone, e.type);
     const f = def?.feature ? FEATURE_OF[def.feature] : undefined;
-    return { kind: "module", width: e.width, type: e.type, src: i, ...(f ? { feature: f } : {}) };
+    return { kind: "module", width: e.width, type: e.type, src: i, ...(f ? { feature: f } : {}), ...(e.opt ? { opt: e.opt } : {}) };
   });
 }
 
@@ -1642,11 +1952,12 @@ function trimToFit(items: ModItem[], capacity: number, zone: ListZone): { kept: 
 /** a wall's base list as planner items: its cabinets, its tall units (`tall`) and its filler strips ("filer") */
 function baseListItems(list: CabinetSpec[]): (ModItem | FillerItem)[] {
   return list.map((e, i): ModItem | FillerItem => {
-    if (e.tall) return { kind: "module", width: e.width, type: e.type, src: i, tall: true };
+    const opt = e.opt ? { opt: e.opt } : {};
+    if (e.tall) return { kind: "module", width: e.width, type: e.type, src: i, tall: true, ...opt };
     const def = moduleDef("base", e.type);
     if (def?.filler) return { kind: "filler", width: e.width, src: i };
     const f = def?.feature ? FEATURE_OF[def.feature] : undefined;
-    return { kind: "module", width: e.width, type: e.type, src: i, ...(f ? { feature: f } : {}) };
+    return { kind: "module", width: e.width, type: e.type, src: i, ...(f ? { feature: f } : {}), ...opt };
   });
 }
 
@@ -1866,6 +2177,8 @@ interface IslandCabinet {
   /** position in the stored list (edited island) or in the planner's own fill */
   index: number;
   feature?: Feature;
+  /** the entry's own options (an edited island) */
+  opt?: ElementOpts;
 }
 
 /** the island / peninsula as planned once per config — it does not depend on where the tall column stands */
@@ -2096,7 +2409,7 @@ function planIsland(cfg: KitchenConfig, heights: HeightPlan, K: Record<WallId, R
       x += rest / 2;
     }
     kept.forEach((it, i) => {
-      cabinets.push({ x, width: it.width, type: it.type, index: it.src ?? i, ...(it.feature ? { feature: it.feature } : {}) });
+      cabinets.push({ x, width: it.width, type: it.type, index: it.src ?? i, ...(it.feature ? { feature: it.feature } : {}), ...(it.opt ? { opt: it.opt } : {}) });
       x += it.width;
     });
     if (!free && rest >= 0.5) fillers.push({ from: x, to: x + rest / 2 });
@@ -2198,6 +2511,29 @@ function islandHood(cfg: KitchenConfig, heights: HeightPlan, slots: PlanSlot[]):
   if (spec?.hood === false) return null;
   const hob = slots.find((s) => s.zone === "island" && moduleDef("base", s.type)?.feature === "hob");
   if (!hob) return null;
+  // a downdraft hob (KitchenConfig.hood.kind "ploca", or this hob's own opt.hood) needs no hood above it
+  if (hoodKindOf(cfg, hob.opt) === "ploca") return null;
+  const style: IslandHoodStyle = cfg.hood?.island ?? HOOD_DEFAULTS.island;
+  const finish = cfg.hood?.finish ?? null;
+  const width = hob.width > 90 ? 120 : 90;
+  if (style === "kaseta") {
+    // a cassette flush with the ceiling: nothing hangs above the island
+    const bottom = cfg.ceiling - DIM.hoodCassette;
+    return {
+      x: hob.x + hob.width / 2,
+      z: DIM.hobCenterZ,
+      width,
+      depth: DIM.hoodDepth,
+      bottom,
+      top: cfg.ceiling,
+      ceiling: cfg.ceiling,
+      chimney: { width: 0, depth: 0 },
+      above: bottom - heights.worktop,
+      fromCeiling: DIM.hoodCassette,
+      style,
+      finish,
+    };
+  }
   const want = spec?.hoodAbove ?? ISLAND_DEFAULTS.hoodAbove;
   let bottom = heights.worktop + want;
   const maxTop = cfg.ceiling - DIM.hoodCeilingMin;
@@ -2205,7 +2541,7 @@ function islandHood(cfg: KitchenConfig, heights: HeightPlan, slots: PlanSlot[]):
   return {
     x: hob.x + hob.width / 2,
     z: DIM.hobCenterZ,
-    width: hob.width > 90 ? 120 : 90,
+    width,
     depth: DIM.hoodDepth,
     bottom,
     top: bottom + DIM.hoodBody,
@@ -2213,6 +2549,8 @@ function islandHood(cfg: KitchenConfig, heights: HeightPlan, slots: PlanSlot[]):
     chimney: { width: DIM.hoodChimneyW, depth: DIM.hoodChimneyD },
     above: bottom - heights.worktop,
     fromCeiling: cfg.ceiling - bottom,
+    style,
+    finish,
   };
 }
 
@@ -2450,8 +2788,10 @@ const nearestBelow = (list: readonly number[], max: number): number | undefined 
 export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: string[] } {
   const spec = cfg.heights;
   const mode = spec?.mode ?? "standard";
-  const worktop = spec?.worktop ?? STANDARD_HEIGHTS.worktop;
-  const { plinth, carcass } = baseHeights(worktop);
+  const T = worktopThickness(cfg);
+  const { plinth, carcass } = baseHeights(spec?.worktop ?? STANDARD_HEIGHTS.worktop, T);
+  // the real surface: the plinth stays at least 5 cm (an 85 cm worktop 6 cm thick is 87 cm)
+  const worktop = Math.round((plinth + carcass + T) * 10) / 10;
   const C = cfg.ceiling;
   const notes: string[] = [];
   const maxTop = C - DIM.ceilingGap;
@@ -2515,6 +2855,8 @@ export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: s
   const heights: HeightPlan = {
     mode,
     worktop,
+    worktopT: T,
+    topDepth: spec?.topDepth ?? TOP_DEPTH_DEFAULT,
     plinth,
     carcass,
     upperBottom: ub,
@@ -2529,10 +2871,13 @@ export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: s
   return { heights, notes };
 }
 
-/** a wall unit that carries a top box in the second row ("do stropa"): every cabinet, not empty space or an open shelf */
+/**
+ * a wall unit that carries a top box in the second row ("do stropa"): every cabinet, not empty space, an open shelf or
+ * an end panel (catalog `noTopBox`: the wall shelf, floating shelves, rounded / angled shelves, side panels)
+ */
 export function hasTopBox(type: string): boolean {
   const def = moduleDef("upper", type);
-  return Boolean(def && !def.spacer && type !== "polica");
+  return Boolean(def && !def.spacer && !def.noTopBox);
 }
 
 /**
@@ -2932,6 +3277,8 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
   const baseCut = new Map<WallId, CabinetSpec[]>();
   /** an edited base list: cm its entries take (BaseFillResult.used) */
   const baseUsed = new Map<WallId, number>();
+  /** visible wall hoods per run (the hob they hang above by its x until the slots exist) */
+  const wallHoodsOf = new Map<WallId, (Omit<WallHoodPlan, "hob"> & { hobX: number })[]>();
   sk.forEach((s, si) => {
     const res = fills[si];
     const baseList = cfg.runs?.[s.wall];
@@ -3009,19 +3356,66 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     const wr = winRange(s.wall);
     if (wr) blocks.push({ range: wr, kind: "window" });
     for (const t of runTalls) blocks.push({ range: t, kind: "tall" });
-    // the hobs of this run (the planner's own wall units put the hood above the first one)
-    const hobs: Range[] = [];
+    // the hobs of this run and the hood each wants (KitchenConfig.hood / the hob's opt.hood): hidden in a wall unit (the
+    // planner's own wall units put it above the first such hob), a visible wall hood, or none (a downdraft hob)
+    const allHobs: (Range & { kind: HoodKind })[] = [];
     {
       let hx = s.baseSpan.from;
       for (const it of res.items) {
-        if (it.kind === "module" && it.feature === "ploca") hobs.push({ from: hx, to: hx + it.width });
+        if (it.kind === "module" && it.feature === "ploca") allHobs.push({ from: hx, to: hx + it.width, kind: hoodKindOf(cfg, it.opt) });
         hx += it.width;
       }
     }
+    const hobs: Range[] = allHobs.filter((h) => h.kind === "ugradbena");
     const hob: Range | null = hobs[0] ?? null;
     const upperList = cfg.upperRuns?.[s.wall];
+    // visible wall hoods: centred above their hob, as wide as the hob asks (60 / 90 / 120); the wall units make way for
+    // them like for a window (end panels beside, bare wall around)
+    const wallHoods: (Omit<WallHoodPlan, "hob"> & { hobX: number })[] = [];
     const hoodFits = (r: Range) =>
-      r.from >= s.upperSpan.from - 0.01 && r.to <= s.upperSpan.to + 0.01 && !overlaps(r, wr) && !runTalls.some((t) => overlaps(r, t));
+      r.from >= s.upperSpan.from - 0.01 &&
+      r.to <= s.upperSpan.to + 0.01 &&
+      !overlaps(r, wr) &&
+      !runTalls.some((t) => overlaps(r, t)) &&
+      !wallHoods.some((h) => overlaps(r, h));
+    for (const h of allHobs) {
+      if (!visibleHood(h.kind)) continue;
+      const hw = h.to - h.from;
+      const w = hoodWidthFor(hw);
+      const c = (h.from + h.to) / 2;
+      // centred above the hob; at the end of the wall-unit row it may shift in as far as it still covers the whole hob
+      const slack = Math.max(0, (w - hw) / 2);
+      let from = c - w / 2;
+      if (from < s.upperSpan.from && s.upperSpan.from - from <= slack + 0.01) from = s.upperSpan.from;
+      if (from + w > s.upperSpan.to && from + w - s.upperSpan.to <= slack + 0.01) from = s.upperSpan.to - w;
+      const r = { from, to: from + w };
+      if (!hoodFits(r)) {
+        warnings.push(`${runLabel(s.wall)}: zidna napa ne stane iznad ploče za kuhanje (prozor, kut ili visoki element) — izostavljena je.`);
+        continue;
+      }
+      const H = ctx.heights;
+      const chimney = h.kind === "dimnjak";
+      const body = chimney ? DIM.chimneyBody : DIM.angledBody;
+      // under the ceiling: the chimney cover needs DIM.hoodCeilingMin above the body
+      let bottom = H.worktop + (chimney ? DIM.chimneyAbove : DIM.angledAbove);
+      const maxTop = cfg.ceiling - DIM.hoodCeilingMin;
+      if (bottom + body > maxTop) bottom = maxTop - body;
+      wallHoods.push({
+        kind: h.kind,
+        hobX: h.from,
+        from: r.from,
+        to: r.to,
+        width: w,
+        depth: chimney ? DIM.chimneyDepth : DIM.angledDepth,
+        bottom,
+        top: bottom + body,
+        ceiling: cfg.ceiling,
+        chimney: { width: DIM.wallChimneyW, depth: DIM.wallChimneyD },
+        finish: hoodFinishOf(cfg),
+      });
+      blocks.push({ range: r, kind: "window" });
+    }
+    wallHoodsOf.set(s.wall, wallHoods);
     const upperItems: RunBuild["upperItems"] = [];
     if (s.cornerUpperLeft) upperItems.push({ x: s.kitchen.from, item: { kind: "corner", width: s.cornerUpperLeft, side: "left" } });
     const segs: { from: number; items: Item[] }[] = [];
@@ -3050,7 +3444,10 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
       // an edited list: a hood in it stays centred above the hob, everything else flows around it. With more
       // than one hood, the one that leaves the rest in place best is anchored (fewest left out, then the
       // closest fit of the cabinets before it into the stretches left of the hob).
-      const items = listItems(upperList, "upper");
+      // a visible wall hood / a downdraft hob takes the hidden hood's place: the list's hood elements are left out when no
+      // hob of this run wants one (no note — nothing the customer chose is lost; edit.ts setHood takes them out for good)
+      const noHidden = allHobs.length > 0 && !hobs.length;
+      const items = listItems(upperList, "upper").filter((it) => !(noHidden && moduleDef("upper", it.type)?.hood));
       const hoods = items.map((it, i) => (moduleDef("upper", it.type)?.hood ? i : -1)).filter((i) => i >= 0);
       let flow = flowUpper(split(null).subsL, [], items, null);
       // not anchoring at all competes too: a hood is anchored unless that leaves more cabinets out
@@ -3136,7 +3533,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
       runTalls,
       span: s.baseSpan,
       worktops,
-      backsplash: splash.flatMap((p) => backsplashOf(s.wall, p, upperBottom, win, ctx.heights.worktop)),
+      backsplash: splash.flatMap((p) => backsplashOf(s.wall, p, upperBottom, win, ctx.heights.worktop, backsplashOfCfg(cfg).kind)),
       counters,
       openLeft: s.openLeft,
       openRight: s.openRight,
@@ -3180,7 +3577,9 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     let ti = 0;
     const baseExplicit = Boolean(cfg.runs?.[b.wall]);
     let autoIdx = 0;
-    for (const { x, item } of b.baseItems) {
+    // end units at a free end take the end panel's place (PlanSlot.end)
+    const baseEnds = endMarks(b.baseItems, "base");
+    for (const [bix, { x, item }] of b.baseItems.entries()) {
       if (item.kind === "corner") {
         const id = `${b.wall}-base-${bi++}`;
         const cid: CornerId = item.side === "left" ? "base-l" : "base-r";
@@ -3193,6 +3592,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
         sl.list = { id: b.wall, index: item.src ?? autoIdx };
         autoIdx++;
         sl.defaultType = sl.type;
+        if (item.opt) sl.opt = item.opt;
         slots.push(sl);
       } else if (item.kind === "module") {
         const id = `${b.wall}-base-${bi++}`;
@@ -3200,6 +3600,9 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
         sl.list = { id: b.wall, index: baseExplicit ? (item.src ?? autoIdx) : autoIdx };
         autoIdx++;
         if (baseExplicit) sl.defaultType = sl.type;
+        if (item.opt) sl.opt = item.opt;
+        const end = baseEnds.ends.get(bix);
+        if (end) sl.end = end;
         slots.push(sl);
         if (item.feature === "sudoper" && !sinkId) sinkId = id;
         if (item.feature === "ploca" && !hobId) hobId = id;
@@ -3217,7 +3620,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
           listFillers.push({ list: b.wall, index: baseExplicit ? (item.src ?? autoIdx) : autoIdx, width: Math.round(item.width * 10) / 10 });
           if (!baseExplicit) autoIdx++;
         }
-      } else if (item.kind === "panel" && item.width >= 0.01) {
+      } else if (item.kind === "panel" && item.width >= 0.01 && !baseEnds.absorbed.has(bix)) {
         // (a column's zero-width panel: it shares the cover panel of the column it stands against — withTallPanels)
         pieces.push({ kind: "panel", zone: item.tall ? "tall" : "base", run: b.wall, x, width: item.width });
       }
@@ -3225,7 +3628,8 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     let ui = 0;
     const upperExplicit = Boolean(cfg.upperRuns?.[b.wall]);
     let upIdx = 0;
-    for (const { x, item } of b.upperItems) {
+    const upperEnds = endMarks(b.upperItems, "upper");
+    for (const [uix, { x, item }] of b.upperItems.entries()) {
       if (item.kind === "corner") {
         const cid: CornerId = item.side === "left" ? "upper-l" : "upper-r";
         const sl = mkSlot(`${b.wall}-upper-${ui++}`, "upper", b.wall, x, item.width, "vrata", true, item.side);
@@ -3237,8 +3641,11 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
         upIdx++;
         if (item.anchored) sl.anchored = true;
         if (upperExplicit) sl.defaultType = sl.type;
+        if (item.opt) sl.opt = item.opt;
+        const end = upperEnds.ends.get(uix);
+        if (end) sl.end = end;
         slots.push(sl);
-      } else if (item.kind === "filler" || item.kind === "panel") {
+      } else if ((item.kind === "filler" || item.kind === "panel") && !upperEnds.absorbed.has(uix)) {
         pieces.push({ kind: item.kind, zone: "upper", run: b.wall, x, width: item.width });
       }
     }
@@ -3259,16 +3666,22 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
             ]);
       // slot ids: "tall-0" … for the main column (every older link), "tall-bl-0" … for a tallRuns column at "b-left"
       const prefix = place.list === "tall" ? "tall-" : `tall-${place.wall}${place.side[0]}-`;
-      pieces.push({ kind: "panel", zone: "tall", run: b.wall, x: t0, width: DIM.panel });
+      // an end unit (a thick side panel) on the column's outer side takes its cover panel's place there
+      const outerEnd = (i: number) => (right ? i === units.length - 1 : i === 0) && Boolean(moduleDef("tall", units[i].type)?.endUnit);
+      const outerIdx = right ? units.length - 1 : 0;
+      const ownEnd = units.length > 0 && outerEnd(outerIdx);
+      if (!(ownEnd && !right)) pieces.push({ kind: "panel", zone: "tall", run: b.wall, x: t0, width: DIM.panel });
       let tx = t0 + DIM.panel;
       units.forEach((u, i) => {
         const sl = mkSlot(`${prefix}${i}`, "tall", b.wall, tx, u.width, u.type, false);
         sl.list = { id: place.list, index: i };
         if (place.list !== "tall" || cfg.tallRun) sl.defaultType = sl.type;
+        if (u.opt) sl.opt = u.opt;
+        if (ownEnd && i === outerIdx) sl.end = { side: place.side, pad: DIM.panel };
         slots.push(sl);
         tx += u.width;
       });
-      pieces.push({ kind: "panel", zone: "tall", run: b.wall, x: tx, width: DIM.panel });
+      if (!(ownEnd && right)) pieces.push({ kind: "panel", zone: "tall", run: b.wall, x: tx, width: DIM.panel });
       lists.push({
         id: place.list,
         zone: "tall",
@@ -3311,6 +3724,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
       const sl = mkSlot(`isl-${i}`, "island", "isl", c.x, c.width, c.type, false);
       sl.list = { id: "isl", index: c.index };
       if (I.list.explicit) sl.defaultType = sl.type;
+      if (c.opt) sl.opt = c.opt;
       slots.push(sl);
       if (c.feature === "sudoper" && !sinkId) sinkId = sl.id;
       if (c.feature === "ploca" && !hobId) hobId = sl.id;
@@ -3318,6 +3732,12 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     for (const f of I.fillers.slice(1)) pieces.push({ kind: "filler", zone: "base", run: "isl", x: f.from, width: f.to - f.from });
     lists.push({ ...I.list, entries: [], dropped: [...I.list.dropped] });
     island = { ...I.plan, hood: islandHood(cfg, ctx.heights, slots) };
+  }
+
+  // ---- what each element looks like beyond its type (resolved options, the end it stands at): PlanSlot.look
+  for (const s of slots) {
+    const look = lookOf(cfg, s);
+    if (look) s.look = look;
   }
 
   // ---- list entries (what stands there, in list order)
@@ -3339,7 +3759,9 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     const inRun = l.zone === "base";
     l.entries = all.map((e): CabinetSpec => {
       if (!("s" in e)) return { type: "filer", width: e.w };
-      return inRun && e.s.zone === "tall" ? { type: e.s.type, width: e.s.width, tall: true } : { type: e.s.type, width: e.s.width };
+      const out: CabinetSpec = inRun && e.s.zone === "tall" ? { type: e.s.type, width: e.s.width, tall: true } : { type: e.s.type, width: e.s.width };
+      if (e.s.opt) out.opt = copyOpts(e.s.opt);
+      return out;
     });
     l.used = (inRun ? baseUsed.get(l.id as WallId) : undefined) ?? all.reduce((sum, e) => sum + ("s" in e ? e.s.width : 0), 0);
   }
@@ -3396,6 +3818,11 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
       runTalls: b.runTalls,
       openLeft: b.openLeft,
       openRight: b.openRight,
+      hoods: (wallHoodsOf.get(b.wall) ?? []).map(({ hobX, ...h }) => ({
+        ...h,
+        hob: slots.find((sl) => sl.run === b.wall && sl.zone === "base" && Math.abs(sl.x - hobX) < 0.05)?.id ?? "",
+      })),
+      rail: cfg.rails?.includes(b.wall) ? railOf(b.worktops, wr, ctx.heights) : null,
     };
   });
 
@@ -3458,6 +3885,83 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
   };
 }
 
+/**
+ * The hanging rail with hooks on a wall (KitchenConfig.rails): on the longest stretch of worktop clear of the window,
+ * centred, DIM.railMax at most and 10 cm short of each end, DIM.railAbove above the worktop (under the wall units). Null
+ * when no stretch takes DIM.railMin.
+ */
+function railOf(worktops: Range[], win: Range | null, H: HeightPlan): RailPlan | null {
+  const free = worktops.flatMap((w) => (win ? minus(w, [win]) : [w]));
+  const best = free.sort((p, q) => q.to - q.from - (p.to - p.from))[0];
+  if (!best) return null;
+  const len = Math.min(DIM.railMax, best.to - best.from - 20);
+  if (len < DIM.railMin) return null;
+  const c = (best.from + best.to) / 2;
+  const y = Math.min(H.worktop + DIM.railAbove, (H.worktop + H.upperBottom) / 2 + 8);
+  return { from: c - len / 2, to: c + len / 2, y };
+}
+
+/**
+ * End units (catalog `endUnit`: rounded / angled shelves, thick side panels) at a free end of a row: the 2 cm end panel
+ * right beside one — beyond it only bare floor, bare wall or empty space — is taken over by it (PlanSlot.end: the engine
+ * draws the unit that much further out; no panel piece). Indices into `items`.
+ */
+function endMarks(
+  items: { x: number; item: Item | CornerItem }[],
+  zone: "base" | "upper",
+): { absorbed: Set<number>; ends: Map<number, { side: "left" | "right"; pad: number }> } {
+  const absorbed = new Set<number>();
+  const ends = new Map<number, { side: "left" | "right"; pad: number }>();
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.05;
+  const open = (k: number) => {
+    const o = items[k]?.item;
+    return !o || o.kind === "gap" || (o.kind === "module" && !o.tall && Boolean(moduleDef(zone, o.type)?.spacer));
+  };
+  /** nothing but bare floor / wall / empty space (or a stretch that does not touch) beyond the panel at index j */
+  const freeBeyond = (j: number, d: -1 | 1, all: boolean) => {
+    const p = items[j];
+    const edge = d < 0 ? p.x : p.x + p.item.width;
+    for (let k = j + d; k >= 0 && k < items.length; k += d) {
+      const o = items[k];
+      const touching = d < 0 ? near(o.x + o.item.width, edge) : near(o.x, edge);
+      if (!all) return open(k) || !touching;
+      if (!open(k)) return false;
+    }
+    return true;
+  };
+  items.forEach(({ x, item }, i) => {
+    if (item.kind !== "module" || item.tall || !moduleDef(zone, item.type)?.endUnit) return;
+    // the outermost side first (nothing at all beyond its panel), then a side with only bare wall right beyond it
+    for (const all of [true, false]) {
+      if (ends.has(i)) break;
+      for (const side of ["left", "right"] as const) {
+        const d = side === "left" ? -1 : 1;
+        const j = i + d;
+        const p = items[j];
+        if (!p || p.item.kind !== "panel" || p.item.tall || p.item.width < 0.01 || absorbed.has(j)) continue;
+        if (!(side === "left" ? near(p.x + p.item.width, x) : near(p.x, x + item.width))) continue;
+        if (!freeBeyond(j, d, all)) continue;
+        absorbed.add(j);
+        ends.set(i, { side, pad: p.item.width });
+        break;
+      }
+    }
+  });
+  return { absorbed, ends };
+}
+
+/** PlanSlot.look: what beyond its type changes how the engine builds this element (undefined: nothing) */
+function lookOf(cfg: KitchenConfig, s: PlanSlot): string | undefined {
+  const def = moduleDef(s.zone === "island" ? "base" : s.zone, s.type);
+  const parts: unknown[] = [];
+  if (s.opt) parts.push(["o", s.opt]);
+  if (def?.glass && (cfg.glass || s.opt?.glass)) parts.push(["g", glassOf(cfg, s.opt)]);
+  if (def?.feature === "hob" && (cfg.hood || s.opt?.hood)) parts.push(["h", hoodKindOf(cfg, s.opt)]);
+  if (s.zone === "upper" && (cfg.heights?.topDepth !== undefined || s.opt?.depth !== undefined)) parts.push(["d", topDepthOf(cfg, s.opt)]);
+  if (s.end) parts.push(["e", s.end.side, s.end.pad]);
+  return parts.length ? JSON.stringify(parts) : undefined;
+}
+
 function setCorner(sl: PlanSlot, cid: CornerId, type: string): void {
   sl.cornerId = cid;
   sl.defaultType = sl.type;
@@ -3469,18 +3973,28 @@ function setCorner(sl: PlanSlot, cid: CornerId, type: string): void {
  * (under a window that sits above the worktop it only reaches the sill). B and C reach into the corner,
  * up to the face of wall A's backsplash. The engine draws exactly these pieces and price.ts prices them.
  */
-function backsplashOf(wall: WallId, range: Range, upperBottom: number, win: WindowPlan | null, surface: number): BacksplashPiece[] {
+function backsplashOf(
+  wall: WallId,
+  range: Range,
+  upperBottom: number,
+  win: WindowPlan | null,
+  surface: number,
+  kind: BacksplashSpec["kind"] = "ploca",
+): BacksplashPiece[] {
+  // KitchenConfig.backsplash: none at all, or (worktop material) only up to half the height to the wall units
+  if (kind === "bez") return [];
+  const top = kind === "pola" ? Math.round((surface + (upperBottom - surface) / 2) * 10) / 10 : upperBottom;
   const { from, to } = range;
   const out: BacksplashPiece[] = [];
-  if (win && win.wall === wall && win.sill < upperBottom) {
+  if (win && win.wall === wall && win.sill < top) {
     const wo = win.offset;
     const we = win.offset + win.width;
-    if (wo > from) out.push({ from, to: Math.min(wo, to), top: upperBottom });
-    if (we < to) out.push({ from: Math.max(we, from), to, top: upperBottom });
+    if (wo > from) out.push({ from, to: Math.min(wo, to), top });
+    if (we < to) out.push({ from: Math.max(we, from), to, top });
     const sillTop = win.sill - (win.ledge ? DIM.sillLedgeDrop : 0);
-    if (sillTop > surface + 2) out.push({ from: Math.max(wo, from), to: Math.min(we, to), top: Math.min(sillTop, upperBottom) });
+    if (sillTop > surface + 2) out.push({ from: Math.max(wo, from), to: Math.min(we, to), top: Math.min(sillTop, top) });
   } else {
-    out.push({ from, to, top: upperBottom });
+    out.push({ from, to, top });
   }
   return out.filter((p) => p.to - p.from > 0.5 && p.top > surface + 0.5);
 }
@@ -3642,7 +4156,7 @@ export function planGaps(plan: KitchenPlan): PlanGap[] {
   if (hit) return hit;
   const out: PlanGap[] = [];
   const H = plan.heights;
-  const baseY = (H.plinth + H.worktop - DIM.worktopT) / 2;
+  const baseY = (H.plinth + H.worktop - (H.worktopT ?? DIM.worktopT)) / 2;
   const upY = (H.upperBottom + H.upperTop) / 2;
   /** wall gaps stand on the wall's face (run-local z, cm) */
   const ON_WALL = 1;
@@ -3654,11 +4168,13 @@ export function planGaps(plan: KitchenPlan): PlanGap[] {
   const listOfId = (id: ListId) => plan.lists.find((l) => l.id === id);
   const room = (l: PlanList | undefined) => (l ? Math.max(0, l.capacity - l.used) : 0);
   const islandLabel = plan.island?.kind === "poluotok" ? GAP_LABEL.peninsula : GAP_LABEL.island;
-  // a hob whose centre lies under a stretch of wall with no hood above it: a hood element may go there
+  // a hob whose centre lies under a stretch of wall with no hood above it: a hood element may go there (not above a hob
+  // with a visible wall hood or a downdraft extractor: KitchenConfig.hood / its opt.hood)
   const hobFree = (run: RunId, from: number, to: number) =>
     run !== "isl" &&
     plan.slots.some((h) => {
       if (h.run !== run || h.zone !== "base" || moduleDef("base", h.type)?.feature !== "hob") return false;
+      if (hoodKindOf(plan.cfg, h.opt) !== "ugradbena") return false;
       const c = h.x + h.width / 2;
       if (c < from - 0.5 || c > to + 0.5) return false;
       return !plan.slots.some((u) => u.run === run && u.zone === "upper" && moduleDef("upper", u.type)?.hood && u.x <= c && u.x + u.width >= c);
@@ -3734,6 +4250,11 @@ export function planGaps(plan: KitchenPlan): PlanGap[] {
     const row: Range[] = [
       ...plan.slots.filter((s) => s.run === r.wall && s.zone === "upper").map((s) => ({ from: s.x, to: s.x + s.width })),
       ...plan.pieces.filter((p) => p.run === r.wall && p.zone === "upper").map((p) => ({ from: p.x, to: p.x + p.width })),
+      // a visible wall hood stands in the row like a wall unit (and an end unit's own end, PlanSlot.end, beyond it)
+      ...(r.hoods ?? []).map((h) => ({ from: h.from, to: h.to })),
+      ...plan.slots
+        .filter((s) => s.run === r.wall && s.zone === "upper" && s.end)
+        .map((s) => (s.end!.side === "left" ? { from: s.x - s.end!.pad, to: s.x } : { from: s.x + s.width, to: s.x + s.width + s.end!.pad })),
     ];
     const wr: Range | null = W && W.wall === r.wall ? { from: W.offset - DIM.windowMargin, to: W.offset + W.width + DIM.windowMargin } : null;
     /** bare wall the end gaps took (not listed again as bare wall inside the row) */

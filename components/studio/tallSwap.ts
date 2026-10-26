@@ -5,7 +5,8 @@
  * lib/studio/edit.ts changeType(…, "tall") puts a tall unit in the place of a base cabinet or a wall unit of a wall run:
  * the base cabinet below and the wall units above that hang where it now stands go with it (the owner: "da se maknu
  * odmah i gornji i donji element"). The studio asks first — one short line, one click — only when something besides the
- * chosen element goes ("Ukloniti donji i gornji element i staviti visoki?"); the toast after it offers "Poništi".
+ * chosen element goes ("Ukloniti donji i gornji element i staviti visoki?"), and lists the cabinets that stay but get
+ * narrower to make room ("Uži će biti: ladičar 60 → 45 cm."); the toast after it offers "Poništi".
  *
  * A tall unit standing in a base run can become a base cabinet again: `baseChoices` lists the base types with the width
  * each would get there (edit.ts SlotEditInfo.types of such a unit are the tall types only).
@@ -15,6 +16,7 @@ import { changeType, type EditResult, type TypeChoice } from "@/lib/studio/edit"
 import { planKitchen, type KitchenPlan, type PlanSlot } from "@/lib/studio/plan";
 import type { KitchenConfig, WallId } from "@/lib/studio/types";
 import { isInRunTall } from "./meta";
+import { listRow, narrowedBetween, narrowedText, type Narrowed } from "./optionsModel";
 
 export interface TallSwap {
   /** changeType(cfg, slot, type, "tall") */
@@ -26,7 +28,12 @@ export interface TallSwap {
   ask: string | null;
   /** sink / hob / dishwasher that go with it, by name ("element za sudoper") */
   essentials: string[];
+  /** base cabinets that stay but get narrower to make room for it (the question lists them: "Uži će biti: …") */
+  narrowed: Narrowed[];
 }
+
+/** "Uži će biti: ladičar 60 → 45 cm." — what the question adds about cabinets that make room (null: none do) */
+export const narrowLine = (n: Narrowed[]): string | null => (n.length ? `Uži će biti: ${narrowedText(n)}.` : null);
 
 const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 const defOf = (s: Pick<PlanSlot, "zone" | "type">) => moduleDef(s.zone === "island" ? "base" : s.zone, s.type);
@@ -73,9 +80,11 @@ function fallbackUppers(plan: KitchenPlan, after: KitchenPlan, slot: PlanSlot, c
  */
 export function tallSwap(cfg: KitchenConfig, plan: KitchenPlan, slot: PlanSlot, type: string): TallSwap {
   const result = changeType(cfg, slot.id, type, "tall");
-  if (!result.ok || slot.run === "isl") return { result, base: 0, upper: 0, ask: null, essentials: [] };
+  if (!result.ok || slot.run === "isl") return { result, base: 0, upper: 0, ask: null, essentials: [], narrowed: [] };
   const wall = slot.run as WallId;
   const after = planKitchen(result.cfg);
+  // the wall's base row (tall units standing in it included), before and after: what stays and is narrower now
+  const narrowed = narrowedBetween(listRow(plan, wall), listRow(after, wall), new Set(result.slotId ? [result.slotId] : []));
   const onWall = (p: KitchenPlan, zone: PlanSlot["zone"]) => p.slots.filter((s) => s.run === wall && s.zone === zone && real(s));
   // base cabinets do not re-flow (the list is explicit now; a neighbour only gets narrower): the count says it
   const base = Math.max(0, onWall(plan, "base").length - onWall(after, "base").length);
@@ -93,7 +102,7 @@ export function tallSwap(cfg: KitchenConfig, plan: KitchenPlan, slot: PlanSlot, 
     .filter(Boolean);
   const self = real(slot) ? 1 : 0;
   const others = base + upper - self;
-  return { result, base, upper, ask: others > 0 ? swapQuestion(base, upper) : null, essentials };
+  return { result, base, upper, ask: others > 0 ? swapQuestion(base, upper) : null, essentials, narrowed };
 }
 
 /**
