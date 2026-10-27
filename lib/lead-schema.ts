@@ -54,6 +54,13 @@ export type LeadResult =
        * visitor could not be sent — the UI must not promise that confirmation then.
        */
       confirmation?: boolean;
+      /**
+       * the visitor's confirmation e-mail: "off" = e-mail isn't switched on yet (say nothing about a confirmation),
+       * "sent", or "failed" = switched on, but this one didn't go out. Older replies have only `confirmation`.
+       */
+      email?: "off" | "sent" | "failed";
+      /** the inquiry number ("U-2026-0007") when it was stored — something the visitor can quote back */
+      number?: string;
       /** studio only: whether the 3D picture reached us (stored and/or attached to the owner e-mail) */
       image?: boolean;
     }

@@ -10,6 +10,8 @@
  *
  * CSRF: same-origin only (Origin / Fetch Metadata), JSON only. Rate limits are DB-backed and keyed
  * by an HMAC of IP (+ token), so nothing identifying is stored. The token itself is 192 random bits.
+ *
+ * An answer is passed on to the owner after the reply: e-mail (when Resend is on) and Web Push to his phone.
  */
 import { after } from "next/server";
 import { z } from "zod";
@@ -18,6 +20,7 @@ import { getSession } from "@/lib/auth/session";
 import { hitThrottle } from "@/lib/auth/throttle";
 import { dbErrorLabel, isDbConfigured } from "@/lib/db";
 import { readBodyLimited } from "@/lib/lead-server";
+import { isPushConfigured, quoteAnswerPayload, sendPush, type PushPayload } from "@/lib/admin/push";
 import { notifyOwnerOfAnswer } from "@/lib/admin/quote-email";
 import { adminQuoteUrl, isQuoteToken, markQuoteViewed, respondToQuote } from "@/lib/admin/quotes";
 
@@ -42,6 +45,19 @@ const json = (status: number, body: Record<string, unknown>) =>
     status,
     headers: { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow", "referrer-policy": "no-referrer" },
   });
+
+/** Web Push to the owner after the reply; the answer is already saved, so nothing here may change the reply */
+function pushToOwner(number: string, payload: () => PushPayload) {
+  if (!isPushConfigured()) return;
+  try {
+    const notice = payload();
+    after(() =>
+      sendPush(notice).catch((err) => console.warn(`[ponuda] ${number}: obavijest na mobitel nije poslana (${dbErrorLabel(err)})`)),
+    );
+  } catch (err) {
+    console.warn(`[ponuda] ${number}: obavijest na mobitel nije zakazana (${err instanceof Error ? err.name : "unknown"})`);
+  }
+}
 
 export async function POST(req: Request, ctx: { params: Promise<{ token: string }> }) {
   if (!isSameOrigin(req.headers, req.url)) return json(403, { ok: false, error: "forbidden" });
@@ -110,6 +126,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ token: string 
         totalCents: res.totalCents,
         leadNumber: res.leadNumber,
         adminUrl: adminQuoteUrl(res.quoteId),
+      }),
+    );
+    pushToOwner(res.number, () =>
+      quoteAnswerPayload({
+        id: res.quoteId,
+        number: res.number,
+        accepted: res.status === "prihvacena",
+        customerName: res.customerName,
+        totalCents: res.totalCents,
       }),
     );
     return json(200, { ok: true, status: res.status });

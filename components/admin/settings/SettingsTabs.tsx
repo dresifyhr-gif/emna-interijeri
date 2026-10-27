@@ -7,6 +7,7 @@ import { cx } from "@/components/admin/ui";
 const TABS = [
   { href: "/admin/postavke", label: "Podaci o tvrtki" },
   { href: "/admin/postavke/ponude", label: "Ponude" },
+  { href: "/admin/postavke/obavijesti", label: "Obavijesti" },
   { href: "/admin/postavke/korisnici", label: "Korisnici" },
 ];
 

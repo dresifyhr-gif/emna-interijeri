@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
+import { MarkSeen } from "@/components/admin/AutoRefresh";
 import {
   Alert,
   Badge,
@@ -21,11 +23,13 @@ import {
 } from "@/components/admin/ui";
 import { IconPlus } from "@/components/admin/quotes/icons";
 import { formatCents, formatDate, formatRelative, plural } from "@/lib/admin/format";
+import { QUOTES_SEEN_COOKIE, answeredQuotesSince, quotesSeenSince } from "@/lib/admin/push";
 import { listQuotes, type QuoteListRow } from "@/lib/admin/quotes";
 import { QUOTE_STATUS_LABEL } from "@/lib/admin/status";
 import { requireAdmin } from "@/lib/auth/session";
 import { dbErrorLabel } from "@/lib/db";
 import { QUOTE_STATUSES, isQuoteStatus, type QuoteStatus } from "@/lib/db/enums";
+import { markQuotesSeenAction } from "../postavke/obavijesti/actions";
 
 export const metadata: Metadata = { title: "Ponude" };
 
@@ -68,6 +72,10 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
     console.error(`[admin] ponude se ne mogu učitati (${dbErrorLabel(err)})`);
   }
 
+  // customer answers the owner hasn't seen yet: opening this list marks them seen (menu badge, dashboard alerts)
+  const since = quotesSeenSince((await cookies()).get(QUOTES_SEEN_COOKIE)?.value);
+  const unseen = data ? await answeredQuotesSince(since, 1).then((r) => r.length > 0, () => false) : false;
+
   const all = data?.rows ?? [];
   const counts = Object.fromEntries(QUOTE_STATUSES.map((s) => [s, 0])) as Record<QuoteStatus, number>;
   const sums = Object.fromEntries(QUOTE_STATUSES.map((s) => [s, 0])) as Record<QuoteStatus, number>;
@@ -80,6 +88,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
 
   return (
     <>
+      {unseen && <MarkSeen action={markQuotesSeenAction} />}
       <PageHeader
         eyebrow="Ponude"
         title="Ponude"

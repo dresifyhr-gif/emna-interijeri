@@ -1,15 +1,26 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Alert, Card, CardHeader, EmptyState, IconExternal, IconInbox, IconQuote, IconSettings, LinkButton, PageHeader, StatCard, cx } from "@/components/admin/ui";
+import { Alert, Card, CardHeader, EmptyState, IconExternal, IconInbox, IconQuote, IconSettings, LinkButton, PageHeader, StatCard, buttonClass, cx } from "@/components/admin/ui";
 import { IconCheck, IconCube, IconPlus } from "@/components/admin/leads/icons";
 import { LeadsTable } from "@/components/admin/leads/LeadsTable";
-import { formatEur, plural } from "@/lib/admin/format";
+import { formatEur, formatRelative, plural } from "@/lib/admin/format";
 import { getDashboardData, isLeadEmailConfigured, type DashboardData } from "@/lib/admin/leads";
+import {
+  PUSH_SUBSCRIPTIONS_KEY,
+  QUOTES_SEEN_COOKIE,
+  answeredQuotesSince,
+  isPushConfigured,
+  quotesSeenSince,
+  readSubscriptions,
+  type AnsweredQuote,
+} from "@/lib/admin/push";
 import { SETTING_KEYS, companyCompleteness, getSettings, normalizeCompany, withSiteFallback } from "@/lib/admin/settings";
 import { requireAdmin } from "@/lib/auth/session";
 import { dbErrorLabel } from "@/lib/db";
 import { site } from "@/lib/site";
+import { markQuotesSeenAction } from "./postavke/obavijesti/actions";
 
 export const metadata: Metadata = { title: "Pregled" };
 
@@ -37,7 +48,7 @@ interface ChecklistItem {
 
 async function loadChecklist(): Promise<ChecklistItem[] | null> {
   try {
-    const stored = await getSettings([SETTING_KEYS.company, SETTING_KEYS.quoteDefaults]);
+    const stored = await getSettings([SETTING_KEYS.company, SETTING_KEYS.quoteDefaults, PUSH_SUBSCRIPTIONS_KEY]);
     const c = companyCompleteness(withSiteFallback(normalizeCompany(stored[SETTING_KEYS.company])));
     const email = isLeadEmailConfigured();
     return [
@@ -60,6 +71,17 @@ async function loadChecklist(): Promise<ChecklistItem[] | null> {
           ? "Novi upiti stižu i na vaš e-mail."
           : "Još nisu uključene. Upiti se svejedno spremaju ovdje, ali kupac ne dobiva automatsku potvrdu. Uključuje ih razvoj.",
       },
+      // only once the server can send them; then the owner switches them on per phone
+      ...(isPushConfigured()
+        ? [
+            {
+              done: readSubscriptions(stored[PUSH_SUBSCRIPTIONS_KEY]).length > 0,
+              title: "Obavijesti na mobitel",
+              detail: "Novi upit i odgovor kupca na ponudu stižu na mobitel kao poruka. Uključite ih na svakom mobitelu koji ih treba primati.",
+              href: "/admin/postavke/obavijesti",
+            },
+          ]
+        : []),
     ];
   } catch (err) {
     console.error(`[admin] pregled: postavke se ne mogu učitati (${dbErrorLabel(err)})`);
@@ -110,6 +132,43 @@ function QuickLink({
   );
 }
 
+const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** quote answers since the owner last opened Ponude — the most valuable news, so on top */
+function QuoteAnswers({ answers }: { answers: AnsweredQuote[] }) {
+  const shown = answers.slice(0, 5);
+  return (
+    <section aria-label="Novi odgovori na ponude" className="mb-8 space-y-2.5">
+      {shown.map((a) => (
+        <Alert
+          key={a.id}
+          tone={a.accepted ? "success" : "warning"}
+          title={
+            <Link href={`/admin/ponude/${a.id}`} className="underline-offset-4 outline-none hover:underline focus-visible:underline">
+              Ponuda {a.number} je {a.accepted ? "prihvaćena" : "odbijena"} — {a.customerName}
+              {a.totalCents > 0 ? `, ${formatEur(Math.round(a.totalCents / 100))}` : ""}
+            </Link>
+          }
+        >
+          {upperFirst(formatRelative(a.answeredAt))}
+        </Alert>
+      ))}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {answers.length > shown.length && (
+          <LinkButton href="/admin/ponude" size="sm" variant="ghost">
+            Još {answers.length - shown.length} u Ponudama →
+          </LinkButton>
+        )}
+        <form action={markQuotesSeenAction}>
+          <button type="submit" className={buttonClass("ghost", "sm")}>
+            Označi kao pregledano
+          </button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
 function money(cents: number) {
   return <span className="text-[clamp(28px,2.6vw,40px)]">{formatEur(Math.round(cents / 100))}</span>;
 }
@@ -156,13 +215,15 @@ function Stats({ data }: { data: DashboardData }) {
 
 export default async function AdminOverviewPage() {
   const admin = await requireAdmin();
+  const since = quotesSeenSince((await cookies()).get(QUOTES_SEEN_COOKIE)?.value);
 
-  const [data, checklist] = await Promise.all([
+  const [data, checklist, answers] = await Promise.all([
     getDashboardData().catch((err: unknown) => {
       console.error(`[admin] pregled se ne može učitati (${dbErrorLabel(err)})`);
       return null as DashboardData | null;
     }),
     loadChecklist(),
+    answeredQuotesSince(since).catch(() => [] as AnsweredQuote[]),
   ]);
   const pending = checklist?.filter((i) => !i.done).length ?? 0;
 
@@ -183,6 +244,8 @@ export default async function AdminOverviewPage() {
           </>
         }
       />
+
+      {answers.length > 0 && <QuoteAnswers answers={answers} />}
 
       {!data ? (
         <Alert tone="danger" title="Podaci se trenutno ne mogu učitati.">

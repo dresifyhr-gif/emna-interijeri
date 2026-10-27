@@ -3,24 +3,58 @@
 /**
  * Admin frame: sidebar (desktop) / drawer (phone), top bar with the user and "Odjava".
  * Rendered by app/admin/(panel)/layout.tsx after requireAdmin(); pages render inside <main>.
+ *
+ * The badges (new inquiries, newly answered quotes) also show on the phone's menu button, as "(3) " in the tab
+ * title and on the home-screen icon of the installed admin; <AutoRefresh /> keeps them current.
  */
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AutoRefresh } from "./AutoRefresh";
 import { IconClose, IconExternal, IconInbox, IconLogout, IconMenu, IconOverview, IconQuote, IconSettings } from "./ui/icons";
 import { cx } from "./ui/cx";
 
 export interface ShellNavBadges {
   /** number of leads with status "novi" */
   upiti?: number;
+  /** quotes the customer accepted or rejected since the owner last opened Ponude */
+  ponude?: number;
 }
 
 const NAV = [
   { href: "/admin", label: "Pregled", icon: IconOverview, exact: true },
-  { href: "/admin/upiti", label: "Upiti", icon: IconInbox, badge: "upiti" as const },
-  { href: "/admin/ponude", label: "Ponude", icon: IconQuote },
+  { href: "/admin/upiti", label: "Upiti", icon: IconInbox, badge: "upiti" as const, badgeLabel: "novih: " },
+  { href: "/admin/ponude", label: "Ponude", icon: IconQuote, badge: "ponude" as const, badgeLabel: "novih odgovora: " },
   { href: "/admin/postavke", label: "Postavke", icon: IconSettings },
 ];
+
+const countText = (n: number, max = 99) => (n > max ? `${max}+` : String(n));
+const TITLE_COUNT = /^\(\d+\+?\) /;
+
+/**
+ * "(3) Upiti · Administracija · EMNA" and the number on the installed app's icon. Next sets the title on every
+ * navigation (and may stream it in late), so the prefix is re-applied whenever the <title> changes.
+ */
+function useCountEverywhere(total: number) {
+  useEffect(() => {
+    const apply = () => {
+      const base = document.title.replace(TITLE_COUNT, "");
+      const next = total > 0 ? `(${countText(total)}) ${base}` : base;
+      if (document.title !== next) document.title = next;
+    };
+    apply();
+    const watch = new MutationObserver(apply);
+    watch.observe(document.head, { childList: true, subtree: true, characterData: true });
+    return () => watch.disconnect();
+  }, [total]);
+
+  useEffect(() => {
+    if (!("setAppBadge" in navigator)) return;
+    (total > 0 ? navigator.setAppBadge(total) : navigator.clearAppBadge()).catch(() => {
+      /* only the installed app has an icon badge */
+    });
+  }, [total]);
+}
 
 function isActive(pathname: string, href: string, exact?: boolean) {
   return exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
@@ -67,8 +101,8 @@ function Nav({ pathname, badges, onNavigate }: { pathname: string; badges: Shell
                 <span className="flex-1">{item.label}</span>
                 {count ? (
                   <span className="min-w-[22px] rounded-full bg-accent px-1.5 py-px text-center text-[11px] font-semibold tabular-nums text-ink">
-                    <span className="sr-only">novih: </span>
-                    {count > 99 ? "99+" : count}
+                    <span className="sr-only">{item.badgeLabel}</span>
+                    {countText(count)}
                   </span>
                 ) : null}
               </Link>
@@ -134,6 +168,8 @@ export function Shell({
   const [lastPath, setLastPath] = useState(pathname);
   const menuButton = useRef<HTMLButtonElement>(null);
   const drawer = useRef<HTMLDivElement>(null);
+  const total = (badges.upiti ?? 0) + (badges.ponude ?? 0);
+  useCountEverywhere(total);
 
   // close the drawer whenever the route changes (adjusting state during render, not in an effect)
   if (lastPath !== pathname) {
@@ -256,10 +292,18 @@ export function Shell({
               onClick={() => setOpen(true)}
               aria-expanded={open}
               aria-controls="admin-izbornik"
-              className="-ml-1.5 flex h-10 w-10 items-center justify-center rounded-full text-fg/80 transition-colors hover:bg-white/[0.06] hover:text-fg lg:hidden"
+              className="relative -ml-1.5 flex h-10 w-10 items-center justify-center rounded-full text-fg/80 transition-colors hover:bg-white/[0.06] hover:text-fg lg:hidden"
             >
               <IconMenu size={20} />
-              <span className="sr-only">Otvori izbornik</span>
+              {total > 0 && (
+                <span
+                  aria-hidden
+                  className="absolute -right-0.5 top-0 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10.5px] font-semibold leading-none tabular-nums text-ink ring-2 ring-ink"
+                >
+                  {countText(total, 9)}
+                </span>
+              )}
+              <span className="sr-only">{total > 0 ? `Otvori izbornik (novo: ${total})` : "Otvori izbornik"}</span>
             </button>
             <div className="lg:hidden">
               <Brand />
@@ -293,6 +337,7 @@ export function Shell({
           <div className="mx-auto w-full max-w-[1200px]">{children}</div>
         </main>
       </div>
+      <AutoRefresh />
     </div>
   );
 }
