@@ -7,7 +7,8 @@
  *
  * The panel is solid (no backdrop blur over a canvas that repaints) and keeps one height on every screen, so the 3D
  * view above never moves; only the screen's content slides. Big "Natrag" / "Dalje" at the thumb; progress dots; "3D"
- * at the top right skips to the full 3D view.
+ * at the top right skips to the full 3D view. A phone held sideways (`landscape`) has the panel at the right, full height,
+ * and the kitchen beside it (the studio reads the panel's width for the 3D view's right inset).
  */
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, type RefObject } from "react";
@@ -26,6 +27,8 @@ import { AppliancesScreen, MeasuresScreen, ShapeScreen, StyleScreen, type FlowEd
 export const WIZARD_TOP = 48;
 /** the panel's height: the 3D view keeps the rest */
 export const WIZARD_PANEL_H = "min(58svh, 520px)";
+/** held sideways: the panel's width at the right */
+export const WIZARD_PANEL_W = "min(56vw, 480px)";
 
 export function PhoneWizard({
   step,
@@ -40,6 +43,7 @@ export function PhoneWizard({
   onBack,
   onNext,
   onSkip,
+  landscape = false,
 }: {
   step: number;
   cfg: KitchenConfig;
@@ -55,6 +59,8 @@ export function PhoneWizard({
   onBack: () => void;
   onNext: () => void;
   onSkip: () => void;
+  /** the phone is held sideways: the panel at the right */
+  landscape?: boolean;
 }) {
   const st = WIZARD_STEPS[step];
   const next = WIZARD_STEPS[step + 1];
@@ -75,7 +81,11 @@ export function PhoneWizard({
   return (
     <>
       {/* over the 3D view: what shows while it loads, or the floor plan without WebGL */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[5]" style={{ bottom: "var(--studio-inset-bottom, 50svh)" }} aria-hidden="true">
+      <div
+        className="pointer-events-none absolute left-0 top-0 z-[5]"
+        style={landscape ? { bottom: 0, right: "var(--studio-inset-right, 50vw)" } : { right: 0, bottom: "var(--studio-inset-bottom, 50svh)" }}
+        aria-hidden="true"
+      >
         {engine === "loading" && (
           <p className="flex h-full items-center justify-center gap-2.5 pt-10 text-[12.5px] text-mut">
             <Spinner className="text-accent" />
@@ -92,13 +102,18 @@ export function PhoneWizard({
       <motion.section
         ref={panelRef}
         aria-label="Kuhinja korak po korak"
-        initial={{ y: reduce ? 0 : 40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1, transition: { duration: reduce ? 0 : 0.6, ease: EASE } }}
-        exit={{ y: reduce ? 0 : 30, opacity: 0, transition: { duration: reduce ? 0 : 0.3, ease: EASE } }}
-        className="absolute inset-x-0 bottom-0 z-20 flex flex-col rounded-t-[28px] border-t border-white/10 bg-ink-700 shadow-[0_-30px_80px_-40px_rgba(0,0,0,.9)]"
-        style={{ height: WIZARD_PANEL_H }}
+        initial={landscape ? { x: reduce ? 0 : 40, opacity: 0 } : { y: reduce ? 0 : 40, opacity: 0 }}
+        animate={{ x: 0, y: 0, opacity: 1, transition: { duration: reduce ? 0 : 0.6, ease: EASE } }}
+        exit={landscape ? { x: reduce ? 0 : 30, opacity: 0, transition: { duration: reduce ? 0 : 0.3, ease: EASE } } : { y: reduce ? 0 : 30, opacity: 0, transition: { duration: reduce ? 0 : 0.3, ease: EASE } }}
+        className={`absolute z-20 flex flex-col bg-ink-700 ${
+          landscape
+            ? "inset-y-0 right-0 rounded-l-[28px] border-l border-white/10 shadow-[-30px_0_80px_-40px_rgba(0,0,0,.9)]"
+            : "inset-x-0 bottom-0 rounded-t-[28px] border-t border-white/10 shadow-[0_-30px_80px_-40px_rgba(0,0,0,.9)]"
+        }`}
+        style={landscape ? { width: WIZARD_PANEL_W } : { height: WIZARD_PANEL_H }}
       >
-        <div className="flex items-center gap-3 px-5 pt-4">
+        {/* (held sideways the panel reaches the top: its first row keeps clear of the top bar's close button) */}
+        <div className={`flex items-center gap-3 pl-5 pt-4 ${landscape ? "pr-[68px]" : "pr-5"}`}>
           <ol className="flex items-center gap-1.5" aria-label={`Korak ${step + 1} od ${WIZARD_STEPS.length}`}>
             {WIZARD_STEPS.map((w, i) => (
               <li
@@ -119,7 +134,7 @@ export function PhoneWizard({
             className="-mr-2 ml-auto inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium text-fg/75 transition-colors active:text-accent"
           >
             <CubeIcon className="h-4 w-4" />
-            Otvori 3D
+            Otvorite 3D
           </button>
         </div>
 
@@ -161,7 +176,7 @@ export function PhoneWizard({
             className="group inline-flex h-[52px] min-w-0 flex-1 items-center justify-between gap-3 rounded-full bg-accent pl-6 pr-5 text-ink transition-colors duration-300 ease-premium active:bg-fg"
           >
             <span className="flex min-w-0 items-baseline gap-2">
-              <span className="text-[14px] font-semibold tracking-wide">{step >= WIZARD_LAST ? "Prikaži kuhinju u 3D" : "Dalje"}</span>
+              <span className="text-[14px] font-semibold tracking-wide">{step >= WIZARD_LAST ? "Prikažite kuhinju u 3D-u" : "Dalje"}</span>
               {next && <span className="truncate text-[12px] font-medium text-ink/55">{next.title}</span>}
             </span>
             <Arrow />

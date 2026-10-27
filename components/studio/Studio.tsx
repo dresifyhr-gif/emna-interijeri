@@ -7,6 +7,15 @@
  * behind the UI and is told about every change. The config is mirrored into the URL (?k=…, v2 links) so any
  * kitchen can be shared or re-opened, and ?front= / ?top= preselect a material.
  *
+ * The kitchen is also kept on this device (lib/studio/autosave.ts): from the customer's first change on, its link code
+ * is saved a moment after every change (and at once when the studio is closed or hidden). /studio opened again without
+ * a kitchen in its address offers it back — "Nastavite svoju kuhinju (L 380 × 220 · antracit)": a card over the 3D view
+ * with "Nastavite" / "Nova kuhinja" (desktop, tablet), the first choice of the start screen (phone). Until it is
+ * answered nothing is saved over it. The X never asks before closing: the kitchen waits on the next visit.
+ *
+ * A lost WebGL context (an iPhone back from another app) shows "Obnavljam 3D prikaz…" over the 3D view while the engine
+ * is created anew from the same kitchen (useStudioEngine); the panel and the 2D views keep working meanwhile.
+ *
  * Element editing goes through lib/studio/edit.ts: every edit returns a new config and the id the element has
  * in the new plan; <Studio> applies it, keeps one undo step per edit and asks the engine to follow the element
  * (EngineApi.select) once the engine has the new config.
@@ -37,7 +46,7 @@
  *
  * "Jednostavno / Napredno" (the step header; remembered, hooks.ts StudioMode) leaves the finer controls out for
  * customers by default. A first visit gets three skippable coach marks (CoachMarks; on a phone on the step sheet, never
- * over the 3D view).
+ * over the 3D view) — not after the phone's wizard or an AI change: those visitors have been shown their kitchen.
  *
  * "Opišite kuhinju" (ai/*; only when GET /api/studio/ai says this visitor may use it — in production the logged-in owner
  * until it is opened to everyone): the customer describes a kitchen (or changes to this one), with a photo or dictation;
@@ -54,6 +63,8 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Arrow } from "@/components/ui/Button";
+import { AUTOSAVE_DEBOUNCE_MS, kitchenLabel, readSaved, shouldOfferRestore, writeSaved, type SavedKitchen } from "@/lib/studio/autosave";
 import { moduleDef } from "@/lib/studio/catalog";
 import { isEdited, remove, removeColumn, resetAll, resetRun, setRoomCeiling, slotEditInfo, type EditResult, type RunRef } from "@/lib/studio/edit";
 import { geometryKey, planKitchen, sanitizeConfig, wallsFor, type PlanSlot, type RunId } from "@/lib/studio/plan";
@@ -108,11 +119,13 @@ import {
   type StudioView,
 } from "./viewMode";
 import { ViewSwitch } from "./ViewSwitch";
-import { PHONE_QUERY, firstStage, nextStage, parseStage, prevStage, type PhoneStage } from "./phone/flow";
+import { PHONE_LANDSCAPE_QUERY, PHONE_QUERY, WIZARD_AGAIN, firstStage, nextStage, parseStage, prevStage, type PhoneStage } from "./phone/flow";
 import { PhoneBar } from "./phone/PhoneBar";
 import { PhoneStart } from "./phone/PhoneStart";
+import { PhoneSummary } from "./phone/PhoneSummary";
 import { PhoneWizard, WIZARD_TOP } from "./phone/PhoneWizard";
 import { setPhoneStage, usePhoneStageKey } from "./phone/stage";
+import { StepsAgain } from "./phone/StepsAgain";
 import { AiPanel, AiResultCard, AiSheet } from "./ai/AiChat";
 import { lastChange, type AssistantEntry } from "./ai/chat";
 import { useStudioAi } from "./ai/useStudioAi";
@@ -181,6 +194,17 @@ export function Studio() {
     ),
   );
   const [initialKey] = useState(() => encodeConfig(initial));
+  /** the address opens a kitchen or a preset (?k / ?oblik / ?front / ?top): it is shown, nothing is offered back */
+  const [queryConfig] = useState(() => ["k", "oblik", "front", "top"].some((q) => Boolean(params.get(q))));
+  /**
+   * the kitchen saved on this device before this visit (lib/studio/autosave.ts). Read straight from storage: the server
+   * (and a hydrating render) sees none — the card and the phone's start screen it shows on only appear after mount.
+   */
+  const [saved] = useState<SavedKitchen | null>(() => (typeof window === "undefined" ? null : readSaved()));
+  /** that kitchen, offered back and not yet answered ("Nastavite" / "Nova kuhinja"); while it is, nothing is saved over it */
+  const [resume, setResume] = useState<SavedKitchen | null>(() =>
+    shouldOfferRestore({ hasQueryConfig: queryConfig, saved, currentCode: initialKey }) ? saved : null,
+  );
 
   const [cfg, setCfg] = useState<KitchenConfig>(initial);
   const [step, setStep] = useState(0);
@@ -213,10 +237,23 @@ export function Studio() {
 
   // ---- the phone's simple flow (phone/flow.ts): start → step by step → the 3D view with a small bar
   const phone = useMediaQuery(PHONE_QUERY);
+  /** a phone held sideways: the wizard's panel at the right, the 3D view's bar in one row */
+  const landscape = useMediaQuery(PHONE_LANDSCAPE_QUERY) && phone;
   const stageKey = usePhoneStageKey();
   /** the visit came with a link to a kitchen: straight into the 3D view */
   const [linked] = useState(() => Boolean(params.get("k")));
-  const stage: PhoneStage | null = phone ? firstStage(parseStage(stageKey), linked) : null;
+  /**
+   * the visitor chose a way in during this visit (a start card, the wizard, the AI): the remembered stage stands. Before
+   * that, firstStage decides — a saved kitchen offered back, or a remembered 3D view with no kitchen to show, start at
+   * the start screen.
+   */
+  const [stageChosen, setStageChosen] = useState(false);
+  const remembered = parseStage(stageKey);
+  const stage: PhoneStage | null = phone
+    ? stageChosen && remembered
+      ? remembered
+      : firstStage(remembered, linked, { has: Boolean(saved), offer: Boolean(resume) })
+    : null;
   /** "off": not a phone (the full studio, unchanged) */
   const phase = stage?.kind ?? "off";
   const wizardStep = stage?.kind === "wizard" ? stage.step : 0;
@@ -265,7 +302,8 @@ export function Studio() {
   const [twoTone, setTwoTone] = useState(() => Boolean(initial.zoneFronts));
   const [frontZone, setFrontZone] = useState<FrontZone>("base");
 
-  const desktop = useMediaQuery("(min-width: 1024px)");
+  // (a phone held sideways can be that wide: it keeps the phone's UI)
+  const desktop = useMediaQuery("(min-width: 1024px)") && !phone;
   const reduce = Boolean(useReducedMotion());
   const origin = useOrigin();
   const viewport = useViewport();
@@ -371,7 +409,8 @@ export function Studio() {
     setAnnounce(hit.surface === "wall" && hit.wall ? `Zid ${hit.wall.toUpperCase()}: odaberite boju ili oblogu.` : "Pod: odaberite pod.");
   }, []);
 
-  const { apiRef, status } = useStudioEngine(containerRef, {
+  // `restoring`: the WebGL context was lost and the engine is being created anew ("Obnavljam 3D prikaz…")
+  const { apiRef, status, restoring } = useStudioEngine(containerRef, {
     config: cfg,
     mood,
     onSelect: handleSelect,
@@ -627,7 +666,14 @@ export function Studio() {
     }
     // what covers the bottom: the step sheet — or on a phone the wizard's panel, or the 3D view's small bar
     const sheet = (aiDocked ? aiCardRef : phase === "wizard" ? wizardPanelRef : phase === "3d" && !sheetShown ? barRef : sheetRef).current;
-    const measure = () => apply({ top: insetTop, right: 0, bottom: sheet ? Math.round(sheet.offsetHeight) : 0, left: 0 });
+    // (a phone held sideways has the wizard's panel at the right: it covers the right-hand side instead)
+    const side = landscape && phase === "wizard" && !aiDocked;
+    const measure = () =>
+      apply(
+        side
+          ? { top: insetTop, right: sheet ? Math.round(sheet.offsetWidth) : 0, bottom: 0, left: 0 }
+          : { top: insetTop, right: 0, bottom: sheet ? Math.round(sheet.offsetHeight) : 0, left: 0 },
+      );
     measure();
     if (!sheet) return;
     // the sheet animates its height when folded (and when the editor opens) — the kitchen glides with it, and the
@@ -635,7 +681,7 @@ export function Studio() {
     const ro = new ResizeObserver(measure);
     ro.observe(sheet);
     return () => ro.disconnect();
-  }, [desktop, apiRef, hub, insetTop, phase, sheetShown, aiDocked]);
+  }, [desktop, apiRef, hub, insetTop, phase, sheetShown, aiDocked, landscape]);
 
   // the engine was created after the insets were set on first mount; re-read them once it's live
   useEffect(() => {
@@ -669,6 +715,44 @@ export function Studio() {
   }, [cfg, initialKey]);
 
   const getUrl = useCallback(() => `${origin}${studioPath(cfg)}`, [origin, cfg]);
+
+  /* ---------------------------------------------------------------- the kitchen on this device (autosave.ts) */
+
+  /** the customer has changed the kitchen this visit (from then on every change is saved) */
+  const touched = useRef(false);
+  /** a change not yet written (the debounce is running) */
+  const unsaved = useRef<{ code: string; label: string } | null>(null);
+  const flushSave = useCallback(() => {
+    const s = unsaved.current;
+    if (!s) return;
+    unsaved.current = null;
+    writeSaved({ ...s, savedAt: Date.now() });
+  }, []);
+
+  // a moment after each change — not for the kitchen the visit opened with, and not over a saved kitchen still on offer
+  useEffect(() => {
+    if (resume) return;
+    const code = encodeConfig(cfg);
+    if (!touched.current && code === initialKey) return;
+    touched.current = true;
+    unsaved.current = { code, label: kitchenLabel(cfg) };
+    const t = window.setTimeout(flushSave, AUTOSAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [cfg, initialKey, resume, flushSave]);
+
+  // closing the tab, switching apps, leaving the studio (the X, a link): a change still waiting is saved now
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flushSave();
+    };
+    window.addEventListener("pagehide", flushSave);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flushSave);
+      document.removeEventListener("visibilitychange", onHide);
+      flushSave();
+    };
+  }, [flushSave]);
 
   /* ---------------------------------------------------------------- config */
 
@@ -1050,32 +1134,92 @@ export function Studio() {
     scrollRef.current?.scrollTo({ top: 0 });
   }, [step]);
 
+  /* ---------------------------------------------------------------- the saved kitchen offered back (autosave.ts) */
+
+  /** a way in chosen on the phone: from now on the remembered stage stands (firstStage only decides the first screen) */
+  const goStage = (s: PhoneStage) => {
+    setStageChosen(true);
+    setPhoneStage(s);
+  };
+
+  /**
+   * "Nastavite": the saved kitchen, as if it had been opened from its link (no undo step back to the default one); on a
+   * phone straight into its 3D view, "Uredite" on the elements
+   */
+  const resumeSaved = () => {
+    if (!resume) return;
+    const next = fitToPlanner(configFromQuery({ k: resume.code }));
+    setResume(null);
+    if (selId) closeEditor();
+    setGapOpen(null);
+    setDimEdit(null);
+    setSurface(null);
+    setSummaryOpen(false);
+    setCfg(next);
+    setUndoStack([]);
+    setLayoutUndo(null);
+    setRunTab("a");
+    setTwoTone(Boolean(next.zoneFronts));
+    setAnnounce(`Vaša kuhinja je vraćena: ${resume.label}.`);
+    if (phone) {
+      setDir(1);
+      setStep(stepIndex("elementi"));
+      setPhoneSheet(false);
+      goStage({ kind: "3d" });
+    }
+  };
+  /** "Nova kuhinja" (or any other way in on the phone's start screen): the kitchen on screen is the new one */
+  const declineSaved = () => setResume(null);
+
   /* ---------------------------------------------------------------- the phone's simple flow (phone/*) */
 
   const startWizard = () => {
+    setResume(null);
     setWizardDir(1);
-    setPhoneStage({ kind: "wizard", step: 0 });
+    goStage({ kind: "wizard", step: 0 });
   };
   const start3d = () => {
+    setResume(null);
     setPhoneSheet(false);
-    setPhoneStage({ kind: "3d" });
+    goStage({ kind: "3d" });
   };
   const wizardNext = () => {
     const n = nextStage(wizardStep);
     setWizardDir(1);
     if (n.kind === "3d") {
-      // done: the full 3D view; "Uredi" then opens on the elements (shape, measures and colours are chosen)
+      // done: the full 3D view; "Uredite" then opens on the elements (shape, measures and colours are chosen) — and the
+      // first-visit coach marks are not needed after the wizard
       setPhoneSheet(false);
       setDir(1);
       setStep(stepIndex("elementi"));
+      setCoach("done");
     }
-    setPhoneStage(n);
+    goStage(n);
   };
   const wizardBack = () => {
     const back = prevStage(wizardStep);
     setWizardDir(-1);
     if (back.kind === "start") setKeepEngine(true);
-    setPhoneStage(back);
+    goStage(back);
+  };
+  /** the wizard's "Otvorite 3D": the full 3D view without the rest of the steps (no coach marks after the wizard either) */
+  const wizardSkip = () => {
+    setCoach("done");
+    start3d();
+  };
+  /**
+   * "Korak po korak" at the top of the "Uredite" sheet, "Na početak" in the summary: the wizard's first screen with this
+   * kitchen (the 3D view keeps running behind it as its preview)
+   */
+  const stepsAgain = () => {
+    if (selId) closeEditor();
+    setGapOpen(null);
+    setDimEdit(null);
+    setSurface(null);
+    setSummaryOpen(false);
+    setPhoneSheet(false);
+    setWizardDir(-1);
+    goStage(WIZARD_AGAIN);
   };
   /** an edit from a wizard screen: one undo step, quietly (the screen shows its note); refused ones change nothing */
   const wizardEdit = useCallback(
@@ -1086,12 +1230,12 @@ export function Studio() {
     },
     [applyEdit],
   );
-  /** the bar's "Uredi": the studio's settings sheet over the 3D view */
+  /** the bar's "Uredite": the studio's settings sheet over the 3D view */
   const openPhoneSheet = () => {
     setSheetOpen(true);
     setPhoneSheet(true);
   };
-  /** the bar's "Pošalji upit": the sheet at the inquiry step */
+  /** the bar's "Pošaljite upit": the sheet at the inquiry step */
   const sendFromBar = () => {
     setPhoneSheet(true);
     goTo(stepIndex("posalji"));
@@ -1108,7 +1252,8 @@ export function Studio() {
   /**
    * a kitchen from the AI: one undo step like any edit (applyEdit — fitToPlanner, the engine diffs and animates it, the
    * link follows), whatever was open on the kitchen closes. From the phone's start screen it lands in the 3D view. Phone
-   * and tablet then show the answer over the 3D view; the desktop panel stays open beside the kitchen.
+   * and tablet then show the answer over the 3D view; the desktop panel stays open beside the kitchen. A saved kitchen
+   * still on offer is not taken (the AI's kitchen is the new one), and the first-visit coach marks are not needed.
    */
   const applyAi = useCallback(
     (next: KitchenConfig, reply: string): number | null => {
@@ -1121,11 +1266,14 @@ export function Studio() {
       if (next.zoneFronts) setTwoTone(true);
       if (!applyEdit({ cfg: next, ok: true, warning: null, slotId: null }, { select: null, quiet: true, say: reply })) return null;
       const id = undoSeq.current;
+      setResume(null);
+      setCoach("done");
       if (phase === "start" || phase === "wizard") {
-        // shape, measures and finishes are chosen: "Uredi" opens on the elements (as after the wizard)
+        // shape, measures and finishes are chosen: "Uredite" opens on the elements (as after the wizard)
         setDir(1);
         setStep(stepIndex("elementi"));
         setPhoneSheet(false);
+        setStageChosen(true);
         setPhoneStage({ kind: "3d" });
       }
       setAiView(desktop ? "chat" : "result");
@@ -1401,6 +1549,10 @@ export function Studio() {
       !thanks &&
       !(editorOpen && !desktop) &&
       aiView === "closed" &&
+      // not beside the saved kitchen's card (it is answered first)
+      !resume &&
+      // a phone held sideways: the 3D view is too low to share (they come when it is upright)
+      !landscape &&
       // phone: the toast docks where the coach card does (it comes back when the toast has gone)
       !(toast && !desktop) &&
       // phone's 3D view: not while "Uredi" / "Pošalji upit" has the sheet open — the card would lie over the sheet's
@@ -1433,6 +1585,7 @@ export function Studio() {
             if (selId) closeEditor();
             setSummaryOpen((o) => !o);
           }}
+          onClose={flushSave}
         />
 
         {/* 3D | Tlocrt | Nacrt (and which wall) — before the view in the Tab order */}
@@ -1491,8 +1644,24 @@ export function Studio() {
 
         {failed && !flat && chrome && <NoWebGL desktop={desktop} onPlan={() => changeView("tlocrt")} />}
 
+        {/* the WebGL context was lost: a dark veil over the 3D view while the engine is created anew (the panel, the bar
+            and the 2D views stay usable) */}
+        {restoring && !flat && chrome && (
+          <div
+            role="status"
+            className="absolute inset-0 z-[19] flex items-center justify-center bg-ink"
+            style={{
+              paddingTop: "var(--studio-inset-top, 0px)",
+              paddingRight: "var(--studio-inset-right, 0px)",
+              paddingBottom: "var(--studio-inset-bottom, 0px)",
+            }}
+          >
+            <StudioLoader label="Obnavljam 3D prikaz…" />
+          </div>
+        )}
+
         {/* 3D chosen after the visit began in 2D: the engine is still starting (the loading veil is long gone) */}
-        {!flat && chrome && uiShown && status === "loading" && (
+        {!flat && chrome && uiShown && status === "loading" && !restoring && (
           <p role="status" className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center gap-2.5 text-[12.5px] text-mut" style={desktop ? { paddingRight: INSET_DESKTOP.right } : undefined}>
             <Spinner className="text-accent" />
             Učitavam 3D prikaz…
@@ -1508,7 +1677,7 @@ export function Studio() {
           style={desktop ? undefined : { top: TOPBAR_H.mobile + dockH + 10 }}
         >
           <AnimatePresence>
-            {uiShown && chrome && !failed && !flat && !selSlot && !hintsGone && !toast && !dimEdit && coach === "done" && (
+            {uiShown && chrome && !failed && !flat && !selSlot && !hintsGone && !toast && !dimEdit && !resume && coach === "done" && (
               <motion.div
                 key="orbit"
                 initial={{ opacity: 0, y: reduce ? 0 : 8 }}
@@ -1528,7 +1697,9 @@ export function Studio() {
             live={live}
             plan={plan}
             state={coach}
-            docked={!desktop}
+            // phone: on the sheet / above the bar; a tablet's floats in its 3D view (its toolbar still docks at the bottom)
+            docked={phase !== "off"}
+            barDocked={!desktop}
             touch={touch}
             insetsRef={insetsRef}
             selKey={selKey}
@@ -1675,6 +1846,10 @@ export function Studio() {
               covered={summaryOpen || aiDocked}
               onClose={phase === "3d" ? closePhoneSheet : undefined}
             >
+              {/* the phone's 3D view: back to the step-by-step flow (the shape, the measures, the style), this kitchen kept */}
+              {phase === "3d" && (
+                <StepsAgain title="Korak po korak" note="Oblik, mjere, stil — ova kuhinja ostaje." onClick={stepsAgain} className="mb-6" />
+              )}
               {content}
             </MobileSheet>
           )
@@ -1691,6 +1866,7 @@ export function Studio() {
             onSend={sendFromBar}
             onAi={aiEntry}
             aiBusy={aiBusy}
+            landscape={landscape}
           />
         )}
 
@@ -1726,18 +1902,52 @@ export function Studio() {
               onEdit={wizardEdit}
               onBack={wizardBack}
               onNext={wizardNext}
-              onSkip={start3d}
+              onSkip={wizardSkip}
+              landscape={landscape}
             />
           )}
         </AnimatePresence>
 
+        {/* (the phone's 3D view: with "Na početak" — back to the step-by-step flow) */}
         <AnimatePresence>
-          {!desktop && summaryOpen && <MobileSummary key="summary" summary={summary} price={price} getUrl={getUrl} pdf={pdf} onClose={() => setSummaryOpen(false)} />}
+          {!desktop &&
+            summaryOpen &&
+            (phase === "3d" ? (
+              <PhoneSummary key="summary" summary={summary} price={price} getUrl={getUrl} pdf={pdf} onSteps={stepsAgain} onClose={() => setSummaryOpen(false)} />
+            ) : (
+              <MobileSummary key="summary" summary={summary} price={price} getUrl={getUrl} pdf={pdf} onClose={() => setSummaryOpen(false)} />
+            ))}
         </AnimatePresence>
 
-        {/* the phone's first screen: how to begin */}
+        {/* the phone's first screen: how to begin (a saved kitchen first) */}
         <AnimatePresence>
-          {phase === "start" && <PhoneStart key="start" onWizard={startWizard} on3d={start3d} onAi={aiEntry} aiBusy={aiBusy} reduce={reduce} />}
+          {phase === "start" && (
+            <PhoneStart
+              key="start"
+              onWizard={startWizard}
+              on3d={start3d}
+              onAi={aiEntry}
+              aiBusy={aiBusy}
+              resume={resume ? { label: resume.label, onResume: resumeSaved } : undefined}
+              landscape={landscape}
+              reduce={reduce}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* desktop and tablet: the kitchen saved on this device, offered back over the 3D view */}
+        <AnimatePresence>
+          {resume && phase === "off" && uiShown && !thanks && (
+            <ResumeCard
+              key="resume"
+              label={resume.label}
+              desktop={desktop}
+              top={TOPBAR_H.mobile + dockH + 10}
+              reduce={reduce}
+              onResume={resumeSaved}
+              onNew={declineSaved}
+            />
+          )}
         </AnimatePresence>
 
         {/* loading veil */}
@@ -1807,6 +2017,65 @@ function Hint({ icon, children }: { icon: ReactNode; children: ReactNode }) {
       <span className="text-accent">{icon}</span>
       {children}
     </span>
+  );
+}
+
+/**
+ * The kitchen saved on this device, offered back (desktop: the 3D view's lower left corner, where the coach card would
+ * wait; tablet: under the view switch). Never modal — the studio works around it, and nothing is saved over the kitchen
+ * until one of the two is chosen.
+ */
+function ResumeCard({
+  label,
+  desktop,
+  top,
+  reduce,
+  onResume,
+  onNew,
+}: {
+  label: string;
+  desktop: boolean;
+  /** tablet: px from the top of the screen (under the view switch's rows) */
+  top: number;
+  reduce: boolean;
+  onResume: () => void;
+  onNew: () => void;
+}) {
+  const id = useId();
+  return (
+    // the wrapper places it; the card animates (framer-motion owns the card's transform)
+    <div className={`pointer-events-none absolute z-[24] flex ${desktop ? "bottom-6 left-8" : "inset-x-0 justify-center px-4"}`} style={desktop ? undefined : { top }}>
+      <motion.section
+        aria-labelledby={id}
+        initial={{ opacity: 0, y: reduce ? 0 : 12 }}
+        animate={{ opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.7, ease: EASE } }}
+        exit={{ opacity: 0, y: reduce ? 0 : 8, transition: { duration: reduce ? 0 : 0.25, ease: EASE } }}
+        className="pointer-events-auto w-[min(380px,calc(100vw-32px))] rounded-[22px] border border-white/10 bg-ink-700/95 px-5 pb-4 pt-4 shadow-[0_30px_80px_-30px_rgba(0,0,0,.9)] backdrop-blur-xl"
+      >
+        <p className="eyebrow text-accent">Spremljeno na ovom uređaju</p>
+        <h2 id={id} className="mt-2.5 font-display text-[19px] font-medium leading-tight tracking-tight text-fg">
+          Nastavite svoju kuhinju
+        </h2>
+        <p className="mt-1 text-[13px] tabular-nums text-fg/65">{label}</p>
+        <div className="mt-4 flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={onResume}
+            className="group inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-accent px-5 text-[13px] font-semibold tracking-wide text-ink transition-colors duration-300 ease-premium hover:bg-fg"
+          >
+            Nastavite
+            <Arrow />
+          </button>
+          <button
+            type="button"
+            onClick={onNew}
+            className="inline-flex h-11 flex-1 items-center justify-center rounded-full border border-white/[0.16] px-5 text-[13px] font-semibold tracking-wide text-fg/85 transition-colors duration-300 ease-premium hover:border-accent hover:text-accent"
+          >
+            Nova kuhinja
+          </button>
+        </div>
+      </motion.section>
+    </div>
   );
 }
 

@@ -14,8 +14,9 @@
  * to point at it waits in a corner of the 3D view (bottom left). It never covers the control in use — the selected
  * element, its toolbar and picker, the focused control — and covers as few "+" as it can (placeCard: below / above its
  * target, shifted sideways, else a corner). On a phone the 3D view is too small to share: the card rests on the top of
- * the step sheet instead and never covers the kitchen (the ring, the pulsing "+" and the glowing labels point). It never
- * takes focus; Escape inside it skips.
+ * the step sheet instead and never covers the kitchen (the ring, the pulsing "+" and the glowing labels point); a
+ * tablet's 3D view is big enough, its card floats there as on a desktop (off the step tabs). It never takes focus; Escape
+ * inside it skips. A visitor who came into the 3D view through the phone's wizard or the AI never sees them (<Studio>).
  *
  * Mark 1's cabinet: ViewInfo has no rects of elements that are not selected, so it is worked out from the "+" places the
  * engine projects (ViewInfo.gaps): a full row's joint ("seam") lies on the fronts of two cabinets, at their mid height —
@@ -31,14 +32,17 @@ import { areaOf, placeCard, useEngineView, type Area, type Insets, type Rect } f
 import s from "./studio.module.css";
 
 /**
- * `seen`: mark 2 — a "+" is on screen; mark 3 — a kitchen (gold) label is on screen. `docked`: phone — the element's
- * quick actions are docked above the sheet, not over the element
+ * `seen`: mark 2 — a "+" is on screen; mark 3 — a kitchen (gold) label is on screen. `bar`: where the element's quick
+ * actions show — over the element (desktop), docked at the bottom of the 3D view while the card floats in it (tablet),
+ * or under the view with the card docked there too (phone)
  */
-const MARKS: { title: string; text: (touch: boolean, seen: boolean, docked: boolean) => string }[] = [
+const MARKS: { title: string; text: (touch: boolean, seen: boolean, bar: "over" | "bottom" | "docked") => string }[] = [
   {
     title: "Kliknite element za izmjenu",
-    text: (touch, _, docked) =>
-      `${touch ? "Dodirnite" : "Kliknite"} ormarić u 3D prikazu — ${docked ? "ispod prikaza pojave se" : "iznad njega su"} širina, zamjena, dodavanje i uklanjanje.`,
+    text: (touch, _, bar) =>
+      `${touch ? "Dodirnite" : "Kliknite"} ormarić u 3D prikazu — ${
+        bar === "docked" ? "ispod prikaza pojave se" : bar === "bottom" ? "pri dnu prikaza pojave se" : "iznad njega su"
+      } širina, zamjena, dodavanje i uklanjanje.`,
   },
   {
     title: "Plus dodaje novi element",
@@ -102,6 +106,7 @@ export function CoachMarks({
   plan,
   state,
   docked,
+  barDocked = docked,
   touch,
   insetsRef,
   selKey = null,
@@ -114,8 +119,13 @@ export function CoachMarks({
   /** the shown plan (mark 1 finds a cabinet from the joints of its full rows) */
   plan: KitchenPlan;
   state: Exclude<CoachState, "done">;
-  /** phone: the waiting place is under the top bar */
+  /** phone: the card rests on the step sheet (or above the 3D view's bar), never over the small 3D view */
   docked: boolean;
+  /**
+   * the element's quick actions dock at the bottom of the 3D view (ElementToolbar `docked`: phone and tablet) — on a
+   * tablet the card itself still floats in the 3D view (its copy says where the actions show, not where the card is)
+   */
+  barDocked?: boolean;
   /** "Dodirnite" instead of "Kliknite" */
   touch: boolean;
   insetsRef: RefObject<Insets>;
@@ -279,20 +289,20 @@ export function CoachMarks({
                 {i + 1} / {MARKS.length}
               </span>
             </p>
-            <p className="mt-1.5 text-[12px] leading-relaxed text-fg/70">{mark.text(touch, seen, docked)}</p>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-fg/70">{mark.text(touch, seen, docked ? "docked" : barDocked ? "bottom" : "over")}</p>
           </div>
           <div className="flex items-center justify-end gap-1 border-t border-white/[0.08] px-2.5 py-2">
             <button
               type="button"
               onClick={onSkip}
-              className={`rounded-full px-3 text-[12px] font-medium text-mut transition-colors duration-300 hover:text-fg ${docked ? "h-11" : "h-8"}`}
+              className={`rounded-full px-3 text-[12px] font-medium text-mut transition-colors duration-300 hover:text-fg ${docked || touch ? "h-11" : "h-8"}`}
             >
               Preskoči
             </button>
             <button
               type="button"
               onClick={onNext}
-              className={`rounded-full bg-accent px-4 text-[12px] font-semibold tracking-wide text-ink transition-colors duration-300 ease-premium hover:bg-fg ${docked ? "h-11" : "h-8"}`}
+              className={`rounded-full bg-accent px-4 text-[12px] font-semibold tracking-wide text-ink transition-colors duration-300 ease-premium hover:bg-fg ${docked || touch ? "h-11" : "h-8"}`}
             >
               {i < MARKS.length - 1 ? "Dalje" : "Razumijem"}
             </button>

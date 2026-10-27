@@ -22,6 +22,7 @@ export function TopBar({
   onSummary,
   pdf,
   ai,
+  onClose,
 }: {
   desktop: boolean;
   step: number;
@@ -34,6 +35,11 @@ export function TopBar({
   pdf?: PdfExportApi | null;
   /** "Opišite kuhinju" (AI) — only when the helper is enabled for this visitor (not on a phone: its bar has it) */
   ai?: { onOpen: () => void; open: boolean; busy: boolean } | null;
+  /**
+   * the X ("Zatvori studio") was pressed: it still goes to the site at once (never asks) — the studio saves the kitchen
+   * on this device right then, and the next visit offers it back ("Nastavite svoju kuhinju")
+   */
+  onClose?: () => void;
 }) {
   // known only after mount (hooks.ts useReducedMotionSafe): the server and the hydrating render agree
   const reduce = useReducedMotionSafe();
@@ -150,6 +156,7 @@ export function TopBar({
         </motion.div>
         <Link
           href="/"
+          onClick={onClose}
           aria-label="Zatvori studio i vrati se na stranicu"
           className="flex h-10 w-10 items-center justify-center rounded-full border border-white/[0.12] bg-ink-900/40 text-fg/80 backdrop-blur-md transition-all duration-300 ease-premium hover:border-accent/60 hover:text-accent lg:h-11 lg:w-11"
         >
