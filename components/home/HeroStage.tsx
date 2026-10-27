@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, useMotionValueEvent, useScroll, useTransform, type MotionValue } from "framer-motion";
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { StudioEngineApi } from "@/lib/studio/types";
 import { LinkButton } from "@/components/ui/Button";
 import { HERO_CONFIG, PRESET_RANGES, engineProgress, heroStart, presetIndexAt, type HeroPreset, type HeroStart } from "./heroConfig";
@@ -46,6 +46,13 @@ const getStart = (): HeroStart => {
 /** the server renders the tall hero the 3D needs; devices that won't start it by themselves shrink it on hydration */
 const serverStart = (): HeroStart => "auto";
 
+/** the engine's CONTEXT_EVENT (lib/studio/engine/index.ts — not imported here: that would bring three.js into the first load) */
+const CONTEXT_EVENT = "emna-studio-context";
+/** a lost WebGL context: the engine is recreated when the browser restores it, or after this long */
+const RESTORE_MS = 3000;
+/** more losses than this while the page is open: the poster stays */
+const MAX_RESTORES = 3;
+
 type IdleWindow = Window & {
   requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
   cancelIdleCallback?: (id: number) => void;
@@ -86,6 +93,9 @@ export function HeroStage({
   const [active, setActive] = useState(0);
   /** "Pokrenite 3D" was tapped */
   const [requested, setRequested] = useState(false);
+  /** counts the engines created after a lost WebGL context (a change creates the next one) */
+  const [generation, setGeneration] = useState(0);
+  const losses = useRef(0);
 
   const start = useSyncExternalStore(subscribeStart, getStart, serverStart);
   const wants3d = start === "auto" || (start === "tap" && requested);
@@ -104,6 +114,30 @@ export function HeroStage({
     let gotFrame = false;
     let engine: StudioEngineApi | null = null;
     let watchdog: number | null = null;
+    let restoreTimer = 0;
+
+    // a lost WebGL context (a phone back from another app): the engine draws nothing any more, so the poster comes back
+    // and a new engine is built when the browser restores the context, or after RESTORE_MS; after MAX_RESTORES losses
+    // the poster stays
+    const onContext = (e: Event) => {
+      if (cancelled) return;
+      const what = (e as CustomEvent<string>).detail;
+      if (what === "restored") {
+        window.clearTimeout(restoreTimer);
+        setGeneration((g) => g + 1);
+        return;
+      }
+      if (what !== "lost") return;
+      engineRef.current = null;
+      setReady(false);
+      losses.current += 1;
+      if (losses.current > MAX_RESTORES) {
+        setFailed(true);
+        return;
+      }
+      restoreTimer = window.setTimeout(() => setGeneration((g) => g + 1), RESTORE_MS);
+    };
+    el.addEventListener(CONTEXT_EVENT, onContext);
 
     const boot = async () => {
       try {
@@ -112,6 +146,8 @@ export function HeroStage({
         engine = createStudioEngine(el, {
           mode: "showcase",
           config: HERO_CONFIG,
+          // recreated after a lost context: the kitchen at once, without the assembly intro
+          instant: generation > 0,
           onReady: () => {
             gotFrame = true;
             if (!cancelled) setReady(true);
@@ -169,12 +205,14 @@ export function HeroStage({
       if (timer !== null) window.clearTimeout(timer);
       io?.disconnect();
       if (watchdog !== null) window.clearTimeout(watchdog);
+      window.clearTimeout(restoreTimer);
+      el.removeEventListener(CONTEXT_EVENT, onContext);
       engine?.dispose();
       engineRef.current = null;
       drivingRef.current = false;
       setReady(false);
     };
-  }, [wants3d, start, scrollYProgress]);
+  }, [wants3d, start, scrollYProgress, generation]);
 
   // after "Pokrenite 3D" the hero grows from one screen to its scroll height; framer measures the section only on
   // scroll and resize, so ask it to measure again (otherwise the overlay keeps the one-screen progress until a scroll)
@@ -229,8 +267,10 @@ export function HeroStage({
       ref={sectionRef}
       aria-labelledby="naslovnica-naslov"
       // the header turns light-on-dark over this section and drops its backdrop blur here (blurring a live canvas
-      // every frame is costly)
+      // every frame is costly); the phone contact bar (components/site/ContactBar) stays away while it is on screen,
+      // so it never covers the price and finish chips along the bottom
       data-header="dark"
+      data-upit
       data-tone="dark"
       className={`relative bg-night text-fg ${still ? "h-[100svh]" : "h-[220vh]"} motion-reduce:h-[100svh]`}
     >
@@ -267,11 +307,15 @@ export function HeroStage({
                 { t: "Kuhinje po mjeri.", accent: false },
                 { t: "Bez kompromisa.", accent: true },
               ].map((l, i) => (
-                <span key={l.t} className="-my-[0.12em] block overflow-hidden py-[0.12em]">
-                  <span className={`${s.rise} ${l.accent ? "text-accent" : ""}`} style={{ animationDelay: `${0.12 + i * 0.1}s` }}>
-                    {l.t}
+                // a real space between the lines, so the heading reads "Kuhinje po mjeri. Bez kompromisa."
+                <Fragment key={l.t}>
+                  {i > 0 && " "}
+                  <span className="-my-[0.12em] block overflow-hidden py-[0.12em]">
+                    <span className={`${s.rise} ${l.accent ? "text-accent" : ""}`} style={{ animationDelay: `${0.12 + i * 0.1}s` }}>
+                      {l.t}
+                    </span>
                   </span>
-                </span>
+                </Fragment>
               ))}
             </h1>
             <p

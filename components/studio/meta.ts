@@ -41,7 +41,7 @@ export const STEPS: StepDef[] = [
   {
     id: "posalji",
     short: "Pošalji",
-    title: "Pošalji upit",
+    title: "Pošaljite upit",
     lead: "Uz upit stižu mjere, elementi, materijali, slika i link na ovu kuhinju.",
     leadNoImage: "Uz upit stižu mjere, elementi, materijali i link na ovu kuhinju.",
   },
@@ -141,9 +141,6 @@ export const FRONT_ZONE_LONG: Record<FrontZone, string> = {
   tall: "visoki stup",
   island: "otok",
 };
-
-export const TIMELINES = ["Što prije", "1–3 mjeseca", "3–6 mjeseci", "Samo istražujem"] as const;
-export type Timeline = (typeof TIMELINES)[number];
 
 /* ------------------------------------------------------------------ runs and rows */
 

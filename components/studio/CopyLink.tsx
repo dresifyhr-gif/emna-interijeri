@@ -29,12 +29,12 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 /**
- * "Kopiraj link na svoju kuhinju". `getUrl` is read at click time so the link always matches the current kitchen.
+ * "Kopirajte link na svoju kuhinju". `getUrl` is read at click time so the link always matches the current kitchen.
  * If copying is blocked, the link is shown selected so it can be copied by hand.
  */
 export function CopyLinkButton({
   getUrl,
-  label = "Kopiraj link na svoju kuhinju",
+  label = "Kopirajte link na svoju kuhinju",
   variant = "outline",
   showField = false,
   block = false,

@@ -116,7 +116,7 @@ function Ring({ progress, size = 40 }: { progress: number; size?: number }) {
 export function PdfButton({
   pdf,
   variant = "outline",
-  label = "Preuzmi PDF",
+  label = "Preuzmite PDF",
   hint,
   className = "",
 }: {
@@ -134,10 +134,10 @@ export function PdfButton({
   const aria = working
     ? `Pripremam PDF, ${pct(progress)}`
     : state.status === "done"
-      ? "PDF je preuzet. Preuzmi ponovno"
+      ? "PDF je preuzet. Preuzmite ponovno"
       : state.status === "error"
-        ? "PDF nije uspio. Pokušaj ponovno"
-        : "Preuzmi PDF kuhinje";
+        ? "PDF nije uspio. Pokušajte ponovno"
+        : "Preuzmite PDF kuhinje";
   const common = {
     type: "button" as const,
     onClick: start,
@@ -152,7 +152,7 @@ export function PdfButton({
       <button
         {...common}
         aria-label={aria}
-        title="Preuzmi PDF kuhinje"
+        title="Preuzmite PDF kuhinje"
         className={`relative flex h-10 w-10 items-center justify-center rounded-full border border-white/[0.12] bg-ink-900/40 text-fg/80 backdrop-blur-md transition-colors hover:text-fg ${working ? "cursor-progress" : ""} ${className}`}
       >
         {working && <Ring progress={progress} />}

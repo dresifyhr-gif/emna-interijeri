@@ -49,7 +49,7 @@ export function FooterCta() {
         <div>
           <p className="kicker text-accent">{band.kicker}</p>
           <h2 className="heading mt-5 max-w-3xl text-[clamp(36px,5vw,64px)]">
-            {band.title}
+            {band.title}{" "}
             <span className="block text-accent">{band.accent}</span>
           </h2>
         </div>

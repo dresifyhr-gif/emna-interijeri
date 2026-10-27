@@ -157,7 +157,7 @@ export function DesktopPanel({
                 <SummaryList lines={summary} className="mt-3" />
                 <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
                   <CopyLinkButton getUrl={getUrl} variant="quiet" />
-                  {pdf && <PdfButton pdf={pdf} variant="quiet" label="Preuzmi PDF kuhinje" />}
+                  {pdf && <PdfButton pdf={pdf} variant="quiet" label="Preuzmite PDF kuhinje" />}
                 </div>
               </motion.div>
             )}
@@ -385,7 +385,7 @@ export function MobileSummary({
       <SummaryList lines={summary} className="mt-3" />
       <div className="mt-5 flex flex-col gap-3">
         <CopyLinkButton getUrl={getUrl} block className="[&>button]:w-full" />
-        {pdf && <PdfButton pdf={pdf} label="Preuzmi PDF kuhinje" />}
+        {pdf && <PdfButton pdf={pdf} label="Preuzmite PDF kuhinje" />}
       </div>
     </motion.div>
   );

@@ -10,6 +10,7 @@ import { StudioBand } from "@/components/home/StudioBand";
 import { Materials } from "@/components/home/Materials";
 import { Contact } from "@/components/home/Contact";
 import { PerfProbe } from "@/components/home/PerfProbe";
+import { SHARE_IMAGE } from "@/components/pages/meta";
 
 // title and description come from the root layout defaults; openGraph is repeated in full because a
 // page-level openGraph replaces the layout's, and only here does it get og:url
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
     url: "/",
     title: `${site.name} · ${site.tagline}`,
     description: site.description,
-    images: [{ url: "/og-image.jpg", width: 1200, height: 630 }],
+    images: [SHARE_IMAGE],
   },
 };
 

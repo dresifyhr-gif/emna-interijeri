@@ -28,7 +28,7 @@ export const faq: FaqGroup[] = [
         id: "tijek",
         q: "Kako izgleda suradnja od prvog kontakta do montaže?",
         a: "Pošaljete upit putem forme ili iz 3D studija. Dogovaramo izmjeru u vašem prostoru i razgovaramo o tome kako ga koristite. Zatim izrađujemo 3D projekt i ponudu te projekt doradimo dok ne bude onakav kakav želite. Nakon potvrde slijedi izrada, a na kraju montaža.",
-        link: { href: "/kontakt", label: "Pošalji upit" },
+        link: { href: "/kontakt", label: "Pošaljite upit" },
       },
       {
         id: "izmjera",
@@ -73,7 +73,7 @@ export const faq: FaqGroup[] = [
         id: "ravna-ili-l",
         q: "Ravna kuhinja ili L-kuhinja?",
         a: "Ravna kuhinja stoji uz jedan zid i dobro odgovara užim prostorima i kuhinjama otvorenima prema dnevnom boravku. L-kuhinja koristi dva susjedna zida, daje više radne površine i pohrane te lakše tvori radni trokut između sudopera, ploče za kuhanje i hladnjaka. U 3D studiju možete isprobati oba oblika na svojim mjerama.",
-        link: { href: "/studio", label: "Otvori 3D studio" },
+        link: { href: "/studio", label: "Otvorite 3D studio" },
       },
       {
         id: "otok",
@@ -193,7 +193,7 @@ export const faq: FaqGroup[] = [
         id: "sto-je-studio",
         q: "Što je 3D studio?",
         a: "Alat na našoj stranici u kojem kuhinju složite po svojim mjerama: oblik, zidove, prozor, fronte, radnu ploču i dodatke. Vidite je u 3D-u, otvarate ladice i vrata te odmah dobivate okvirni raspon cijene.",
-        link: { href: "/studio", label: "Otvori 3D studio" },
+        link: { href: "/studio", label: "Otvorite 3D studio" },
       },
       {
         id: "studio-cijena",

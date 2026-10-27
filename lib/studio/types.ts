@@ -660,6 +660,11 @@ export interface StudioEngineOptions {
    * inside the room — not behind its walls, not out at the horizon). Without it the room is not clickable.
    */
   onSurfaceClick?: (hit: SurfaceHit) => void;
+  /**
+   * the kitchen at once, without the intro (no assembly, no camera dolly): an engine recreated after a lost WebGL context
+   * shows what the visitor already saw
+   */
+  instant?: boolean;
 }
 
 /** the camera presets of StudioEngineApi.snapshotViews (the PDF export's pictures) */

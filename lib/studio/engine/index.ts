@@ -105,15 +105,9 @@ const EXPOSURE = 0.95;
 /**
  * dispatched on the container when the WebGL context is lost (detail "lost": the engine draws nothing any more) and when
  * the browser restores it (detail "restored"); never for the loss dispose() itself causes. The studio's useStudioEngine
- * listens under the same name and recreates the engine.
+ * and the homepage hero (components/home/HeroStage) listen under the same name and recreate the engine.
  */
 export const CONTEXT_EVENT = "emna-studio-context";
-
-/**
- * what the engine reads of its options: the public ones, and `instant` — a studio recreated after a lost context shows
- * the kitchen at once (no assembly, no camera dolly: the customer already saw it)
- */
-type EngineOptions = StudioEngineOptions & { instant?: boolean };
 
 /**
  * Hero (showcase) only: when nothing but the slow idle drift moves, render at ~30 fps. The drift is under a
@@ -331,7 +325,7 @@ class Engine {
 
   constructor(
     private readonly container: HTMLElement,
-    private readonly opts: EngineOptions,
+    private readonly opts: StudioEngineOptions,
   ) {
     this.doc = container.ownerDocument;
     const win = this.doc.defaultView;

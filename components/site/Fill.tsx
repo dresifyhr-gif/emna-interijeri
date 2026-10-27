@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 export const showTodos = process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_SHOW_TODO === "1";
 
 /**
- * Renders a company fact from lib/site.ts. When the owner hasn't supplied it yet,
+ * Renders a company fact (/admin/postavke, falling back to lib/site.ts). When the owner hasn't supplied it yet,
  * shows a dashed "upisati: …" marker in development and nothing in production.
  */
 export function Fill({
@@ -26,7 +26,7 @@ export function Fill({
   if (!showTodos) return null;
   return (
     <span
-      title="Podatak još nije upisan u lib/site.ts"
+      title="Podatak još nije upisan u /admin/postavke (ili lib/site.ts)"
       className={`fill-todo inline-block rounded border border-dashed border-accent/60 px-1.5 py-0.5 align-middle font-sans text-[11px] font-medium normal-case tracking-normal text-accent ${className}`}
     >
       upisati: {label}

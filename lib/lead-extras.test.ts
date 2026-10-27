@@ -60,7 +60,7 @@ describe("findGalleryPhoto", () => {
   it("finds a gallery photo by its file name", () => {
     const p = findGalleryPhoto("kuhinja-siva-mramor");
     assert.equal(p?.src, "/galerija/kuhinja-siva-mramor.jpg");
-    assert.equal(p?.title, "Antracit kuhinja s mramornom pločom");
+    assert.equal(p?.title, "Antracit L-kuhinja s mramornom pločom");
     assert.equal(findGalleryPhoto(" Kuhinja-Siva-Mramor ")?.src, "/galerija/kuhinja-siva-mramor.jpg");
   });
 

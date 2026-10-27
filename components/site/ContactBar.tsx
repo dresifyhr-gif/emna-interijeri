@@ -6,7 +6,10 @@ import { useEffect, useState, type ReactNode } from "react";
 import { inquiryHref, interestForPath, telHref, waHref, type InquiryInterest } from "@/lib/site";
 import { WhatsAppIcon } from "./WhatsAppFab";
 
-/** sections that hold an inquiry form: the bar steps aside while one of them is on screen */
+/**
+ * sections with their own way to send an inquiry — the forms, and the homepage hero (its "Pošaljite upit", with the
+ * price and finish chips along the bottom of the 3D view): the bar steps aside while one of them is on screen
+ */
 const FORMS = "#upit, [data-upit]";
 
 const waText: Record<InquiryInterest, string> = {
@@ -18,8 +21,8 @@ const waText: Record<InquiryInterest, string> = {
 /**
  * Phones only (below md): a bar fixed to the bottom of the screen with "Pošaljite upit" (the form on /kontakt, with
  * this page's interest), "Nazovite" and WhatsApp — the last two only once the owner has entered the numbers. It slides
- * in after the first ~70 % of a screen and steps aside while an inquiry form is visible. The footer keeps room for it
- * at the very bottom, so nothing ends up hidden underneath and nothing moves when it appears.
+ * in after the first ~70 % of a screen and steps aside while an inquiry form or the homepage hero is visible. The
+ * footer keeps room for it at the very bottom, so nothing ends up hidden underneath and nothing moves when it appears.
  * Tablets and desktops keep the floating WhatsApp button (WhatsAppFab).
  */
 export function ContactBar({ phone, whatsapp }: { phone: string | null; whatsapp: string | null }) {

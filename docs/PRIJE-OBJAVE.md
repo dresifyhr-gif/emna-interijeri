@@ -130,9 +130,15 @@ Tekst je **nacrt**. Neka ga prije objave pregleda pravnik ili savjetnik za zašt
 
 - [ ] Potvrditi da su **sve fotografije u `public/galerija/`** (njih 30) vaše realizacije i da ih smijete objaviti.
   Opisi govore samo što je na slici; grad ili klijent se ne navode osim ako to sami želite (`lib/gallery.ts`).
-- [ ] Potvrditi sliku za dijeljenje na mrežama `public/og-image.jpg` (i ikone `public/apple-touch-icon.png`, `app/favicon.ico`).
-- [ ] `/ormari` i `/interijeri` nemaju fotografija (okvir „Fotografije realizacija uskoro“). Kad ih date, idu u
-  `public/` i u podatke stranice; stock ni AI fotografije se ne koriste.
+- [ ] Potvrditi slike za dijeljenje na mrežama: `public/og-image.jpg` (prava kuhinja uz logo) i `public/og/studio.jpg`
+  (kuhinja iz 3D studija, za `/studio`).
+- [ ] Potvrditi ikonu „E“: `app/icon.png`, `app/apple-icon.png`, `app/favicon.ico` (te `public/apple-touch-icon.png`,
+  ista ikona za stare poveznice).
+- [ ] Pogledati `/radovi`: fotografije su složene po kuhinjama (`projects` u `lib/gallery.ts`). Javiti ako je neka
+  fotografija u krivoj kuhinji.
+- [ ] `/ormari` i `/interijeri` još nemaju vlastitih fotografija (`/ormari` pokazuje crtež ormara, `/interijeri`
+  kuhinje otvorene prema dnevnom boravku). Kad ih date, idu u `public/` i u podatke stranice; stock ni AI fotografije
+  se ne koriste.
 
 ## 6. Slanje upita (Resend), baza, administracija i varijable okruženja — `.env.example`, Vercel
 
@@ -162,6 +168,14 @@ Slanje e-mailova:
   (API odgovara `503 not_configured`). Nakon postavljanja poslati probni upit iz forme na `/kontakt` i iz 3D studija i provjeriti
   da su stigli e-mail vlasniku (sa slikom kuhinje) i potvrda kupcu.
 - [ ] `NEXT_PUBLIC_SHOW_TODO`: samo za preview na kojem vlasnik pregledava markere. U produkciji mora biti prazno.
+
+Obavijesti vlasniku na mobitel (novi upit, prihvaćena ili odbijena ponuda):
+
+- [ ] Jednom pokrenuti `npx web-push generate-vapid-keys` i upisati `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` i
+  `VAPID_SUBJECT` (adresa stranice, npr. `https://emna-interijeri.vercel.app`). Par ključeva se ne mijenja: novi par
+  znači da svaki mobitel mora ponovno uključiti obavijesti. Dok sve tri nisu postavljene, obavijesti se ne šalju.
+- [ ] Na mobitelu: `/admin/postavke/obavijesti` → „Uključi obavijesti na ovom uređaju“, pa „Pošalji probnu
+  obavijest“. Na iPhoneu prvo u Safariju Podijeli → „Dodaj na početni zaslon“ i admin otvoriti s početnog zaslona.
 
 ## 7. Domena i `NEXT_PUBLIC_SITE_URL`
 

@@ -108,7 +108,7 @@ export function useStudioEngine(
         const el = containerRef.current;
         if (cancelled || !el) return;
         try {
-          const options: StudioEngineOptions & { instant?: boolean } = {
+          const options: StudioEngineOptions = {
             mode: "studio",
             config: latest.current.config,
             mood: latest.current.mood,

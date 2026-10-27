@@ -62,7 +62,7 @@ export function StudioBand() {
             </ul>
           </Reveal>
           <Reveal delay={0.18} className="mt-9">
-            <StudioLaunch variant="cream">Otvori 3D studio</StudioLaunch>
+            <StudioLaunch variant="cream">Otvorite 3D studio</StudioLaunch>
           </Reveal>
         </div>
       </div>
