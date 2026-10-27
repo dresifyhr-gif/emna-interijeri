@@ -1,12 +1,15 @@
 /**
  * The phone's simple flow — pure logic, no React (tested in lib/studio/phone-flow.test.ts):
  *
- *   start   "Kako želite početi?" — [Opišite kuhinju (AI): a slot, shown once wired] [Korak po korak] [Otvorite 3D odmah]
+ *   start   "Kako želite početi?" — [Nastavite svoju kuhinju: one saved on this device] [Opišite kuhinju (AI): only when
+ *           enabled] [Korak po korak] [Otvorite 3D odmah]
  *   wizard  four screens, one thing each: Oblik → Mjere → Stil → Uređaji, then the full-screen 3D
- *   3d      the full-screen 3D view with a small bottom bar (price, "Uredi", "Pošalji upit")
+ *   3d      the full-screen 3D view with a small bottom bar (price, "Uredi", "Pošaljite upit"); "Korak po korak" at the top
+ *           of the "Uredi" sheet and "Na početak" in the summary go back to the wizard's first screen, the kitchen kept
  *
  * Where the visitor is in it is remembered for the visit (sessionStorage, phone/stage.ts): a reload goes back to the
- * same screen. A link to a kitchen (?k=) opens straight into the 3D view. Desktops and tablets never see it.
+ * same screen. A link to a kitchen (?k=) opens straight into the 3D view. Desktops and tablets never see it; a phone held
+ * sideways does (PHONE_QUERY), with its panels at the side or in one row (PHONE_LANDSCAPE_QUERY).
  *
  * The "Mjere" screen's edits go through lib/studio/edit.ts (setWallLength, setKitchenExtent, setCeiling, setHeights), so
  * a value out of range comes back as the planner's own friendly Croatian note.
@@ -20,8 +23,13 @@ import { shorterKitchen } from "../room";
 
 /* ------------------------------------------------------------------ which screen */
 
-/** the phone UI: a narrow screen (tablets and desktops keep the full studio) */
-export const PHONE_QUERY = "(max-width: 767px)";
+/**
+ * the phone UI: a narrow screen, or a phone held sideways — a low screen with a finger for a pointer (a low desktop
+ * window has a mouse and keeps the full studio, as tablets do)
+ */
+export const PHONE_QUERY = "(max-width: 767px), (max-height: 500px) and (pointer: coarse)";
+/** …held sideways: the wizard's panel stands at the right and the 3D view's bar is one row, so the kitchen keeps the height */
+export const PHONE_LANDSCAPE_QUERY = "(max-height: 500px) and (pointer: coarse)";
 
 export type WizardStepId = "oblik" | "mjere" | "stil" | "uredaji";
 
@@ -57,11 +65,28 @@ export function parseStage(raw: string | null | undefined): PhoneStage | null {
   return m ? { kind: "wizard", step: clampStep(Number(m[1])) } : null;
 }
 
-/** the first screen: what was remembered this visit, else the 3D view for a link to a kitchen (?k=), else the start */
-export function firstStage(remembered: PhoneStage | null, link: boolean): PhoneStage {
-  if (remembered) return remembered;
+/** a kitchen saved on this device (lib/studio/autosave.ts), as the studio opens */
+export interface SavedEntry {
+  /** there is one */
+  has: boolean;
+  /** …and it is offered back ("Nastavite svoju kuhinju": no kitchen or preset in the address, not the one on screen) */
+  offer: boolean;
+}
+
+/**
+ * the first screen, until the visitor chooses a way in: a saved kitchen offered back waits on the start screen (its first
+ * choice); else what was remembered this visit — the 3D view only with a kitchen to show (a link, or one saved on this
+ * device: the default kitchen in 3D would look as if theirs had been changed) —, else the 3D view for a link to a kitchen
+ * (?k=), else the start
+ */
+export function firstStage(remembered: PhoneStage | null, link: boolean, saved: SavedEntry = { has: false, offer: false }): PhoneStage {
+  if (saved.offer) return { kind: "start" };
+  if (remembered) return remembered.kind === "3d" && !link && !saved.has ? { kind: "start" } : remembered;
   return link ? { kind: "3d" } : { kind: "start" };
 }
+
+/** "Korak po korak" in the "Uredi" sheet, "Na početak" in the summary: the wizard's first screen, the kitchen kept */
+export const WIZARD_AGAIN: PhoneStage = { kind: "wizard", step: 0 };
 
 /** "Dalje": the next wizard screen, or the 3D view after the last one */
 export function nextStage(step: number): PhoneStage {

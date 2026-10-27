@@ -5,9 +5,10 @@ import { Studio } from "@/components/studio/Studio";
 import { StudioFallback } from "@/components/studio/StudioLoader";
 
 export const metadata: Metadata = pageMetadata({
-  title: "3D studio",
+  title: "3D konfigurator kuhinje: složite kuhinju i vidite cijenu",
+  // (at most 155 characters: search results show no more)
   description:
-    "Složite kuhinju po svojim mjerama u 3D-u: oblik, zidovi, svaki element, boje fronti, radna ploča i detalji. Okvirnu cijenu vidite odmah, a upit s mjerama, slikom i linkom šaljete izravno nama.",
+    "Složite kuhinju po mjeri u 3D-u: oblik, mjere, elementi, boje i ploča. Okvirnu cijenu vidite odmah, a upit s mjerama i slikom šaljete izravno nama.",
   path: "/studio",
 });
 

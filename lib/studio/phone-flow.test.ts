@@ -19,6 +19,9 @@ import {
   setSinkSide,
 } from "../../components/studio/phone/appliances";
 import {
+  PHONE_LANDSCAPE_QUERY,
+  PHONE_QUERY,
+  WIZARD_AGAIN,
   WIZARD_LAST,
   WIZARD_STEPS,
   ceilingRow,
@@ -81,7 +84,56 @@ describe("phone flow — screens", () => {
     assert.deepEqual(firstStage(null, false), { kind: "start" });
     assert.deepEqual(firstStage(null, true), { kind: "3d" });
     assert.deepEqual(firstStage({ kind: "wizard", step: 2 }, true), { kind: "wizard", step: 2 }, "a reload mid-wizard (its link in the URL) stays in the wizard");
-    assert.deepEqual(firstStage({ kind: "3d" }, false), { kind: "3d" });
+    assert.deepEqual(firstStage({ kind: "3d" }, true), { kind: "3d" });
+    assert.deepEqual(firstStage({ kind: "start" }, true), { kind: "start" });
+  });
+
+  it("a remembered 3D view with no kitchen to show (no link, nothing saved) goes back to the start", () => {
+    assert.deepEqual(firstStage({ kind: "3d" }, false), { kind: "start" });
+    assert.deepEqual(firstStage({ kind: "3d" }, false, { has: false, offer: false }), { kind: "start" });
+    // a kitchen saved on this device that is not offered (it is the one on screen): the 3D view stays
+    assert.deepEqual(firstStage({ kind: "3d" }, false, { has: true, offer: false }), { kind: "3d" });
+    assert.deepEqual(firstStage({ kind: "wizard", step: 1 }, false), { kind: "wizard", step: 1 }, "the wizard shows its own preview");
+  });
+
+  it("a saved kitchen offered back: the start screen, whatever was remembered", () => {
+    const offer = { has: true, offer: true };
+    for (const r of [null, { kind: "3d" as const }, { kind: "start" as const }, { kind: "wizard" as const, step: 3 }]) {
+      assert.deepEqual(firstStage(r, false, offer), { kind: "start" }, JSON.stringify(r));
+    }
+  });
+
+  it("back to the wizard from the 3D view: its first screen", () => {
+    assert.deepEqual(WIZARD_AGAIN, { kind: "wizard", step: 0 });
+    assert.equal(stageKey(WIZARD_AGAIN), "wizard:0");
+  });
+
+  it("a phone held sideways is a phone too (a finger for a pointer); a low desktop window is not", () => {
+    // the media query lists: narrow, or low with a coarse pointer — the landscape one is the second half
+    assert.deepEqual(
+      PHONE_QUERY.split(",").map((q) => q.trim()),
+      ["(max-width: 767px)", "(max-height: 500px) and (pointer: coarse)"],
+    );
+    assert.equal(PHONE_LANDSCAPE_QUERY, "(max-height: 500px) and (pointer: coarse)");
+    const matches = (q: string, d: { w: number; h: number; coarse: boolean }) =>
+      q.split(",").some((part) =>
+        part
+          .trim()
+          .split(" and ")
+          .every((f) => {
+            const m = /^\((max-width|max-height|pointer): (\d+px|coarse)\)$/.exec(f.trim());
+            assert.ok(m, f);
+            if (m[1] === "pointer") return d.coarse;
+            return (m[1] === "max-width" ? d.w : d.h) <= parseInt(m[2], 10);
+          }),
+      );
+    assert.equal(matches(PHONE_QUERY, { w: 390, h: 844, coarse: true }), true, "phone");
+    assert.equal(matches(PHONE_QUERY, { w: 844, h: 390, coarse: true }), true, "phone sideways");
+    assert.equal(matches(PHONE_QUERY, { w: 932, h: 430, coarse: true }), true, "big phone sideways");
+    assert.equal(matches(PHONE_QUERY, { w: 820, h: 1180, coarse: true }), false, "tablet");
+    assert.equal(matches(PHONE_QUERY, { w: 1180, h: 820, coarse: true }), false, "tablet sideways");
+    assert.equal(matches(PHONE_QUERY, { w: 1100, h: 480, coarse: false }), false, "a low desktop window");
+    assert.equal(matches(PHONE_LANDSCAPE_QUERY, { w: 390, h: 844, coarse: true }), false, "upright: the bottom panels");
   });
 
   it("Dalje / Natrag: through the screens, the start before the first, the 3D view after the last", () => {

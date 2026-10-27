@@ -5,6 +5,11 @@
  *
  * SSR-safe: nothing here touches window/document at module load; everything
  * happens inside createStudioEngine().
+ *
+ * A lost WebGL context (an iPhone drops it under memory pressure, e.g. back from
+ * another app) stops the render loop for good: a restored context has lost every
+ * texture, program and render target, so the page recreates the engine instead.
+ * The container hears both as a CONTEXT_EVENT ("lost" / "restored").
  */
 
 import * as THREE from "three";
@@ -96,6 +101,19 @@ const pieceKey = (p: PlanPiece) => `${p.kind}:${p.zone}:${Math.round(p.x * 10)}:
 /** background colours as they appear on screen (sRGB); showcase = the homepage hero's warm charcoal (night, tailwind) */
 const BG = { showcase: "#141416", day: "#131315", night: "#070708" };
 const EXPOSURE = 0.95;
+
+/**
+ * dispatched on the container when the WebGL context is lost (detail "lost": the engine draws nothing any more) and when
+ * the browser restores it (detail "restored"); never for the loss dispose() itself causes. The studio's useStudioEngine
+ * listens under the same name and recreates the engine.
+ */
+export const CONTEXT_EVENT = "emna-studio-context";
+
+/**
+ * what the engine reads of its options: the public ones, and `instant` — a studio recreated after a lost context shows
+ * the kitchen at once (no assembly, no camera dolly: the customer already saw it)
+ */
+type EngineOptions = StudioEngineOptions & { instant?: boolean };
 
 /**
  * Hero (showcase) only: when nothing but the slow idle drift moves, render at ~30 fps. The drift is under a
@@ -304,6 +322,8 @@ class Engine {
   private prevTickMs = 0;
   private docVisible = true;
   private inView = true;
+  /** the WebGL context was lost: nothing renders again (CONTEXT_EVENT — the page recreates the engine) */
+  private contextLost = false;
   private disposed = false;
   private readyFired = false;
   private readonly cleanups: (() => void)[] = [];
@@ -311,7 +331,7 @@ class Engine {
 
   constructor(
     private readonly container: HTMLElement,
-    private readonly opts: StudioEngineOptions,
+    private readonly opts: EngineOptions,
   ) {
     this.doc = container.ownerDocument;
     const win = this.doc.defaultView;
@@ -369,6 +389,24 @@ class Engine {
       );
     }
     container.appendChild(canvas);
+    // a lost context: kept restorable (preventDefault), the loop stops for good and the container hears it; dispose()
+    // removes these first, so its own forceContextLoss is never reported
+    const onLost = (e: Event) => {
+      e.preventDefault();
+      if (this.disposed || this.contextLost) return;
+      this.contextLost = true;
+      this.updateRunning();
+      container.dispatchEvent(new CustomEvent(CONTEXT_EVENT, { detail: "lost" }));
+    };
+    const onRestored = () => {
+      if (!this.disposed) container.dispatchEvent(new CustomEvent(CONTEXT_EVENT, { detail: "restored" }));
+    };
+    canvas.addEventListener("webglcontextlost", onLost);
+    canvas.addEventListener("webglcontextrestored", onRestored);
+    this.cleanups.push(() => {
+      canvas.removeEventListener("webglcontextlost", onLost);
+      canvas.removeEventListener("webglcontextrestored", onRestored);
+    });
     this.stats = {
       mode: this.mode,
       tier: 0,
@@ -589,7 +627,8 @@ class Engine {
     this.uploadTextures();
 
     this.booting = false;
-    const instant = this.reduced;
+    // (a studio recreated after a lost context: the kitchen as it was, no intro)
+    const instant = this.reduced || Boolean(this.opts.instant);
     if (this.mode === "studio") {
       if (instant) {
         K.timeline.finish();
@@ -1075,7 +1114,7 @@ class Engine {
   // ================================================================ loop
 
   private updateRunning(): void {
-    const run = !this.disposed && this.docVisible && this.inView && !this.booting;
+    const run = !this.disposed && !this.contextLost && this.docVisible && this.inView && !this.booting;
     if (run && !this.raf) {
       this.last = performance.now() / 1000;
       this.raf = this.win.requestAnimationFrame(this.frame);
@@ -3194,7 +3233,8 @@ class Engine {
     this.composer.dispose();
     this.scene.clear();
     this.renderer.dispose();
-    this.renderer.forceContextLoss();
+    // (a context already lost has nothing to give back — and asking a lost one for the extension only warns)
+    if (!this.contextLost) this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
     this.labels?.domElement.remove();
     if (this.restorePosition) this.container.style.position = "";
