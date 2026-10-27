@@ -56,6 +56,35 @@ const LAYOUT_NAME: Record<KitchenConfig["layout"], string> = {
   G: "G-kuhinja",
 };
 
+/** what the hero knows about the visitor's device (read in the browser, HeroStage) */
+export interface HeroDevice {
+  reducedMotion: boolean;
+  /** navigator.connection.saveData */
+  saveData: boolean;
+  /** (pointer: coarse): phones and tablets */
+  coarse: boolean;
+  /** navigator.hardwareConcurrency (logical cores), when the browser tells */
+  cores?: number;
+  /** navigator.deviceMemory (GB, rounded down; Chromium only) */
+  memory?: number;
+}
+
+/**
+ * How the hero's live 3D starts:
+ *  - "auto": by itself, once the page has loaded and gone idle (desktop; phones and tablets with ≥ 6 cores and,
+ *    where the browser tells, ≥ 4 GB) — building the kitchen is seconds of main-thread work on a weaker phone
+ *  - "tap":  the poster stays, with a "Pokrenite 3D" button (weaker touch devices, Save-Data)
+ *  - "off":  poster only (reduced motion: the 3D hero is a scroll-driven camera)
+ */
+export type HeroStart = "auto" | "tap" | "off";
+
+export function heroStart(d: HeroDevice): HeroStart {
+  if (d.reducedMotion) return "off";
+  if (d.saveData) return "tap";
+  if (d.coarse && ((d.cores ?? 0) < 6 || (d.memory !== undefined && d.memory < 4))) return "tap";
+  return "auto";
+}
+
 /** short technical readout of what the hero shows, e.g. "Kuhinja s otokom · zid 420 cm · otok 240 cm" */
 export function heroReadout(cfg: KitchenConfig = HERO_CONFIG): string {
   const parts = [LAYOUT_NAME[cfg.layout], `zid ${cfg.walls.a} cm`];
