@@ -22,7 +22,7 @@ export function SuccessOverlay({
 }: {
   sent: SentInfo;
   getUrl: () => string;
-  /** "Preuzmi PDF" — the kitchen they just sent, to keep */
+  /** "Preuzmite PDF" — the kitchen they just sent, to keep */
   pdf?: PdfExportApi;
   onContinue: () => void;
 }) {
@@ -120,16 +120,24 @@ export function SuccessOverlay({
           Hvala, {sent.first}.
         </h2>
         <p id="studio-thanks-text" className="mt-5 max-w-md text-[15px] leading-relaxed text-fg/80">
-          Vaša kuhinja je stigla do nas — s mjerama, materijalima{sent.withImage ? ", slikom" : ""} i linkom. Javit ćemo vam se
-          telefonom ili e-mailom da dogovorimo izmjeru i sljedeće korake.
+          Vaša kuhinja je stigla do nas — s mjerama, materijalima{sent.withImage ? ", slikom" : ""} i linkom.{" "}
+          {sent.confirmation === null
+            ? "Javit ćemo vam se telefonom da dogovorimo izmjeru."
+            : "Javit ćemo vam se telefonom ili e-mailom da dogovorimo izmjeru i sljedeće korake."}
         </p>
+        {sent.number && (
+          <p className="mt-4 text-[14px] text-fg/80">
+            Broj vašeg upita: <span className="font-medium tabular-nums text-fg">{sent.number}</span>
+          </p>
+        )}
         <p className="mt-3 max-w-md text-[13px] leading-relaxed text-mut">
-          <ConfirmationLine sent={sent} /> Link na kuhinju možete spremiti i otvoriti kad god želite.
+          <ConfirmationLine sent={sent} />
+          Spremite link na kuhinju ili preuzmite PDF — kuhinju tako možete otvoriti kad god želite.
         </p>
 
         <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-          <CopyLinkButton getUrl={getUrl} variant="accent" block />
-          {pdf && <PdfButton pdf={pdf} label="Preuzmi PDF" />}
+          <CopyLinkButton getUrl={getUrl} variant="accent" label="Kopirajte link na kuhinju" block />
+          {pdf && <PdfButton pdf={pdf} label="Preuzmite PDF" />}
           <LinkButton href="/" variant="outline" arrow className="py-3">
             Natrag na stranicu
           </LinkButton>
@@ -139,18 +147,18 @@ export function SuccessOverlay({
           onClick={onContinue}
           className="mt-6 text-[12.5px] text-mut underline decoration-white/20 underline-offset-4 transition-colors hover:text-fg"
         >
-          Zatvori i nastavi razgledavati kuhinju
+          Zatvorite i nastavite razgledavati kuhinju
         </button>
       </motion.div>
     </motion.div>
   );
 }
 
-/** only says a confirmation went out when the API said so */
+/** a sentence about the confirmation e-mail only when the API said what happened to it (e-mail may simply be off) */
 function ConfirmationLine({ sent }: { sent: SentInfo }) {
   const email = <span className="text-fg">{sent.email}</span>;
-  if (sent.confirmation === true) return <>Kratku potvrdu sa sažetkom poslali smo na {email}.</>;
+  if (sent.confirmation === true) return <>Kratku potvrdu sa sažetkom poslali smo na {email}. </>;
   if (sent.confirmation === false)
-    return <>Potvrdu na {email} ovaj put nismo uspjeli poslati, ali vaš upit je stigao do nas.</>;
-  return <>Ako je sve u redu, kratku potvrdu sa sažetkom dobit ćete na {email}.</>;
+    return <>Potvrdu na {email} ovaj put nismo uspjeli poslati, ali vaš upit je stigao do nas. </>;
+  return null;
 }

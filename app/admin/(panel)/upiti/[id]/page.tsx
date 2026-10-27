@@ -28,8 +28,8 @@ import { LEAD_NOTES_MAX, getLeadDetail, isUuid } from "@/lib/admin/leads";
 import { getCompanyInfo } from "@/lib/admin/quotes";
 import { normalizeCompany } from "@/lib/pdf/company";
 import { PRICES_CONFIRMED } from "@/lib/studio/catalog";
-import { toWhatsappDigits } from "@/lib/admin/settings";
 import { LEAD_SOURCE_LABEL } from "@/lib/admin/status";
+import { leadReplyText, smsHref, toWhatsappDigits, whatsappHref } from "@/lib/admin/whatsapp-text";
 import { requireAdmin } from "@/lib/auth/session";
 import { dbErrorLabel } from "@/lib/db";
 import { site, telHref } from "@/lib/site";
@@ -89,7 +89,11 @@ export default async function LeadDetailPage({ params }: { params: Params }) {
   const price = formatPriceRange(lead.priceLow, lead.priceHigh);
   const summary = Array.isArray(lead.summary) ? lead.summary.filter((l): l is string => typeof l === "string" && l.trim() !== "") : [];
   const isStudio = lead.source === "studio";
+  // a ready-made reply, opened in WhatsApp / Messages — the owner can still change it before sending
+  const replyText = leadReplyText({ name: lead.name, brand: site.name, number: lead.number, source: lead.source });
   const waDigits = toWhatsappDigits(lead.phone);
+  const waLink = waDigits ? whatsappHref(waDigits, replyText) : null;
+  const smsLink = smsHref(lead.phone, replyText);
   const subject = `Vaš upit ${lead.number} – ${site.name}`;
   const mailHref = `mailto:${lead.email}?subject=${encodeURIComponent(subject)}`;
   const newQuoteHref = `/admin/ponude/nova?upit=${lead.id}`;
@@ -140,23 +144,39 @@ export default async function LeadDetailPage({ params }: { params: Params }) {
                 <IconPhone size={16} />
                 <span className="truncate">Nazovi {lead.phone}</span>
               </a>
-              {waDigits.length >= 9 && (
-                <a
-                  href={`https://wa.me/${waDigits}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={buttonClass("secondary", "md", "justify-start")}
-                >
-                  <IconChat size={16} />
-                  WhatsApp
-                  <span className="sr-only">(nova kartica)</span>
-                </a>
+              {(waLink || smsLink) && (
+                <div className="flex gap-2">
+                  {waLink && (
+                    <a
+                      href={waLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={buttonClass("secondary", "md", "min-w-0 flex-1 justify-start")}
+                    >
+                      <IconChat size={16} />
+                      WhatsApp
+                      <span className="sr-only">(nova kartica, s pripremljenom porukom)</span>
+                    </a>
+                  )}
+                  {smsLink && (
+                    <a href={smsLink} className={buttonClass("secondary", "md", waLink ? "shrink-0" : "flex-1 justify-start")}>
+                      SMS
+                      <span className="sr-only">(s pripremljenom porukom)</span>
+                    </a>
+                  )}
+                </div>
               )}
               <a href={mailHref} className={buttonClass("secondary", "md", "justify-start")}>
                 <IconMail size={16} />
                 Pošalji e-mail
               </a>
             </div>
+            {(waLink || smsLink) && (
+              <p className="mt-3 text-[12px] leading-snug text-mut">
+                WhatsApp i SMS otvaraju se s pripremljenom porukom: pozdrav, broj upita i pitanje o izmjeri. Prije slanja je
+                možete izmijeniti.
+              </p>
+            )}
           </Card>
         </div>
 
