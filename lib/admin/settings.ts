@@ -16,6 +16,7 @@ import { z, type ZodType } from "zod";
 import { dbErrorLabel, getDb, isDbConfigured } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { site } from "@/lib/site";
+import { toWhatsappDigits } from "./whatsapp-text";
 
 /** well-known keys — add new ones here so every engineer uses the same string */
 export const SETTING_KEYS = {
@@ -270,14 +271,6 @@ function httpsUrl(v: string): URL | null {
   }
 }
 
-/** "091 123 4567" / "+385 91…" / "00385 91…" → "385911234567" (wa.me form) */
-export function toWhatsappDigits(v: string): string {
-  let d = digitsOf(v);
-  if (d.startsWith("00")) d = d.slice(2);
-  else if (d.startsWith("0")) d = `385${d.slice(1)}`;
-  return d;
-}
-
 type Check = (v: string) => { value: Maybe } | { error: string };
 
 const ok = (value: Maybe) => ({ value });
@@ -306,8 +299,9 @@ const CHECKS: { [G in CompanyGroup]: Record<keyof CompanySettings[G], Check> } =
       const v = oneLine(raw);
       if (!v) return ok(null);
       if (v.length > 40 || !/^[+\d\s()./-]+$/.test(v)) return fail("Upišite broj mobitela, npr. +385 91 123 4567.");
+      // the same wa.me form the admin's WhatsApp buttons use: "+385 (0)91…" loses the trunk 0
       const d = toWhatsappDigits(v);
-      if (d.length < 9 || d.length > 15) return fail("Broj mora imati pozivni broj zemlje i 9 do 15 znamenki.");
+      if (!d || d.length < 9) return fail("Broj mora imati pozivni broj zemlje i 9 do 15 znamenki.");
       return ok(d);
     },
     email: (raw) => {

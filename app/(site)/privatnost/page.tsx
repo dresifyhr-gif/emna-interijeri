@@ -180,7 +180,8 @@ export default async function PrivatnostPage() {
                 <strong>Upit iz 3D studija.</strong> Isti kontakt podaci te kuhinja koju ste složili: mjere zidova i stropa,
                 oblik, odabrani materijali i dodaci, okvirna cijena, slika 3D prikaza i poveznica koja otvara tu
                 konfiguraciju. Dok kuhinju slažete, podaci ostaju u vašem pregledniku i ne šalju nam se dok ne pošaljete
-                upit.
+                upit. Zadnju kuhinju koju ste složili studio čuva na vašem uređaju do 90 dana (samo mjere i materijale, bez
+                kontakt podataka), da vam je pri sljedećem posjetu može ponuditi.
               </p>
               <p>
                 <strong>Pomoćnik „Opišite kuhinju“ u 3D studiju.</strong> Ako ga koristite, vaš opis kuhinje, fotografija koju
@@ -315,6 +316,12 @@ export default async function PrivatnostPage() {
               <p>
                 Stranica ne postavlja kolačiće za praćenje, analitiku ni oglašavanje, zato nema ni trake za privolu.
                 Fontovi se poslužuju s našeg poslužitelja, bez učitavanja s vanjskih servisa.
+              </p>
+              <p>
+                3D studio u lokalnoj pohrani vašeg preglednika čuva zadnju kuhinju koju ste složili (mjere i materijale, bez
+                kontakt podataka) do 90 dana te nekoliko postavki prikaza, npr. jeste li već vidjeli upute. Ti podaci ostaju
+                na vašem uređaju i ne šalju nam se. Uklonite ih tako da u postavkama preglednika obrišete podatke ove
+                stranice.
               </p>
               <p>Ako to ikad promijenimo, prvo ćemo ažurirati ovu stranicu i zatražiti vašu privolu gdje je ona potrebna.</p>
             </Section>

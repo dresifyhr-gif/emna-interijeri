@@ -50,7 +50,9 @@ type Kitchen = Omit<Project, "photos" | "cover"> & { files: Shot[] };
 
 /**
  * Display order. The first five are five different kitchens (homepage "Naši radovi", top of /radovi, its share
- * image), led by the owner's favourites; covers are full-size photos without loose cables or stickers in view.
+ * image), led by the owner's favourites; covers are full-size photos without loose cables in view. The first cover
+ * (kuhinja-siva-mramor, the owner's own pick) shows a factory sticker on the oven glass: kept on purpose, flagged for
+ * the owner in docs/PRIJE-OBJAVE.md section 5.
  */
 const kitchens: Kitchen[] = [
   {

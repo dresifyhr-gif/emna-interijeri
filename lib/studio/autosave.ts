@@ -56,19 +56,20 @@ export function parseSaved(raw: string | null | undefined, now = Date.now()): Sa
 }
 
 /**
- * Offer the saved kitchen back? Only when /studio opened without a kitchen or a preset in its address (?k, ?oblik, ?front,
- * ?top — those open what they say) and the saved kitchen is not the one already on screen.
+ * Offer the saved kitchen back? Whenever /studio opened without a working kitchen link (?k — that opens what it says) and
+ * the saved kitchen is not the one already on screen. A preset (?oblik, ?front, ?top: the site's "Složite sličnu u
+ * 3D-u" links) only picks the kitchen to start from, so the saved one is still offered — and, unanswered, kept.
  */
 export function shouldOfferRestore({
-  hasQueryConfig,
+  hasKitchenLink,
   saved,
   currentCode,
 }: {
-  hasQueryConfig: boolean;
+  hasKitchenLink: boolean;
   saved: SavedKitchen | null;
   currentCode: string;
 }): boolean {
-  return Boolean(saved) && !hasQueryConfig && saved?.code !== currentCode;
+  return Boolean(saved) && !hasKitchenLink && saved?.code !== currentCode;
 }
 
 const SHAPE: Record<Layout, string> = {

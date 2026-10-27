@@ -84,15 +84,17 @@ describe("autosave — what is stored", () => {
 describe("autosave — the offer", () => {
   const def = encodeConfig(fitToPlanner(configFromQuery({})));
 
-  it("/studio without a kitchen in the address and a saved kitchen: offered", () => {
-    assert.equal(shouldOfferRestore({ hasQueryConfig: false, saved: savedOf(U), currentCode: def }), true);
+  it("/studio without a kitchen link and a saved kitchen: offered, also over a preset (?oblik / ?front / ?top)", () => {
+    assert.equal(shouldOfferRestore({ hasKitchenLink: false, saved: savedOf(U), currentCode: def }), true);
+    const preset = encodeConfig(fitToPlanner(configFromQuery({ oblik: "L", front: "lak", top: "hrast" })));
+    assert.equal(shouldOfferRestore({ hasKitchenLink: false, saved: savedOf(U), currentCode: preset }), true);
   });
 
-  it("nothing saved, a link or preset in the address, or the same kitchen on screen: not offered", () => {
-    assert.equal(shouldOfferRestore({ hasQueryConfig: false, saved: null, currentCode: def }), false);
-    assert.equal(shouldOfferRestore({ hasQueryConfig: true, saved: savedOf(U), currentCode: def }), false);
+  it("nothing saved, a kitchen link in the address, or the same kitchen on screen: not offered", () => {
+    assert.equal(shouldOfferRestore({ hasKitchenLink: false, saved: null, currentCode: def }), false);
+    assert.equal(shouldOfferRestore({ hasKitchenLink: true, saved: savedOf(U), currentCode: def }), false);
     const same = savedOf(U);
-    assert.equal(shouldOfferRestore({ hasQueryConfig: false, saved: same, currentCode: same.code }), false);
+    assert.equal(shouldOfferRestore({ hasKitchenLink: false, saved: same, currentCode: same.code }), false);
   });
 });
 

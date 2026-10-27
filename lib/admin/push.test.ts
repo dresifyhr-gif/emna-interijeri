@@ -48,6 +48,13 @@ describe("normalizeSubscription", () => {
     const sub = normalizeSubscription({ endpoint: FCM, expirationTime: null, keys: { ...KEYS, extra: "x" } });
     assert.deepEqual(sub, { endpoint: FCM, keys: KEYS });
     assert.deepEqual(normalizeSubscription({ endpoint: APPLE, keys: KEYS }), { endpoint: APPLE, keys: KEYS });
+    for (const endpoint of [
+      "https://updates.push.services.mozilla.com/wpush/v2/gAAAAA",
+      "https://wns2-db5p.notify.windows.com/w/?token=BQYAAA",
+      "https://api.push.apple.com/3/device/abc",
+    ]) {
+      assert.ok(normalizeSubscription({ endpoint, keys: KEYS }), endpoint);
+    }
   });
 
   it("refuses anything that isn't a public https push endpoint", () => {
@@ -57,6 +64,11 @@ describe("normalizeSubscription", () => {
       "https://127.0.0.1/push",
       "https://[::1]/push",
       "https://10.0.0.8/push",
+      "https://localhost./x",
+      "https://127.0.0.1.nip.io/x",
+      "https://metadata.google.internal/computeMetadata/v1/",
+      "https://fcm.googleapis.com.evil.example/x",
+      "https://pushapple.com/x",
       "https://fcm.googleapis.com:8443/fcm/send/x",
       "https://user:pass@fcm.googleapis.com/fcm/send/x",
       "javascript:alert(1)",
@@ -279,8 +291,8 @@ describe("service worker and manifest (public/)", () => {
     assert.equal(w.shown[0].options.body, "samo tekst");
   });
 
-  it("the manifest installs only the admin", () => {
-    assert.equal(manifest.scope, "/admin/");
+  it("the manifest installs only the admin, the dashboard /admin included", () => {
+    assert.equal(manifest.scope, "/admin");
     assert.equal(manifest.start_url, "/admin/upiti");
     assert.equal(manifest.display, "standalone");
     assert.equal(manifest.short_name, "EMNA");

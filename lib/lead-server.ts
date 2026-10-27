@@ -23,7 +23,7 @@ import { formatPrice, type LeadEmailData } from "./lead-email/shared";
 import { estimate } from "./studio/price";
 import { sanitizeConfig, studioPath } from "./studio/share";
 import { summarize } from "./studio/summary";
-import { insertLead, setLeadSnapshot } from "./db/leads";
+import { findLeadSince, insertLead, setLeadSnapshot } from "./db/leads";
 import { isBlobConfigured, leadSnapshotPath, putPrivateFile } from "./admin/files";
 
 /** a 3 MB snapshot data URL + the rest of the payload, with headroom */
@@ -295,6 +295,14 @@ export interface StoredLead {
   snapshotPath: string | null;
 }
 
+/** the contact details exactly as storeLead writes them */
+const contactOf = (lead: LeadInput) => ({ name: line(lead.name), phone: line(lead.phone), email: lead.email.trim() });
+
+/** this inquiry, if it is already stored since `since` (a retry after a lost reply), or null */
+export async function findStoredLead(lead: LeadInput, since: Date): Promise<StoredLead | null> {
+  return findLeadSince(contactOf(lead), since);
+}
+
 /**
  * Saves a validated inquiry (throws when the database is unavailable — the caller decides).
  * The snapshot upload is best effort: a failed upload never loses the inquiry itself.
@@ -305,9 +313,7 @@ export async function storeLead(lead: LeadInput, opts: { requestOrigin: string |
     {
       source: lead.source,
       status: "novi",
-      name: line(lead.name),
-      phone: line(lead.phone),
-      email: lead.email.trim(),
+      ...contactOf(lead),
       city: opt(lead.city && line(lead.city)),
       interest: opt(lead.interest && line(lead.interest)),
       timeline: opt(lead.timeline && line(lead.timeline)),

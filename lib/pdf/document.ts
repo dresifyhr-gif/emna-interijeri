@@ -16,6 +16,7 @@
  */
 
 import { jsPDF } from "jspdf";
+import { telHref } from "../site";
 import { kitchenDrawings, toSVG, type Drawing } from "../studio/drawings";
 import { STANDARD_SCALES, fitScale, type SvgOptions } from "../studio/drawings/svg";
 import { planKitchen, sanitizeConfig } from "../studio/plan";
@@ -704,7 +705,7 @@ function closingPage(ctx: Ctx): void {
     setFont(pdf, { font: "sans", size: 8.2, color: C.fg });
     vl.forEach((t, ti) => pdf.text(t, px, cy + 4.2 + ti * 3.7));
     if (l.label === "E-mail") pdf.link(px, cy + 1, pw, 4.5, { url: `mailto:${l.value}` });
-    if (l.label === "Telefon") pdf.link(px, cy + 1, pw, 4.5, { url: `tel:${l.value.replace(/[^\d+]/g, "")}` });
+    if (l.label === "Telefon") pdf.link(px, cy + 1, pw, 4.5, { url: telHref(l.value) });
     cy += 4.2 + vl.length * 3.7 + 2.6;
   }
   if (!lines.length) {

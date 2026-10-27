@@ -23,6 +23,7 @@ import {
   parseSnapshot,
   rateLimit,
   readBodyLimited,
+  findStoredLead,
   sendLeadEmails,
   storeLead,
   type StoredLead,
@@ -35,6 +36,8 @@ import { site } from "@/lib/site";
 export const maxDuration = 30;
 
 const STORE_RETRY_MS = 400;
+/** the database's clock may run behind ours: look for an earlier attempt's row this far back */
+const CLOCK_SLACK_MS = 60_000;
 
 function reply(body: LeadResult, status: number, headers: Record<string, string> = {}) {
   return Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
@@ -80,10 +83,15 @@ function isJson(req: Request): boolean {
 /**
  * storeLead, once more after a short pause when the database stumbled (timeout, dropped connection).
  * A data or constraint error (Postgres class 22 / 23) would fail the same way again, so it isn't retried.
+ * The first INSERT may have committed with only its reply lost: the retry first looks for that row, so the owner never
+ * gets the same inquiry twice under two numbers.
  */
 async function storeWithRetry(lead: LeadInput, opts: { requestOrigin: string | null; now: Date }): Promise<StoredLead | null> {
+  const since = new Date(opts.now.getTime() - CLOCK_SLACK_MS);
   for (let attempt = 1; ; attempt++) {
     try {
+      const landed = attempt > 1 ? await findStoredLead(lead, since) : null;
+      if (landed) return landed;
       return await storeLead(lead, opts);
     } catch (err) {
       const again = attempt === 1 && !/^2[23]/.test(pgErrorCode(err) ?? "");

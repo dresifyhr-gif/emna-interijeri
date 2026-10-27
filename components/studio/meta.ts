@@ -40,7 +40,7 @@ export const STEPS: StepDef[] = [
   { id: "ploca", short: "Ploča", title: "Ploča i detalji", lead: "Radna ploča, zid iza nje, napa, sudoper i rasvjeta." },
   {
     id: "posalji",
-    short: "Pošalji",
+    short: "Upit",
     title: "Pošaljite upit",
     lead: "Uz upit stižu mjere, elementi, materijali, slika i link na ovu kuhinju.",
     leadNoImage: "Uz upit stižu mjere, elementi, materijali i link na ovu kuhinju.",

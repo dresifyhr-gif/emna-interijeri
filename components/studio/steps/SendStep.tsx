@@ -357,7 +357,7 @@ function SummaryBlock({ summary }: { summary: string[] }) {
           aria-expanded={allLines}
           className="mt-1 inline-flex items-center gap-1.5 text-[12px] font-medium text-accent transition-colors hover:text-fg"
         >
-          {allLines ? "Prikaži manje" : `Prikaži sve (${summary.length})`}
+          {allLines ? "Prikažite manje" : `Prikažite sve (${summary.length})`}
           <ChevronUp className={`h-3.5 w-3.5 transition-transform duration-300 ${allLines ? "" : "rotate-180"}`} />
         </button>
       )}

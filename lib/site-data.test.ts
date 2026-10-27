@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { after, before, describe, it } from "node:test";
-import { inquiryHref, interestForPath, site } from "./site";
+import { inquiryHref, interestForPath, site, telHref, waHref } from "./site";
 
 // lib/site-data.ts and lib/admin/settings.ts start with `import "server-only"`, which throws outside a React Server
 // Components build: answer it with an empty module first, then load them
@@ -129,6 +129,30 @@ describe("inquiry links (lib/site.ts)", () => {
   it("every link lands on the form (#upit), with the measurement wish only when asked", () => {
     assert.equal(inquiryHref("ormar"), "/kontakt?interes=ormar#upit");
     assert.equal(inquiryHref("kuhinja", { measurement: true }), "/kontakt?interes=kuhinja&izmjera=1#upit");
+  });
+});
+
+describe("phone and WhatsApp links from the owner's numbers", () => {
+  it("telHref keeps the number as typed but drops the trunk 0 after the country code", () => {
+    assert.equal(telHref("+385 91 123 4567"), "tel:+385911234567");
+    assert.equal(telHref("+385 (0)91 123 4567"), "tel:+385911234567");
+    assert.equal(telHref("00385 (0)91 123 4567"), "tel:+385911234567");
+    assert.equal(telHref("091 123 4567"), "tel:0911234567");
+  });
+
+  it("the WhatsApp field is saved in wa.me form without the trunk 0, and an older saved value is fixed in the link", () => {
+    const form = (wa: string) => {
+      const f = new FormData();
+      f.set("contact.whatsapp", wa);
+      return settings.parseCompanyForm(f);
+    };
+    for (const typed of ["+385 (0)91 123 4567", "091 123 4567", "00385 91 123 4567"]) {
+      const r = form(typed);
+      assert.ok(r.ok, typed);
+      assert.equal(r.value.contact.whatsapp, "385911234567", typed);
+    }
+    assert.equal(form("123").ok, false);
+    assert.equal(waHref("3850911234567"), "https://wa.me/385911234567");
   });
 });
 

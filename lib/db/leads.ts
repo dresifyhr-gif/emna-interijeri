@@ -4,7 +4,7 @@
  *   const { id, number } = await insertLead({ source: "kontakt", name, phone, email });
  */
 import "server-only";
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getDb, pgErrorCode, type Db } from "./index";
 import { nextLeadNumber } from "./numbers";
 import { leads, type NewLead } from "./schema";
@@ -26,6 +26,24 @@ export async function insertLead(values: LeadInsert, opts: { db?: Db; at?: Date 
       if (pgErrorCode(err) !== "23505" || attempt >= 2) throw err;
     }
   }
+}
+
+/**
+ * The newest lead with exactly these contact details stored at or after `since`, or null. Asked before an inquiry is
+ * stored a second time: the first INSERT may have landed even though its reply was lost.
+ */
+export async function findLeadSince(
+  match: { name: string; phone: string; email: string },
+  since: Date,
+  db: Db = getDb(),
+): Promise<{ id: string; number: string; snapshotPath: string | null } | null> {
+  const [row] = await db
+    .select({ id: leads.id, number: leads.number, snapshotPath: leads.snapshotPath })
+    .from(leads)
+    .where(and(eq(leads.name, match.name), eq(leads.phone, match.phone), eq(leads.email, match.email), gte(leads.createdAt, since)))
+    .orderBy(desc(leads.createdAt))
+    .limit(1);
+  return row ?? null;
 }
 
 export async function setLeadSnapshot(id: string, snapshotPath: string, db: Db = getDb()): Promise<void> {

@@ -9,7 +9,7 @@
  *
  * The kitchen is also kept on this device (lib/studio/autosave.ts): from the customer's first change on, its link code
  * is saved a moment after every change (and at once when the studio is closed or hidden). /studio opened again without
- * a kitchen in its address offers it back — "Nastavite svoju kuhinju (L 380 × 220 · antracit)": a card over the 3D view
+ * a kitchen link in its address (a preset link such as ?oblik=L still counts as without) offers it back — "Nastavite svoju kuhinju (L 380 × 220 · antracit)": a card over the 3D view
  * with "Nastavite" / "Nova kuhinja" (desktop, tablet), the first choice of the start screen (phone). Until it is
  * answered nothing is saved over it. The X never asks before closing: the kitchen waits on the next visit.
  *
@@ -69,7 +69,7 @@ import { moduleDef } from "@/lib/studio/catalog";
 import { isEdited, remove, removeColumn, resetAll, resetRun, setRoomCeiling, slotEditInfo, type EditResult, type RunRef } from "@/lib/studio/edit";
 import { geometryKey, planKitchen, sanitizeConfig, wallsFor, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { estimate } from "@/lib/studio/price";
-import { configFromQuery, encodeConfig, studioPath } from "@/lib/studio/share";
+import { configFromQuery, decodeConfig, encodeConfig, studioPath } from "@/lib/studio/share";
 import { summarize } from "@/lib/studio/summary";
 import type { DimLabelTarget, FrontZone, KitchenConfig, Layout, ModuleInfo, Mood, ScreenRect, SurfaceHit, ViewPreset, WallId } from "@/lib/studio/types";
 import { DimEditor, type DimTargetState } from "./DimEditor";
@@ -194,8 +194,8 @@ export function Studio() {
     ),
   );
   const [initialKey] = useState(() => encodeConfig(initial));
-  /** the address opens a kitchen or a preset (?k / ?oblik / ?front / ?top): it is shown, nothing is offered back */
-  const [queryConfig] = useState(() => ["k", "oblik", "front", "top"].some((q) => Boolean(params.get(q))));
+  /** the address opens a kitchen (a ?k that decodes): it is shown, nothing is offered back. A preset still gets the offer */
+  const [kitchenLink] = useState(() => Boolean(decodeConfig(params.get("k") ?? "")));
   /**
    * the kitchen saved on this device before this visit (lib/studio/autosave.ts). Read straight from storage: the server
    * (and a hydrating render) sees none — the card and the phone's start screen it shows on only appear after mount.
@@ -203,7 +203,7 @@ export function Studio() {
   const [saved] = useState<SavedKitchen | null>(() => (typeof window === "undefined" ? null : readSaved()));
   /** that kitchen, offered back and not yet answered ("Nastavite" / "Nova kuhinja"); while it is, nothing is saved over it */
   const [resume, setResume] = useState<SavedKitchen | null>(() =>
-    shouldOfferRestore({ hasQueryConfig: queryConfig, saved, currentCode: initialKey }) ? saved : null,
+    shouldOfferRestore({ hasKitchenLink: kitchenLink, saved, currentCode: initialKey }) ? saved : null,
   );
 
   const [cfg, setCfg] = useState<KitchenConfig>(initial);

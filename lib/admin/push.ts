@@ -68,7 +68,19 @@ export interface PushReport {
 
 /* ================================================================== pure helpers */
 
-/** the server POSTs to this URL: a public https host on the default port, never an address on our own network */
+/**
+ * the browsers' push services (Chrome / Android / Samsung / Edge via FCM or WNS, Safari / iPhone, Firefox): any other
+ * host — one that resolves to our own network included — is never POSTed to
+ */
+const PUSH_HOSTS = [
+  /^fcm\.googleapis\.com$/,
+  /^android\.googleapis\.com$/,
+  /^([a-z0-9-]+\.)*push\.apple\.com$/,
+  /^([a-z0-9-]+\.)*push\.services\.mozilla\.com$/,
+  /^[a-z0-9-]+\.notify\.windows\.com$/,
+];
+
+/** the server POSTs to this URL: https on the default port, to a known push service only */
 function isPushEndpoint(raw: string): boolean {
   let url: URL;
   try {
@@ -76,16 +88,12 @@ function isPushEndpoint(raw: string): boolean {
   } catch {
     return false;
   }
-  const host = url.hostname;
   return (
     url.protocol === "https:" &&
     !url.port &&
     !url.username &&
     !url.password &&
-    host.includes(".") &&
-    !host.includes(":") &&
-    !host.startsWith("[") &&
-    !/^[\d.]+$/.test(host)
+    PUSH_HOSTS.some((h) => h.test(url.hostname))
   );
 }
 

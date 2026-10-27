@@ -5,7 +5,7 @@
   "lang": "hr",
   "id": "/admin/",
   "start_url": "/admin/upiti",
-  "scope": "/admin/",
+  "scope": "/admin",
   "display": "standalone",
   "background_color": "#141416",
   "theme_color": "#141416",

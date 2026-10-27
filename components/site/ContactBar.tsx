@@ -70,6 +70,9 @@ export function ContactBar({ phone, whatsapp }: { phone: string | null; whatsapp
   }, [pathname]);
 
   const show = past && !formInView;
+  const onContactPage = pathname === "/kontakt";
+  const sendClass =
+    "inline-flex min-h-12 flex-1 items-center justify-center rounded-full bg-graphite px-5 text-[14px] font-medium text-white transition-colors duration-300 hover:bg-black";
 
   return (
     <div
@@ -80,12 +83,17 @@ export function ContactBar({ phone, whatsapp }: { phone: string | null; whatsapp
       }`}
     >
       <nav aria-label="Brzi kontakt" className="mx-auto flex max-w-md items-center gap-2">
-        <Link
-          href={inquiryHref(interest)}
-          className="inline-flex min-h-12 flex-1 items-center justify-center rounded-full bg-graphite px-5 text-[14px] font-medium text-white transition-colors duration-300 hover:bg-black"
-        >
-          Pošaljite upit
-        </Link>
+        {onContactPage ? (
+          // already on /kontakt: only scroll back up to the form. A link with this page's ?interes= would load the form
+          // again, empty, whenever the address carries other presets (InterestContactForm keys it on the query)
+          <a href="#upit" className={sendClass}>
+            Pošaljite upit
+          </a>
+        ) : (
+          <Link href={inquiryHref(interest)} className={sendClass}>
+            Pošaljite upit
+          </Link>
+        )}
         {phone && (
           <a
             href={telHref(phone)}

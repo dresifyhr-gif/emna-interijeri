@@ -64,13 +64,13 @@ describe("leadReplyText", () => {
 describe("quoteText", () => {
   it("is formal, with the quote's number and link", () => {
     assert.equal(
-      quoteText({ name: "Ivan  Horvat", number: "P-2026-0003", url: "https://emna.hr/ponuda/abc" }),
-      "Poštovani Ivan Horvat, šaljemo vam ponudu P-2026-0003: https://emna.hr/ponuda/abc",
+      quoteText({ name: "Ana  Kovač", number: "P-2026-0003", url: "https://emna.hr/ponuda/abc" }),
+      "Dobar dan, Ana Kovač, šaljemo vam ponudu P-2026-0003: https://emna.hr/ponuda/abc",
     );
-    assert.equal(quoteText({ name: null, number: "P-2026-0003", url: "https://emna.hr/ponuda/abc" }), "Poštovani, šaljemo vam ponudu P-2026-0003: https://emna.hr/ponuda/abc");
+    assert.equal(quoteText({ name: null, number: "P-2026-0003", url: "https://emna.hr/ponuda/abc" }), "Dobar dan, šaljemo vam ponudu P-2026-0003: https://emna.hr/ponuda/abc");
   });
 
   it("leaves the link out for the share sheet, which adds it", () => {
-    assert.equal(quoteText({ name: "Ivan Horvat", number: "P-2026-0003" }), "Poštovani Ivan Horvat, šaljemo vam ponudu P-2026-0003.");
+    assert.equal(quoteText({ name: "Ivan Horvat", number: "P-2026-0003" }), "Dobar dan, Ivan Horvat, šaljemo vam ponudu P-2026-0003.");
   });
 });

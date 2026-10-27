@@ -136,6 +136,10 @@ Tekst je **nacrt**. Neka ga prije objave pregleda pravnik ili savjetnik za zašt
   ista ikona za stare poveznice).
 - [ ] Pogledati `/radovi`: fotografije su složene po kuhinjama (`projects` u `lib/gallery.ts`). Javiti ako je neka
   fotografija u krivoj kuhinji.
+- [ ] Prva velika fotografija na naslovnici i na vrhu `/radovi` je vaša omiljena `kuhinja-siva-mramor` (antracit
+  L-kuhinja s mramorom). Na staklu pećnice vidi se plava tvornička naljepnica (Beko), i na drugoj fotografiji te
+  kuhinje. Ostavili smo je prvu jer ste je sami izabrali među pet najboljih. Ako vam smeta, recite: kuhinja se pomakne
+  iza prvih pet ili se naljepnica retušira.
 - [ ] `/ormari` i `/interijeri` još nemaju vlastitih fotografija (`/ormari` pokazuje crtež ormara, `/interijeri`
   kuhinje otvorene prema dnevnom boravku). Kad ih date, idu u `public/` i u podatke stranice; stock ni AI fotografije
   se ne koriste.

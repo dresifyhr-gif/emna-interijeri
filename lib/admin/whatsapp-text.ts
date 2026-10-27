@@ -56,10 +56,11 @@ export function leadReplyText({
 }
 
 /**
- * "Poštovani Ivan Horvat, šaljemo vam ponudu P-2026-0003: https://…" — the name as the owner wrote it on the quote.
+ * "Dobar dan, Ana Kovač, šaljemo vam ponudu P-2026-0003: https://…" — the name as the owner wrote it on the quote. A
+ * greeting that fits any customer: "Poštovani" would need the gender and the vocative of the name.
  * Without `url` it ends with a full stop (the system share sheet adds the link itself).
  */
 export function quoteText({ name, number, url }: { name: string | null | undefined; number: string; url?: string }): string {
   const who = (name ?? "").replace(/\s+/g, " ").trim();
-  return `Poštovani${who ? ` ${who}` : ""}, šaljemo vam ponudu ${number}${url ? `: ${url}` : "."}`;
+  return `Dobar dan${who ? `, ${who}` : ""}, šaljemo vam ponudu ${number}${url ? `: ${url}` : "."}`;
 }

@@ -2,7 +2,7 @@
 
 /**
  * Postavke → Obavijesti: switch Web Push on or off for this device and send a test notice.
- * Registers public/admin-sw.js (scope /admin/) and subscribes with the server's public VAPID key; the
+ * Registers public/admin-sw.js (scope /admin) and subscribes with the server's public VAPID key; the
  * subscription is stored through the server actions in app/admin/(panel)/postavke/obavijesti/actions.ts.
  *
  * iPhone: push exists only in the app added to the home screen (iOS 16.4+), so in Safari the card shows those steps.
@@ -14,7 +14,8 @@ import type { ActionResult } from "@/components/admin/leads/types";
 import { plural } from "@/lib/admin/format";
 
 const SW_URL = "/admin-sw.js";
-const SW_SCOPE = "/admin/";
+// no trailing slash: the dashboard /admin (the "Pregled" tab, the fallback of a notice) is in the scope too
+const SW_SCOPE = "/admin";
 
 type Device = "checking" | "ready" | "ios-browser" | "unsupported";
 type Busy = "on" | "off" | "test" | null;
@@ -215,10 +216,11 @@ export function PushCard({
         <StatusLine tone="off">Na iPhoneu obavijesti rade samo s početnog zaslona.</StatusLine>
         <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-[13.5px] leading-relaxed text-fg/80 marker:text-accent">
           <li>
-            U Safariju dodirnite <strong className="font-medium text-fg">Podijeli</strong> (kvadrat sa strelicom prema gore).
+            U Safariju dodirnite <strong className="font-medium text-fg">Podijeli</strong> (kvadrat sa strelicom prema gore). Na
+            novijim iPhoneima najprije dodirnite <strong className="font-medium text-fg">•••</strong> pa Podijeli.
           </li>
           <li>
-            Odaberite <strong className="font-medium text-fg">Dodaj na početni zaslon</strong>.
+            Pomaknite se prema dolje i odaberite <strong className="font-medium text-fg">Dodaj na početni zaslon</strong>.
           </li>
           <li>
             Otvorite <strong className="font-medium text-fg">EMNA admin</strong> s početnog zaslona, prijavite se i ovdje uključite

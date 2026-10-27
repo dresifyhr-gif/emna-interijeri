@@ -1,6 +1,6 @@
 /**
  * EMNA admin service worker: Web Push notifications only (new inquiry, quote accepted / rejected).
- * Registered by Postavke → Obavijesti with scope /admin/ (components/admin/settings/PushCard.tsx);
+ * Registered by Postavke → Obavijesti with scope /admin (components/admin/settings/PushCard.tsx);
  * the messages come from lib/admin/push.ts as JSON { title, body, url, tag }.
  *
  * Deliberately no fetch handler: the admin always loads from the network, nothing is cached.
@@ -68,7 +68,7 @@ self.addEventListener("notificationclick", (event) => {
       if (open) {
         try {
           await open.focus();
-          // navigate() works only for pages under /admin/ (this worker's scope); /admin itself opens anew
+          // navigate() works only for pages this worker controls (scope /admin, the dashboard included)
           await open.navigate(url);
           return updateBadge();
         } catch {

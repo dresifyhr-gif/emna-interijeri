@@ -4,7 +4,7 @@ import type { Metadata, Viewport } from "next";
  * Everything under /admin: never indexed, never cached by crawlers (proxy.ts adds X-Robots-Tag too).
  * The framed panel lives in (panel)/layout.tsx; login and first-run setup render bare.
  *
- * Installable as its own app ("EMNA admin", public/admin.webmanifest, scope /admin/) so the owner's phone
+ * Installable as its own app ("EMNA admin", public/admin.webmanifest, scope /admin) so the owner's phone
  * can get notifications — on iPhone only from the home screen (iOS 16.4+).
  */
 export const metadata: Metadata = {

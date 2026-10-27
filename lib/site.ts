@@ -100,9 +100,10 @@ export const nav = [
 /** pages listed in the phone menu and the footer but not in the desktop header (it has no room for them) */
 export const navMore = [{ href: "/pitanja", label: "Pitanja" }] as const;
 
-export const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
+/** the number as typed may keep the trunk 0 after the country code ("+385 (0)91…"); the link must not */
+export const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "").replace(/^(?:\+|00)3850/, "+385")}`;
 export const waHref = (wa: string, text?: string) =>
-  `https://wa.me/${wa}${text ? `?text=${encodeURIComponent(text)}` : ""}`;
+  `https://wa.me/${wa.replace(/^3850/, "385")}${text ? `?text=${encodeURIComponent(text)}` : ""}`;
 
 /** the inquiry form's `?interes=` values a page can preselect */
 export type InquiryInterest = "kuhinja" | "ormar" | "interijer";

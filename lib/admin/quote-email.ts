@@ -14,7 +14,7 @@ import { Resend } from "resend";
 import { getLeadEmailEnv } from "@/lib/lead-server";
 import { C, FONT, button, esc, eyebrow, headline, layout, link, oneLine, paragraph, rows, rule, spacer } from "@/lib/lead-email/shared";
 import { formatCents, formatLongDate } from "@/lib/admin/format";
-import { site } from "@/lib/site";
+import { site, telHref } from "@/lib/site";
 import type { CompanyInfo } from "@/components/admin/quotes/model";
 
 export function isQuoteEmailConfigured(): boolean {
@@ -63,7 +63,7 @@ ${spacer(18)}
   if (valid) facts.push(["Vrijedi do", esc(valid)]);
 
   const contact = [
-    m.company.phone ? `telefon ${link(`tel:${m.company.phone.replace(/[^\d+]/g, "")}`, m.company.phone)}` : null,
+    m.company.phone ? `telefon ${link(telHref(m.company.phone), m.company.phone)}` : null,
     m.company.email ? `e-mail ${link(`mailto:${m.company.email}`, m.company.email)}` : null,
   ].filter(Boolean);
 
