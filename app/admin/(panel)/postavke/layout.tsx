@@ -10,7 +10,7 @@ export default async function SettingsLayout({ children }: { children: React.Rea
       <PageHeader
         eyebrow="Postavke"
         title="Postavke"
-        description="Podaci o tvrtki, zadane vrijednosti za ponude i tko smije u administraciju."
+        description="Podaci o tvrtki, zadane vrijednosti za ponude, obavijesti na mobitel i tko smije u administraciju."
         className="mb-6 sm:mb-8"
       />
       <SettingsTabs />

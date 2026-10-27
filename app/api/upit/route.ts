@@ -3,10 +3,16 @@
  * Runs on the Node.js runtime (the default; no `runtime` export so it stays compatible with Cache Components).
  * Every response body is a LeadResult (lib/lead-schema.ts).
  *
- * A valid inquiry is always stored in the database first (the owner sees it under /admin/upiti),
- * then e-mailed when Resend is configured. ok:true means "we have it" — stored, e-mailed, or both.
+ * A valid inquiry is always stored in the database first (the owner sees it under /admin/upiti; one retry when
+ * the database stumbles), then pushed to the owner's phone (lib/admin/push.ts, after the reply) and e-mailed when
+ * Resend is configured. ok:true means "we have it" — stored, e-mailed, or both:
+ *
+ *   e-mail off   { ok: true, confirmation: false, email: "off", number: "U-2026-0007" }
+ *   e-mail on    { ok: true, confirmation, email: "sent" | "failed", number? }
  */
-import { leadSchema, type LeadResult } from "@/lib/lead-schema";
+import { after } from "next/server";
+import { isPushConfigured, leadPayload, sendPush } from "@/lib/admin/push";
+import { leadSchema, type LeadInput, type LeadResult } from "@/lib/lead-schema";
 import {
   LeadSendError,
   MAX_BODY_BYTES,
@@ -22,11 +28,13 @@ import {
   type StoredLead,
 } from "@/lib/lead-server";
 import { hitThrottle } from "@/lib/auth/throttle";
-import { dbErrorLabel, isDbConfigured } from "@/lib/db";
+import { dbErrorLabel, isDbConfigured, pgErrorCode } from "@/lib/db";
 import { markLeadNotified } from "@/lib/db/leads";
 import { site } from "@/lib/site";
 
 export const maxDuration = 30;
+
+const STORE_RETRY_MS = 400;
 
 function reply(body: LeadResult, status: number, headers: Record<string, string> = {}) {
   return Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
@@ -69,6 +77,43 @@ function isJson(req: Request): boolean {
   return essence === "application/json";
 }
 
+/**
+ * storeLead, once more after a short pause when the database stumbled (timeout, dropped connection).
+ * A data or constraint error (Postgres class 22 / 23) would fail the same way again, so it isn't retried.
+ */
+async function storeWithRetry(lead: LeadInput, opts: { requestOrigin: string | null; now: Date }): Promise<StoredLead | null> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await storeLead(lead, opts);
+    } catch (err) {
+      const again = attempt === 1 && !/^2[23]/.test(pgErrorCode(err) ?? "");
+      console.error(`[upit] spremanje u bazu nije uspjelo (${dbErrorLabel(err)})${again ? ", pokušavam ponovno" : ""}`);
+      if (!again) return null;
+      await new Promise((resolve) => setTimeout(resolve, STORE_RETRY_MS));
+    }
+  }
+}
+
+/** the owner's phone (Web Push), after the reply is sent — a push problem can never change the reply */
+function pushToOwner(lead: LeadInput, stored: StoredLead) {
+  if (!isPushConfigured()) return;
+  try {
+    const payload = leadPayload({
+      id: stored.id,
+      number: stored.number,
+      source: lead.source,
+      city: lead.city,
+      priceLow: lead.price?.low,
+      priceHigh: lead.price?.high,
+    });
+    after(() =>
+      sendPush(payload).catch((err) => console.warn(`[upit] ${stored.number}: obavijest na mobitel nije poslana (${dbErrorLabel(err)})`)),
+    );
+  } catch (err) {
+    console.warn(`[upit] ${stored.number}: obavijest na mobitel nije zakazana (${err instanceof Error ? err.name : "unknown"})`);
+  }
+}
+
 export async function POST(req: Request) {
   // 1. other sites must not be able to make a visitor's browser post an inquiry (and mail an address of their choice).
   //    Checked before the rate limit so forged requests can't use up the visitor's own quota.
@@ -97,8 +142,11 @@ export async function POST(req: Request) {
     return reply({ ok: false, error: "validation" }, 400);
   }
 
-  // 5. honeypot: pretend everything went fine, send nothing
-  if (isHoneypotHit(data)) return reply({ ok: true, confirmation: true }, 200);
+  // 5. honeypot: pretend everything went fine (the answer a real inquiry would get), send nothing
+  if (isHoneypotHit(data)) {
+    const emailOn = getLeadEmailEnv() !== null;
+    return reply({ ok: true, confirmation: emailOn, email: emailOn ? "sent" : "off" }, 200);
+  }
 
   // 6. validate
   const parsed = leadSchema.safeParse(data);
@@ -128,21 +176,16 @@ export async function POST(req: Request) {
   const now = new Date();
   const hasSnapshot = lead.source === "studio" && parseSnapshot(lead.snapshot) !== null;
 
-  // 8. store — the inquiry is never lost once this succeeds
-  let stored: StoredLead | null = null;
-  if (dbReady) {
-    try {
-      stored = await storeLead(lead, { requestOrigin, now });
-    } catch (err) {
-      console.error(`[upit] spremanje u bazu nije uspjelo (${dbErrorLabel(err)})`);
-    }
-  }
+  // 8. store — the inquiry is never lost once this succeeds — and tell the owner's phone
+  const stored = dbReady ? await storeWithRetry(lead, { requestOrigin, now }) : null;
+  if (stored) pushToOwner(lead, stored);
   const image = (storedImage: boolean) => (lead.source === "studio" ? { image: storedImage } : {});
+  const number = stored ? { number: stored.number } : {};
 
   // 9. e-mail (optional)
   if (!env) {
     if (!stored) return reply({ ok: false, error: "server" }, 500);
-    return reply({ ok: true, confirmation: false, ...image(Boolean(stored.snapshotPath)) }, 200);
+    return reply({ ok: true, confirmation: false, email: "off", ...number, ...image(Boolean(stored.snapshotPath)) }, 200);
   }
 
   const base = originOf(site.url);
@@ -160,12 +203,17 @@ export async function POST(req: Request) {
         console.warn(`[upit] ${stored?.number}: oznaka slanja nije spremljena (${dbErrorLabel(err)})`),
       );
     }
-    return reply({ ok: true, confirmation: confirmationSent, ...image(hasSnapshot) }, 200);
+    return reply(
+      { ok: true, confirmation: confirmationSent, email: confirmationSent ? "sent" : "failed", ...number, ...image(hasSnapshot) },
+      200,
+    );
   } catch (err) {
     const code = err instanceof LeadSendError ? err.code : err instanceof Error ? err.name : "unknown";
     console.error(`[upit] slanje e-maila nije uspjelo (${code})${stored ? ` — upit ${stored.number} je spremljen` : ""}`);
     // stored → the owner has it in the admin; the visitor just doesn't get a confirmation
-    if (stored) return reply({ ok: true, confirmation: false, ...image(Boolean(stored.snapshotPath)) }, 200);
+    if (stored) {
+      return reply({ ok: true, confirmation: false, email: "failed", ...number, ...image(Boolean(stored.snapshotPath)) }, 200);
+    }
     return reply({ ok: false, error: "server" }, 500);
   }
 }
