@@ -67,7 +67,7 @@ export default function OrmariPage() {
         }
         actions={
           <>
-            <LinkButton href="/kontakt?interes=ormar" variant="ink" arrow>
+            <LinkButton href="/kontakt?interes=ormar#upit" variant="ink" arrow>
               Pošaljite upit za ormar
             </LinkButton>
             <LinkButton href="#iznutra" variant="text" arrow>
@@ -90,7 +90,7 @@ export default function OrmariPage() {
             eyebrow="Što izrađujemo"
             title={
               <>
-                Ormar za svaki
+                Ormar za svaki{" "}
                 <br />
                 <span className="text-taupe">kut i kosinu.</span>
               </>
@@ -119,7 +119,7 @@ export default function OrmariPage() {
             eyebrow="Unutrašnjost"
             title={
               <>
-                Iznutra složen
+                Iznutra složen{" "}
                 <br />
                 <span className="text-taupe">po vama.</span>
               </>
@@ -154,16 +154,34 @@ export default function OrmariPage() {
             eyebrow="Kako radimo"
             title={
               <>
-                Od izmjere
+                Od izmjere{" "}
                 <br />
                 <span className="text-taupe">do zadnje police.</span>
               </>
             }
           />
           <ProcessSteps className="mt-10 lg:mt-14" />
-          <div className="mt-12 lg:mt-16">
-            <SoonNote subject="ormara" />
-          </div>
+
+          {/* what to measure before the first conversation */}
+          <Reveal className="mt-12 grid items-center gap-8 rounded-[20px] border border-hairline bg-card p-6 sm:p-8 lg:mt-16 lg:grid-cols-[minmax(0,420px)_1fr] lg:gap-12">
+            <figure>
+              <WardrobeElevation className="text-bronze" />
+              <figcaption className="mt-3 text-[12.5px] text-taupe">Širina i visina niše, u centimetrima</figcaption>
+            </figure>
+            <div>
+              <p className="kicker text-taupe">Mjere niše</p>
+              <p className="heading mt-3 text-2xl tracking-head-sm sm:text-[28px]">Za početak su dovoljne tri mjere.</p>
+              <p className="mt-3 max-w-lg text-[14.5px] leading-relaxed text-taupe">
+                Širina i visina niše ili zida te visina stropa. Ako je strop kos, izmjerite i visinu na najnižem mjestu.
+                Zidovi su rijetko potpuno ravni, pa je dovoljno okvirno: točne mjere uzimamo na izmjeri u vašem prostoru.
+              </p>
+              <LinkButton href="/kontakt?interes=ormar#upit" variant="ink" arrow className="mt-6">
+                Pošaljite mjere niše
+              </LinkButton>
+            </div>
+          </Reveal>
+
+          <SoonNote subject="ormara" className="mt-12 lg:mt-16" />
         </div>
       </section>
 
@@ -172,17 +190,17 @@ export default function OrmariPage() {
         eyebrow="Sljedeći korak"
         title={
           <>
-            Izmjerite nišu.
+            Izmjerite nišu.{" "}
             <br />
             <span className="text-taupe">Ostalo je na nama.</span>
           </>
         }
         items={[
           {
-            href: "/kontakt?interes=ormar",
+            href: "/kontakt?interes=ormar#upit",
             kicker: "Upit za ormar",
-            title: "Pošaljite mjere.",
-            text: "Širinu i visinu zida ili niše i visinu stropa. Javit ćemo vam se s pitanjima i prijedlogom izmjere.",
+            title: "Pošaljite upit.",
+            text: "Napišite gdje će ormar stajati i što u njega spremate. Javit ćemo vam se s pitanjima i prijedlogom izmjere.",
           },
           {
             href: "/interijeri",

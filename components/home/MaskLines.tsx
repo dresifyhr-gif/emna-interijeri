@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type CSSProperties } from "react";
+import { Fragment, useRef, type CSSProperties } from "react";
 import { useScrollReveal } from "@/components/ui/motion";
 
 export interface MaskLine {
@@ -12,6 +12,7 @@ export interface MaskLine {
  * Section heading (`.heading`: Inter Tight, sentence case) whose lines slide up out of a mask when scrolled into view.
  * Server-rendered readable; the slide is added after mount only for headings still below the fold
  * (CSS `.mask-lines` in globals.css), never with reduced motion.
+ * A real space separates the lines, so the heading's text never glues two words together.
  */
 export function MaskLines({
   lines,
@@ -33,14 +34,17 @@ export function MaskLines({
   return (
     <Tag ref={ref} id={id} className={`heading mask-lines ${className}`}>
       {lines.map((l, i) => (
-        <span key={`${i}-${l.text}`} className="-my-[0.12em] block overflow-hidden py-[0.12em]">
-          <span
-            className={`mask-line block ${l.accent ? accentClass : ""}`}
-            style={{ "--line-delay": `${i * 0.09}s` } as CSSProperties}
-          >
-            {l.text}
+        <Fragment key={`${i}-${l.text}`}>
+          {i > 0 && " "}
+          <span className="-my-[0.12em] block overflow-hidden py-[0.12em]">
+            <span
+              className={`mask-line block ${l.accent ? accentClass : ""}`}
+              style={{ "--line-delay": `${i * 0.09}s` } as CSSProperties}
+            >
+              {l.text}
+            </span>
           </span>
-        </span>
+        </Fragment>
       ))}
     </Tag>
   );

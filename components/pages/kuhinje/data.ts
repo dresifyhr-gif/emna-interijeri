@@ -138,7 +138,10 @@ export const tops: Material[] = [
   },
 ];
 
-/** Kitchen photos shown on /kuhinje (all real, from /public/galerija). */
+/** The wide photo under the /kuhinje headline (real, from /public/galerija; also listed in the sitemap). */
+export const kitchenHero = "/galerija/kuhinja-crna-mramor-2.jpg";
+
+/** Kitchen photos shown on /kuhinje (all real, from /public/galerija): five different kitchens, none of them the hero's. */
 export const kitchenPicks = [
   "/galerija/kuhinja-zelena-crni-mramor-2.jpg",
   "/galerija/kuhinja-bijela-drvo-velik.jpg",

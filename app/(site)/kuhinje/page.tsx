@@ -10,10 +10,10 @@ import { CtaPair } from "@/components/pages/CtaPair";
 import { KitchenShapePlan } from "@/components/pages/drawings/KitchenShapePlan";
 import { MechanismDrawing } from "@/components/pages/drawings/Mechanisms";
 import { pageMetadata } from "@/components/pages/meta";
-import { fronts, kitchenPicks, mechanisms, shapes, tops, type Material } from "@/components/pages/kuhinje/data";
+import { fronts, kitchenHero, kitchenPicks, mechanisms, shapes, tops, type Material } from "@/components/pages/kuhinje/data";
 
 const byPath = (src: string): Photo => gallery.find((p) => p.src === src) ?? gallery[0];
-const heroPhoto = byPath("/galerija/kuhinja-crna-mramor-2.jpg");
+const heroPhoto = byPath(kitchenHero);
 
 export const metadata: Metadata = pageMetadata({
   title: "Kuhinje po mjeri",
@@ -42,7 +42,7 @@ export default function KuhinjePage() {
             <LinkButton href="/studio" variant="ink" arrow>
               Složite kuhinju u 3D studiju
             </LinkButton>
-            <LinkButton href="/kontakt?interes=kuhinja" variant="text" arrow>
+            <LinkButton href="/kontakt?interes=kuhinja#upit" variant="text" arrow>
               Pošaljite upit
             </LinkButton>
           </>
@@ -75,7 +75,7 @@ export default function KuhinjePage() {
               eyebrow="Oblik"
               title={
                 <>
-                  Četiri oblika.
+                  Četiri oblika.{" "}
                   <br />
                   <span className="text-taupe">Bezbroj rasporeda.</span>
                 </>
@@ -119,7 +119,7 @@ export default function KuhinjePage() {
                 eyebrow="Mehanizmi i okovi"
                 title={
                   <>
-                    Ono što se ne vidi,
+                    Ono što se ne vidi,{" "}
                     <br />
                     <span className="text-taupe">osjeti se svaki dan.</span>
                   </>
@@ -154,7 +154,7 @@ export default function KuhinjePage() {
             eyebrow="Materijali"
             title={
               <>
-                Fronte
+                Fronte{" "}
                 <br />
                 <span className="text-taupe">i radne ploče.</span>
               </>
@@ -176,7 +176,7 @@ export default function KuhinjePage() {
               eyebrow="Realizacije"
               title={
                 <>
-                  Kuhinje u
+                  Kuhinje u{" "}
                   <br />
                   <span className="text-taupe">stvarnim prostorima.</span>
                 </>
@@ -198,8 +198,11 @@ export default function KuhinjePage() {
               return (
                 <Reveal as="li" key={src} delay={(i % 3) * 0.08} className={span}>
                   <figure className="flex h-full flex-col">
-                    <div
-                      className={`group relative aspect-[4/3] overflow-hidden rounded-[18px] bg-hairline ${
+                    {/* opens this kitchen's photos in the /radovi lightbox */}
+                    <Link
+                      href={`/radovi#${p.project}`}
+                      aria-label={`${p.title}: pogledajte fotografije`}
+                      className={`group relative block aspect-[4/3] overflow-hidden rounded-[18px] bg-hairline ${
                         stretch ? "lg:aspect-auto lg:flex-1" : ""
                       }`}
                     >
@@ -210,7 +213,7 @@ export default function KuhinjePage() {
                         sizes={sizes}
                         className="object-cover transition-transform duration-[1400ms] ease-premium group-hover:scale-[1.035]"
                       />
-                    </div>
+                    </Link>
                     <figcaption className="mt-3.5 flex items-baseline justify-between gap-4">
                       <span className="text-[14px] text-graphite">{p.title}</span>
                       <span className="shrink-0 text-[12.5px] text-taupe">{styleLabel[p.style]}</span>
@@ -227,7 +230,7 @@ export default function KuhinjePage() {
         eyebrow="Sljedeći korak"
         title={
           <>
-            Vaša kuhinja
+            Vaša kuhinja{" "}
             <br />
             <span className="text-taupe">počinje mjerom.</span>
           </>
@@ -240,7 +243,7 @@ export default function KuhinjePage() {
             text: "Unesite mjere svojih zidova, odaberite oblik i elemente, fronte i radnu ploču i odmah vidite okvirnu cijenu. Upit nam stiže s točnim mjerama.",
           },
           {
-            href: "/kontakt?interes=kuhinja",
+            href: "/kontakt?interes=kuhinja#upit",
             kicker: "Upit",
             title: "Razgovarajmo.",
             text: "Radije biste razgovarali? Opišite prostor, upišite okvirne mjere i javit ćemo vam se.",

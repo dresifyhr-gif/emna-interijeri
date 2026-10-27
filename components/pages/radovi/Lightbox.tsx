@@ -4,23 +4,28 @@ import Image from "next/image";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion, type PanInfo } from "framer-motion";
-import { styleLabel, type Photo } from "@/lib/gallery";
+import { inquiryHref, styleLabel, studioHref, type Project } from "@/lib/gallery";
+import { LinkButton } from "@/components/ui/Button";
 import { shapeLabel } from "./labels";
 
 const EASE = [0.2, 0.8, 0.2, 1] as const;
 const pad = (n: number) => String(n).padStart(2, "0");
+// the two caption pills: a little smaller than the site's buttons, so both fit next to the title
+const pill = "!px-[18px] !py-3 !text-[13.5px]";
 
 /**
- * Full-screen photo viewer. Keyboard: ← → to browse, Esc to close, Tab stays inside.
+ * Full-screen viewer for one kitchen's photos. Keyboard: ← → to browse, Esc to close, Tab stays inside.
  * Touch: swipe left/right. Focus returns to the opener via `onClose` (handled by the gallery).
+ * The caption leads on: an inquiry that names the photo on screen, and the closest look in the 3D studio when the
+ * kitchen has one.
  */
 export function Lightbox({
-  items,
+  project,
   index,
   onIndex,
   onClose,
 }: {
-  items: Photo[];
+  project: Project;
   index: number;
   onIndex: (i: number) => void;
   onClose: () => void;
@@ -30,8 +35,9 @@ export function Lightbox({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [dir, setDir] = useState(1);
+  const items = project.photos;
   const count = items.length;
-  const photo = items[index];
+  const photo = items[index] ?? items[0];
 
   const go = useCallback(
     (delta: number) => {
@@ -65,9 +71,9 @@ export function Lightbox({
         e.preventDefault();
         go(-1);
       } else if (e.key === "Tab" && dialogRef.current) {
-        // only buttons that are actually rendered: the prev/next pair exists twice (sm:flex / sm:hidden)
+        // only controls that are actually rendered: the prev/next pair exists twice (sm:flex / sm:hidden)
         // and the hidden pair must not become the trap's first/last stop at any width
-        const nodes = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled])")).filter(
+        const nodes = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), a[href]")).filter(
           (n) => n.getClientRects().length > 0,
         );
         if (!nodes.length) return;
@@ -196,16 +202,26 @@ export function Lightbox({
         )}
       </div>
 
-      {/* caption */}
-      <div className="shell flex shrink-0 flex-col gap-3 py-5 sm:flex-row sm:items-end sm:justify-between sm:py-7">
-        <div>
+      {/* caption: the kitchen, then where it can lead */}
+      <div className="shell flex shrink-0 flex-col gap-4 py-5 sm:flex-row sm:items-end sm:justify-between sm:gap-8 sm:py-7">
+        <div className="min-w-0">
           <h2 id={titleId} className="heading text-xl tracking-head-sm sm:text-2xl">
-            {photo.title}
+            {project.title}
           </h2>
           <p className="kicker mt-2 text-accent">
-            {styleLabel[photo.style]}
-            {photo.shape && <span className="text-fg/50"> · {shapeLabel[photo.shape]}</span>}
+            {styleLabel[project.style]}
+            {project.shape && <span className="text-fg/50"> · {shapeLabel[project.shape]}</span>}
           </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+          <LinkButton href={inquiryHref(photo)} variant="cream" arrow className={pill}>
+            Želim sličnu kuhinju
+          </LinkButton>
+          {project.studio && (
+            <LinkButton href={studioHref(project.studio)} variant="line-dark" className={pill}>
+              Složite sličnu u 3D-u
+            </LinkButton>
+          )}
         </div>
         {count > 1 && (
           <div className="flex items-center gap-2 sm:hidden">
@@ -235,7 +251,7 @@ export function Lightbox({
       </div>
 
       <p className="sr-only" aria-live="polite">
-        Fotografija {index + 1} od {count}: {photo.title}
+        Fotografija {index + 1} od {count}: {project.title}
       </p>
 
       {/* warm the neighbours so browsing feels instant */}
