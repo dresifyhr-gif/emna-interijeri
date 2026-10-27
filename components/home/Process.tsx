@@ -1,10 +1,18 @@
+import Link from "next/link";
+import { inquiryHref } from "@/lib/site";
+import { Arrow } from "@/components/ui/Button";
 import { Reveal } from "@/components/ui/Reveal";
 import { Eyebrow } from "./Eyebrow";
 import { MaskLines } from "./MaskLines";
 import { StepRule } from "./StepRule";
 
-const STEPS: { title: string; kicker: string; text: string }[] = [
-  { title: "Izmjera", kicker: "Na licu mjesta", text: "Dolazimo i mjerimo svaki zid, kut, otvor i priključak. Iz tih mjera nastaje sve ostalo." },
+const STEPS: { title: string; kicker: string; text: string; link?: { href: string; label: string } }[] = [
+  {
+    title: "Izmjera",
+    kicker: "Na licu mjesta",
+    text: "Dolazimo i mjerimo svaki zid, kut, otvor i priključak. Iz tih mjera nastaje sve ostalo.",
+    link: { href: inquiryHref("kuhinja", { measurement: true }), label: "Zatražite izmjeru" },
+  },
   {
     title: "3D projekt",
     kicker: "Prije izrade",
@@ -55,6 +63,15 @@ export function Process() {
                 </p>
                 <h3 className="heading mt-4 text-[24px] tracking-head-sm">{s.title}</h3>
                 <p className="mt-3 max-w-[17rem] text-[14.5px] leading-relaxed text-taupe">{s.text}</p>
+                {s.link && (
+                  <Link
+                    href={s.link.href}
+                    className="group mt-4 inline-flex items-center gap-2 text-[14px] font-medium text-graphite underline decoration-graphite/25 decoration-1 underline-offset-[6px] transition-colors hover:decoration-graphite"
+                  >
+                    {s.link.label}
+                    <Arrow />
+                  </Link>
+                )}
               </Reveal>
             </li>
           ))}

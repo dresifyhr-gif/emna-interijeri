@@ -6,6 +6,9 @@
  * visible "upisati …" marker in development and renders nothing in
  * production — we never ship invented phone numbers, stats or reviews.
  * The full pre-launch list (what the owner must supply and where it goes) is docs/PRIJE-OBJAVE.md.
+ *
+ * Contact, legal, social and facts are only the fallback: the owner enters them in /admin/postavke, and the public
+ * pages read the merged values through getPublicCompany() (lib/site-data.ts), never `site.contact` directly.
  */
 
 export type Maybe<T> = T | null;
@@ -85,9 +88,6 @@ export const site = {
   },
 } as const;
 
-/** "Grad, Hrvatska" once the city is confirmed, otherwise null (render it through <Fill label="grad">). */
-export const cityLine: Maybe<string> = site.contact.city ? `${site.contact.city}, Hrvatska` : null;
-
 export const nav = [
   { href: "/kuhinje", label: "Kuhinje" },
   { href: "/ormari", label: "Ormari" },
@@ -97,6 +97,25 @@ export const nav = [
   { href: "/kontakt", label: "Kontakt" },
 ] as const;
 
+/** pages listed in the phone menu and the footer but not in the desktop header (it has no room for them) */
+export const navMore = [{ href: "/pitanja", label: "Pitanja" }] as const;
+
 export const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
 export const waHref = (wa: string, text?: string) =>
   `https://wa.me/${wa}${text ? `?text=${encodeURIComponent(text)}` : ""}`;
+
+/** the inquiry form's `?interes=` values a page can preselect */
+export type InquiryInterest = "kuhinja" | "ormar" | "interijer";
+
+const underPath = (pathname: string, base: string) => pathname === base || pathname.startsWith(`${base}/`);
+
+/** what a visitor on this page most likely asks about: /ormari → ormar, /interijeri → interijer, everything else kuhinja */
+export function interestForPath(pathname: string): InquiryInterest {
+  if (underPath(pathname, "/ormari")) return "ormar";
+  if (underPath(pathname, "/interijeri")) return "interijer";
+  return "kuhinja";
+}
+
+/** the inquiry form on /kontakt, scrolled into view, with the interest preselected (and the wish for a measurement) */
+export const inquiryHref = (interest: InquiryInterest, opts: { measurement?: boolean } = {}) =>
+  `/kontakt?interes=${interest}${opts.measurement ? "&izmjera=1" : ""}#upit`;

@@ -2,18 +2,19 @@
  * Politika privatnosti — DRAFT.
  * TODO(vlasnik): pregledati i potvrditi (po mogućnosti uz pravni savjet) prije objave
  * (cijeli popis: docs/PRIJE-OBJAVE.md):
- *  - podaci voditelja obrade (lib/site.ts → legal, contact.email)
- *  - pružatelj hostinga i poslovne e-pošte, mehanizam prijenosa podataka u SAD
+ *  - podaci voditelja obrade (/admin/postavke → Podaci o tvrtki: naziv, OIB, sjedište, e-mail)
+ *  - pružatelj poslovne e-pošte, mehanizam prijenosa podataka u SAD
  *  - rok čuvanja upita (RETENTION_MONTHS)
  *  - tekst privole u formama (ContactForm, 3D studio) mora odgovarati točki 3 (pravna osnova)
  *
  * Missing controller facts never vanish silently: development shows "upisati …" markers, a
- * production build shows a visible note on the page and logs a warning during the build.
+ * production render shows a visible note on the page and logs a warning (at build and on every refresh).
  */
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { site } from "@/lib/site";
+import { getPublicCompany } from "@/lib/site-data";
 import { Fill, showTodos } from "@/components/site/Fill";
 import { PageHero } from "@/components/pages/PageHero";
 import { pageMetadata } from "@/components/pages/meta";
@@ -28,21 +29,6 @@ export const metadata: Metadata = pageMetadata({
 /** TODO(vlasnik): potvrditi rok čuvanja upita koji nisu prešli u suradnju */
 const RETENTION_MONTHS = 12;
 const UPDATED = "27. listopada 2026.";
-
-/** what a GDPR controller notice (čl. 13. st. 1. t. a) cannot do without */
-const controllerMissing = [
-  !site.legal.companyName && "puni naziv tvrtke",
-  !site.legal.oib && "OIB",
-  !site.legal.seat && "sjedište",
-  !site.contact.email && "e-mail za pitanja o privatnosti",
-].filter((v): v is string => Boolean(v));
-
-if (process.env.NODE_ENV === "production" && controllerMissing.length > 0) {
-  console.warn(
-    `[PRIJE OBJAVE] /privatnost: nedostaju podaci voditelja obrade (${controllerMissing.join(", ")}). ` +
-      "Upišite ih u lib/site.ts — popis: docs/PRIJE-OBJAVE.md.",
-  );
-}
 
 const sections = [
   { id: "voditelj", title: "Tko obrađuje vaše podatke" },
@@ -73,8 +59,24 @@ function Section({ id, n, children }: { id: (typeof sections)[number]["id"]; n: 
   );
 }
 
-export default function PrivatnostPage() {
-  const { legal, contact } = site;
+export default async function PrivatnostPage() {
+  const { legal, contact } = await getPublicCompany();
+
+  /** what a GDPR controller notice (čl. 13. st. 1. t. a) cannot do without */
+  const controllerMissing = [
+    !legal.companyName && "puni naziv tvrtke",
+    !legal.oib && "OIB",
+    !legal.seat && "sjedište",
+    !contact.email && "e-mail za pitanja o privatnosti",
+  ].filter((v): v is string => Boolean(v));
+
+  if (process.env.NODE_ENV === "production" && controllerMissing.length > 0) {
+    console.warn(
+      `[PRIJE OBJAVE] /privatnost: nedostaju podaci voditelja obrade (${controllerMissing.join(", ")}). ` +
+        "Upišite ih u /admin/postavke (Podaci o tvrtki) — popis: docs/PRIJE-OBJAVE.md.",
+    );
+  }
+
   const controller = [
     { label: "Naziv", value: legal.companyName ?? (showTodos ? null : site.name), todo: "puni naziv tvrtke" },
     { label: "OIB", value: legal.oib, todo: "OIB" },
@@ -187,15 +189,16 @@ export default function PrivatnostPage() {
                 ne koristi za učenje modela, a u svoje zapise bilježimo samo tehničke podatke (veličinu zahtjeva, trajanje,
                 cijenu), nikad sam tekst ni fotografiju. Na fotografiji neka ne budu osobe ni osobni podaci. Da bismo
                 ograničili broj zahtjeva, iz vaše IP adrese računamo jednosmjerni zaštićeni sažetak (hash) i čuvamo ga
-                najviše jedan dan; samu IP adresu ne spremamo. Ako opis izgovorite preko gumba s mikrofonom, glas
+                najviše nekoliko dana; samu IP adresu ne spremamo. Ako opis izgovorite preko gumba s mikrofonom, glas
                 pretvara u tekst vaš preglednik (npr. Chrome preko Googlea, Safari preko Applea) prema svojim pravilima
                 privatnosti; mi primamo samo dobiveni tekst.
               </p>
               <p>
-                <strong>Tehnički podaci.</strong> Pri slanju upita IP adresa se kratkotrajno koristi u radnoj memoriji
-                poslužitelja kako bismo ograničili broj upita i zaštitili stranicu od zlouporabe; ne spremamo je uz upit.
-                Pružatelj smještaja stranice može voditi uobičajene zapise poslužitelja (IP adresa, vrijeme pristupa,
-                vrsta preglednika).
+                <strong>Tehnički podaci.</strong> Da bismo ograničili broj upita i zaštitili stranicu od zlouporabe, pri
+                slanju upita iz vaše IP adrese računamo jednosmjerni zaštićeni sažetak (hash). Spremamo samo taj sažetak,
+                odvojeno od upita, i brišemo ga najkasnije nakon nekoliko dana; samu IP adresu ne spremamo. Pružatelj
+                smještaja stranice može voditi uobičajene zapise poslužitelja (IP adresa, vrijeme pristupa, vrsta
+                preglednika).
               </p>
               <p>Ne prikupljamo posebne kategorije osobnih podataka i ne izrađujemo profile.</p>
             </Section>
@@ -220,15 +223,26 @@ export default function PrivatnostPage() {
             </Section>
 
             <Section id="primatelji" n={4}>
-              <p>Podatke ne prodajemo i ne ustupamo trećima za njihove svrhe. Pristup imaju samo izvršitelji obrade koji nam pomažu da upit stigne do nas:</p>
+              <p>
+                Podatke ne prodajemo i ne ustupamo trećima za njihove svrhe. Pristup imaju samo izvršitelji obrade koji nam
+                pomažu da upit stigne do nas i da ga sačuvamo:
+              </p>
               <ul>
                 <li>
-                  <strong>Resend, Inc.</strong> (SAD), usluga dostave e-pošte: preko nje upit stiže do nas, a vama potvrda o
-                  primitku.
+                  <strong>Vercel Inc.</strong> (SAD), pružatelj smještaja (hostinga) stranice, na čijim se poslužiteljima
+                  stranica i forma izvode.
                 </li>
                 <li>
-                  <strong>Pružatelj smještaja (hostinga) stranice</strong>, na čijim se poslužiteljima stranica i forma
-                  izvode. <Fill value={null} label="naziv pružatelja hostinga, npr. Vercel Inc. (SAD)" />
+                  <strong>Neon</strong> (baza podataka, preko usluge Vercel): u njoj se čuvaju upiti, uključujući upite iz 3D
+                  studija.
+                </li>
+                <li>
+                  <strong>Vercel Blob</strong> (Vercel Inc., spremište datoteka): u njemu se čuvaju slike 3D prikaza kuhinje
+                  poslane uz upit iz 3D studija.
+                </li>
+                <li>
+                  <strong>Resend, Inc.</strong> (SAD), usluga dostave e-pošte, kad je uključeno slanje e-pošte: tada preko nje
+                  obavijest o upitu stiže do nas, a vama potvrda o primitku.
                 </li>
                 <li>
                   <strong>Vercel Inc.</strong> (SAD, usluga AI Gateway) i pružatelj umjetne inteligencije kojem ona prosljeđuje
@@ -261,7 +275,10 @@ export default function PrivatnostPage() {
                   Ako sklopimo ugovor, podatke čuvamo koliko je potrebno za njegovo izvršenje i jamstvene obveze, a
                   računovodstvenu dokumentaciju onoliko koliko propisuju porezni i računovodstveni propisi.
                 </li>
-                <li>IP adrese korištene za ograničenje broja upita ne spremamo trajno.</li>
+                <li>
+                  IP adrese ne spremamo. Njihov jednosmjerni sažetak (hash), koji služi za ograničenje broja upita, brišemo
+                  najkasnije nakon nekoliko dana.
+                </li>
                 <li>
                   Opise i fotografije poslane pomoćniku „Opišite kuhinju“ ne spremamo; ostaje samo kuhinja koju ste složili, u
                   vašem pregledniku.

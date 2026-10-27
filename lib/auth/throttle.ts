@@ -35,7 +35,14 @@ export async function hitThrottle(
   const key = throttleKey(scope, id);
   const win = Math.max(1, Math.floor(opts.windowSeconds));
   const expired = sql`${authThrottle.windowStart} < now() - make_interval(secs => ${win})`;
-  const [row] = await db
+  // Every hit also drops the windows that ended over a day ago (no window is longer than a day). The privacy notice
+  // promises that the IP hashes behind "upit-ip" and "studio-ai-ip" are gone within days, so this can't be left to
+  // chance. Run beside the upsert and awaited, so a serverless instance never freezes it halfway; it fails silently.
+  const sweep = db
+    .delete(authThrottle)
+    .where(lt(authThrottle.windowStart, sql`now() - interval '1 day'`))
+    .catch(() => {});
+  const upsert = db
     .insert(authThrottle)
     .values({ key, count: 1 })
     .onConflictDoUpdate({
@@ -49,13 +56,7 @@ export async function hitThrottle(
       count: authThrottle.count,
       left: sql<number>`greatest(1, ceil(extract(epoch from (${authThrottle.windowStart} + make_interval(secs => ${win}) - now()))))::int`,
     });
-
-  // now and then, drop windows that ended long ago
-  if (Math.random() < 0.05) {
-    db.delete(authThrottle)
-      .where(lt(authThrottle.windowStart, sql`now() - interval '1 day'`))
-      .catch(() => {});
-  }
+  const [[row]] = await Promise.all([upsert, sweep]);
 
   const count = Number(row?.count ?? 1);
   return { allowed: count <= opts.limit, count, retryAfter: Number(row?.left ?? win) };

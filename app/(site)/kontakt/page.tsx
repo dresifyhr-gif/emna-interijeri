@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { site } from "@/lib/site";
+import { getPublicCompany, hasDirectContact } from "@/lib/site-data";
 import { ContactForm } from "@/components/forms/ContactForm";
 import { Fill, showTodos } from "@/components/site/Fill";
 import { Arrow } from "@/components/ui/Button";
@@ -15,13 +15,25 @@ import { Timeline } from "@/components/pages/kontakt/Timeline";
 import { pageMetadata } from "@/components/pages/meta";
 
 export const metadata: Metadata = pageMetadata({
-  title: "Kontakt",
+  title: "Upit za kuhinju po mjeri: kontakt",
   description:
     "Upit za kuhinju, ormar ili interijer po mjeri. Opišite prostor, upišite okvirne mjere i javit ćemo vam se. Kuhinju možete složiti i u 3D studiju.",
   path: "/kontakt",
 });
 
-export default function KontaktPage() {
+/** the first steps of the Timeline below, shortened: shown beside the form until there is a phone, WhatsApp or e-mail */
+const afterInquiry = [
+  "Pročitamo vaš upit i mjere koje ste poslali.",
+  "Javljamo se s pitanjima i dogovaramo izmjeru u vašem prostoru.",
+  "Dobivate 3D projekt i ponudu u kojoj je svaka stavka navedena zasebno.",
+];
+
+export default async function KontaktPage() {
+  const company = await getPublicCompany();
+  const { email } = company.contact;
+  // "Izravno" only promises what is really there: a phone, WhatsApp or e-mail (markers in development)
+  const direct = hasDirectContact(company) || showTodos;
+
   return (
     <>
       <PageHero
@@ -36,36 +48,9 @@ export default function KontaktPage() {
       />
 
       <section id="upit" className="scroll-mt-20 bg-greige py-20 lg:py-28">
+        {/* the form comes first in the page (on a phone it is the first thing under the title); lg puts it on the right */}
         <div className="shell grid gap-12 lg:grid-cols-12 lg:gap-10">
-          <aside aria-label="Kontakt podaci" className="lg:col-span-4">
-            <Reveal y={14}>
-              <p className="kicker text-taupe">Izravno</p>
-            </Reveal>
-            <div className="mt-6">
-              <ContactDetails />
-            </div>
-
-            <Reveal delay={0.2} className="mt-8">
-              <Link
-                href="/studio"
-                className="group flex items-center justify-between gap-6 rounded-[20px] bg-graphite p-6 text-fg transition-colors duration-500 ease-premium hover:bg-black"
-              >
-                <span>
-                  <span className="kicker block text-accent">3D studio</span>
-                  <span className="heading mt-3 block text-xl tracking-head-sm">Radije složite kuhinju sami?</span>
-                  <span className="mt-1.5 block text-sm text-fg/65">Upit iz studija stiže s mjerama i slikom.</span>
-                </span>
-                <span
-                  aria-hidden
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/20 transition-colors duration-500 ease-premium group-hover:border-fg group-hover:bg-fg group-hover:text-graphite"
-                >
-                  <Arrow />
-                </span>
-              </Link>
-            </Reveal>
-          </aside>
-
-          <div className="lg:col-span-7 lg:col-start-6">
+          <div className="lg:col-span-7 lg:col-start-6 lg:row-start-1">
             <Reveal y={14}>
               <p className="kicker text-taupe">Upit</p>
             </Reveal>
@@ -76,11 +61,11 @@ export default function KontaktPage() {
               <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-taupe sm:text-base">
                 Napišite što trebate i gdje. Okvirne mjere zidova i visina stropa pomažu da prvi razgovor bude konkretan.
                 {/* the form takes no files: photos and floor plans only once there is a real address to send them to */}
-                {(site.contact.email || showTodos) && (
+                {(email || showTodos) && (
                   <>
                     {" "}
                     Fotografije ili tlocrt prostora možete poslati e-mailom na{" "}
-                    <Fill value={site.contact.email} label="e-mail">
+                    <Fill value={email} label="e-mail">
                       {(v) => (
                         <a
                           href={`mailto:${v}`}
@@ -103,6 +88,58 @@ export default function KontaktPage() {
               </div>
             </Reveal>
           </div>
+
+          <aside aria-label={direct ? "Kontakt podaci" : "Sljedeći koraci"} className="lg:col-span-4 lg:col-start-1 lg:row-start-1">
+            {direct ? (
+              <>
+                <Reveal y={14}>
+                  <p className="kicker text-taupe">Izravno</p>
+                </Reveal>
+                <div className="mt-6">
+                  <ContactDetails company={company} />
+                </div>
+              </>
+            ) : (
+              <>
+                <Reveal y={14}>
+                  <p className="kicker text-taupe">Sljedeći koraci</p>
+                </Reveal>
+                <Reveal delay={0.08}>
+                  <h2 className="heading mt-4 text-[clamp(24px,2.4vw,30px)] tracking-head-sm">Što se događa nakon upita</h2>
+                </Reveal>
+                <ol className="mt-6 border-t border-hairline">
+                  {afterInquiry.map((text, i) => (
+                    <Reveal as="li" key={text} delay={0.1 + i * 0.05} className="flex gap-4 border-b border-hairline py-4">
+                      <span className="pt-0.5 text-[13px] font-medium tabular-nums text-bronze-deep">
+                        <span className="sr-only">Korak </span>
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <span className="text-[15px] leading-relaxed text-graphite">{text}</span>
+                    </Reveal>
+                  ))}
+                </ol>
+              </>
+            )}
+
+            <Reveal delay={0.2} className="mt-8">
+              <Link
+                href="/studio"
+                className="group flex items-center justify-between gap-6 rounded-[20px] bg-graphite p-6 text-fg transition-colors duration-500 ease-premium hover:bg-black"
+              >
+                <span>
+                  <span className="kicker block text-accent">3D studio</span>
+                  <span className="heading mt-3 block text-xl tracking-head-sm">Radije složite kuhinju sami?</span>
+                  <span className="mt-1.5 block text-sm text-fg/65">Upit iz studija stiže s mjerama i slikom.</span>
+                </span>
+                <span
+                  aria-hidden
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/20 transition-colors duration-500 ease-premium group-hover:border-fg group-hover:bg-fg group-hover:text-graphite"
+                >
+                  <Arrow />
+                </span>
+              </Link>
+            </Reveal>
+          </aside>
         </div>
       </section>
 

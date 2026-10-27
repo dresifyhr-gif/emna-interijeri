@@ -37,7 +37,8 @@ export const COMPANY_SECTIONS: CompanySection[] = [
   {
     group: "contact",
     title: "Kontakt",
-    description: "Kako vas kupci mogu dobiti: zaglavlje i podnožje stranice, stranica Kontakt i svaka ponuda.",
+    description:
+      "Kako vas kupci mogu dobiti: zaglavlje i podnožje stranice, stranica Kontakt, traka za kontakt na mobitelu i svaka ponuda.",
     fields: [
       f("contact", "phone", {
         label: "Telefon",
@@ -177,7 +178,7 @@ export const COMPANY_SECTIONS: CompanySection[] = [
   {
     group: "facts",
     title: "Brojke",
-    description: "Samo stvarne, provjerljive brojke — prikazuju se na naslovnici i na stranici O nama. Prazno se ne prikazuje.",
+    description: "Samo stvarne, provjerljive brojke — prikazuju se na stranici O nama. Prazno se ne prikazuje.",
     fields: [
       f("facts", "projects", {
         label: "Izvedenih projekata",
