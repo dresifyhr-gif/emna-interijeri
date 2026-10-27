@@ -2,14 +2,27 @@
 
 /**
  * Contact / inquiry form (source: "kontakt") that posts to /api/upit.
- * Underline inputs with floating labels, segmented interest picker, honest status handling:
- * success is shown only when the API says ok; "not configured" and errors say so plainly.
+ * Underline inputs with floating labels, segmented interest and timeline pickers, an optional measurement wish,
+ * honest status handling: success is shown only when the API says ok; "not configured" and errors say so plainly.
+ * The measurement wish and a liked gallery photo travel in the message (lib/lead-extras.ts composeMessage).
  */
+import Image from "next/image";
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useCallback, useId, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import type { Photo } from "@/lib/gallery";
 import type { LeadInput } from "@/lib/lead-schema";
-import { PHONE_MIN_DIGITS, isValidEmail, phoneDigitCount, sendLead } from "@/lib/lead-client";
+import { PHONE_MIN_DIGITS, fetchCompanyContact, isValidEmail, phoneDigitCount, sendLead, type CompanyContact } from "@/lib/lead-client";
+import {
+  MEASUREMENT_SLOTS,
+  MESSAGE_MAX,
+  TIMELINES,
+  composeMessage,
+  confirmationOf,
+  leadNumberOf,
+  type MeasurementSlot,
+  type Timeline,
+} from "@/lib/lead-extras";
 import { site, telHref, waHref } from "@/lib/site";
 import { Fill, showTodos } from "@/components/site/Fill";
 import { Button } from "@/components/ui/Button";
@@ -19,28 +32,44 @@ export interface ContactFormProps {
   variant?: "paper" | "dark";
   /** preselected interest, e.g. "Kuhinja" */
   interest?: "Kuhinja" | "Ormar" | "Interijer" | "Drugo";
+  /** "Želim dogovoriti izmjeru" ticked from the start (/kontakt?izmjera=1) */
+  measurement?: boolean;
+  /** the gallery photo the visitor came from (/kontakt?slika=…); they can take it off the inquiry */
+  photo?: Photo | null;
   className?: string;
 }
 
 type Interest = NonNullable<ContactFormProps["interest"]>;
 type Variant = NonNullable<ContactFormProps["variant"]>;
-type Field = "name" | "phone" | "email" | "message" | "consent";
+type Field = "name" | "phone" | "email" | "city" | "message" | "consent";
 type Status = "idle" | "sending" | "success" | "invalid" | "not_configured" | "rate_limited" | "server";
 
 interface Values {
   name: string;
   phone: string;
   email: string;
+  city: string;
   interest: Interest;
+  timeline: Timeline | "";
+  /** wants a measurement visit; `slots` are the times that suit them */
+  measurement: boolean;
+  slots: MeasurementSlot[];
+  photo: Photo | null;
   message: string;
   consent: boolean;
   /** honeypot */
   website: string;
 }
 
+interface Sent {
+  first: string;
+  email: string;
+  confirmation: ReturnType<typeof confirmationOf>;
+  number: string | null;
+}
+
 const INTERESTS: Interest[] = ["Kuhinja", "Ormar", "Interijer", "Drugo"];
-const FIELD_ORDER: Field[] = ["name", "phone", "email", "message", "consent"];
-const MESSAGE_MAX = 3000;
+const FIELD_ORDER: Field[] = ["name", "phone", "email", "city", "message", "consent"];
 const EASE = [0.2, 0.8, 0.2, 1] as const;
 /** the checkbox acknowledges the privacy notice; answering the inquiry itself needs no separate consent */
 const CONSENT_ERROR = "Potvrdite da ste pročitali politiku privatnosti.";
@@ -63,6 +92,8 @@ function validateField(field: Field, v: Values): string | null {
     }
     case "email":
       return isValidEmail(v.email.trim()) ? null : "Upišite ispravnu e-mail adresu.";
+    case "city":
+      return v.city.trim().length > 80 ? "Naziv mjesta je predug." : null;
     case "message":
       return v.message.trim().length > MESSAGE_MAX ? `Poruka je preduga — najviše ${MESSAGE_MAX} znakova.` : null;
     case "consent":
@@ -75,6 +106,7 @@ const FALLBACK: Record<Field, string> = {
   name: "Provjerite ime i prezime.",
   phone: "Provjerite broj telefona.",
   email: "Provjerite e-mail adresu.",
+  city: "Provjerite naziv mjesta.",
   message: "Provjerite poruku.",
   consent: CONSENT_ERROR,
 };
@@ -90,18 +122,40 @@ function validateAll(v: Values): Partial<Record<Field, string>> {
   return errors;
 }
 
+/** the visitor's message with the measurement wish and the liked photo as labelled lines */
+const fullMessage = (v: Values) =>
+  composeMessage({ message: v.message, measurement: { wanted: v.measurement, slots: v.slots }, photo: v.photo });
+
 function toPayload(v: Values): LeadInput {
-  const message = v.message.trim();
+  const city = v.city.trim();
+  const message = fullMessage(v);
   return {
     source: "kontakt",
     name: v.name.trim(),
     phone: v.phone.trim(),
     email: v.email.trim(),
     interest: v.interest,
+    ...(city ? { city } : {}),
+    ...(v.timeline ? { timeline: v.timeline } : {}),
     ...(message ? { message } : {}),
     consent: true,
   };
 }
+
+const emptyValues = (interest: Interest, measurement = false, photo: Photo | null = null): Values => ({
+  name: "",
+  phone: "",
+  email: "",
+  city: "",
+  interest,
+  timeline: "",
+  measurement,
+  slots: [],
+  photo,
+  message: "",
+  consent: false,
+  website: "",
+});
 
 /* ------------------------------------------------------------------ theme */
 
@@ -121,6 +175,9 @@ const THEME = {
     segOn: "text-white",
     segOff: "text-graphite/60 hover:text-graphite",
     segFocus: "peer-focus-visible:outline-graphite",
+    chipOn: "border-graphite bg-graphite text-white",
+    chipOff: "border-graphite/20 text-graphite/70 hover:border-graphite/45 hover:text-graphite",
+    placeholder: "placeholder:text-transparent focus:placeholder:text-taupe/70",
     box: "border-graphite/35 checked:border-graphite checked:bg-graphite",
     boxError: "border-[#9A3B2B]",
     tick: "text-white",
@@ -146,6 +203,9 @@ const THEME = {
     segOn: "text-ink",
     segOff: "text-fg/55 hover:text-fg",
     segFocus: "peer-focus-visible:outline-accent",
+    chipOn: "border-fg bg-fg text-ink",
+    chipOff: "border-white/15 text-fg/65 hover:border-white/30 hover:text-fg",
+    placeholder: "placeholder:text-transparent focus:placeholder:text-mut/70",
     box: "border-white/30 checked:border-accent checked:bg-accent",
     boxError: "border-[#E39A84]",
     tick: "text-ink",
@@ -162,28 +222,20 @@ type Theme = (typeof THEME)[Variant];
 
 /* ------------------------------------------------------------------ form */
 
-export function ContactForm({ variant = "paper", interest = "Kuhinja", className = "" }: ContactFormProps) {
+export function ContactForm({ variant = "paper", interest = "Kuhinja", measurement = false, photo = null, className = "" }: ContactFormProps) {
   const t = THEME[variant];
   const uid = useId();
   const reduce = useReducedMotion();
   const sendingRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
 
-  const [values, setValues] = useState<Values>({
-    name: "",
-    phone: "",
-    email: "",
-    interest,
-    message: "",
-    consent: false,
-    website: "",
-  });
+  const [values, setValues] = useState<Values>(() => emptyValues(interest, measurement, photo));
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
   const [status, setStatus] = useState<Status>("idle");
-  const [sent, setSent] = useState<{ first: string; email: string; confirmation: boolean } | null>(null);
+  const [sent, setSent] = useState<Sent | null>(null);
   const [minHeight, setMinHeight] = useState<number | undefined>(undefined);
 
-  const fieldId = (f: Field | "interest") => `${uid}-${f}`;
+  const fieldId = (f: Field | "measurement") => `${uid}-${f}`;
   const sending = status === "sending";
 
   function update<K extends keyof Values>(key: K, value: Values[K]) {
@@ -197,8 +249,13 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
     }
   }
 
-  const onText = (key: "name" | "phone" | "email" | "message" | "website") => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const onText = (key: "name" | "phone" | "email" | "city" | "message" | "website") => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     update(key, e.target.value);
+
+  const toggleSlot = (slot: MeasurementSlot) => {
+    const next = values.slots.includes(slot) ? values.slots.filter((s) => s !== slot) : [...values.slots, slot];
+    update("slots", MEASUREMENT_SLOTS.filter((s) => next.includes(s)));
+  };
 
   function onBlur(field: Exclude<Field, "consent">) {
     // validate on blur only when something is typed — no scolding for tabbing through
@@ -238,7 +295,8 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
       setSent({
         first: payload.name.split(/\s+/)[0] ?? payload.name,
         email: payload.email,
-        confirmation: res.confirmation !== false,
+        confirmation: confirmationOf(res),
+        number: leadNumberOf(res),
       });
       setStatus("success");
       return;
@@ -261,7 +319,7 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
   }
 
   function reset() {
-    setValues({ name: "", phone: "", email: "", interest: values.interest, message: "", consent: false, website: "" });
+    setValues(emptyValues(values.interest));
     setErrors({});
     setSent(null);
     setStatus("idle");
@@ -313,23 +371,33 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
               Hvala, {sent.first}.
             </h3>
             <p className={`mt-6 max-w-md text-[15px] leading-relaxed ${t.muted}`}>
-              Vaš upit je stigao do nas. Javit ćemo vam se telefonom ili e-mailom da dogovorimo izmjeru i sljedeće korake.
+              {sent.confirmation === "none"
+                ? "Upit je stigao. Javit ćemo vam se telefonom da dogovorimo izmjeru."
+                : "Vaš upit je stigao do nas. Javit ćemo vam se telefonom ili e-mailom da dogovorimo izmjeru i sljedeće korake."}
             </p>
-            <p className={`mt-3 max-w-md text-sm leading-relaxed ${t.muted}`}>
-              {sent.confirmation ? (
-                <>
-                  Kratku potvrdu šaljemo na <span className={t.text}>{sent.email}</span>.
-                </>
-              ) : (
-                <>
-                  Potvrdu na <span className={t.text}>{sent.email}</span> ovaj put nismo uspjeli poslati, ali upit je
-                  stigao i javit ćemo vam se.
-                </>
-              )}
-            </p>
+            {sent.number && (
+              <p className={`mt-5 text-[15px] ${t.muted}`}>
+                Broj vašeg upita: <span className={`font-medium tabular-nums ${t.text}`}>{sent.number}</span>
+              </p>
+            )}
+            {/* a sentence about the confirmation e-mail only when the API said what happened to it */}
+            {sent.confirmation !== "none" && (
+              <p className={`mt-3 max-w-md text-sm leading-relaxed ${t.muted}`}>
+                {sent.confirmation === "sent" ? (
+                  <>
+                    Kratku potvrdu šaljemo na <span className={t.text}>{sent.email}</span>.
+                  </>
+                ) : (
+                  <>
+                    Potvrdu na <span className={t.text}>{sent.email}</span> ovaj put nismo uspjeli poslati, ali upit je
+                    stigao i javit ćemo vam se.
+                  </>
+                )}
+              </p>
+            )}
             <div className="mt-10">
               <Button type="button" variant={t.reset} onClick={reset}>
-                Pošalji novi upit
+                Pošaljite novi upit
               </Button>
             </div>
           </motion.div>
@@ -363,6 +431,10 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
                 onChange={onText("website")}
               />
             </div>
+
+            {values.photo && (
+              <PhotoChip photo={values.photo} onRemove={() => update("photo", null)} theme={t} disabled={sending} />
+            )}
 
             <div className="grid gap-x-10 gap-y-1 sm:grid-cols-2">
               <TextField
@@ -406,43 +478,104 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
                 reduce={Boolean(reduce)}
                 disabled={sending}
               />
+              <TextField
+                className="sm:col-span-2"
+                id={fieldId("city")}
+                label="Grad"
+                autoComplete="address-level2"
+                placeholder="gdje je prostor"
+                value={values.city}
+                onChange={onText("city")}
+                onBlur={() => onBlur("city")}
+                error={errors.city}
+                hint="Po želji — za izmjeru i montažu."
+                theme={t}
+                reduce={Boolean(reduce)}
+                disabled={sending}
+              />
             </div>
 
-            <fieldset className="mt-10" disabled={sending}>
-              <legend className={`kicker mb-4 ${t.muted}`}>Zanima me</legend>
-              <div className={`relative grid grid-cols-4 rounded-full border p-1 ${t.segTrack}`}>
-                {INTERESTS.map((opt) => {
-                  const on = values.interest === opt;
-                  return (
-                    <label key={opt} className="relative cursor-pointer select-none">
-                      <input
-                        type="radio"
-                        name={`${uid}-interest`}
-                        value={opt}
-                        checked={on}
-                        onChange={() => update("interest", opt)}
-                        className="peer sr-only"
-                      />
-                      {on && (
-                        <motion.span
-                          layoutId={`${uid}-thumb`}
-                          aria-hidden="true"
-                          className={`absolute inset-0 rounded-full ${t.segThumb}`}
-                          transition={{ duration: reduce ? 0 : 0.55, ease: EASE }}
-                        />
-                      )}
-                      <span
-                        className={`relative z-10 flex h-10 items-center justify-center rounded-full px-1 text-[12.5px] font-medium tracking-wide transition-colors duration-300 ease-premium peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 ${t.segFocus} sm:text-[13px] ${
-                          on ? t.segOn : t.segOff
-                        }`}
-                      >
-                        {opt}
-                      </span>
-                    </label>
-                  );
-                })}
+            <Segmented
+              className="mt-8"
+              legend="Zanima me"
+              name={`${uid}-interest`}
+              options={INTERESTS}
+              value={values.interest}
+              onChange={(v) => update("interest", v)}
+              theme={t}
+              reduce={Boolean(reduce)}
+              disabled={sending}
+            />
+
+            {/* the studio's answers (lib/lead-extras.ts TIMELINES); a second tap clears the choice */}
+            <Segmented
+              className="mt-8"
+              legend="Kada planirate?"
+              name={`${uid}-timeline`}
+              options={TIMELINES}
+              value={values.timeline}
+              onChange={(v) => update("timeline", v)}
+              onClear={() => update("timeline", "")}
+              wrap
+              theme={t}
+              reduce={Boolean(reduce)}
+              disabled={sending}
+            />
+
+            <div className="mt-8">
+              <div className="flex items-start gap-3.5">
+                <Tick
+                  id={fieldId("measurement")}
+                  checked={values.measurement}
+                  onChange={(c) => update("measurement", c)}
+                  theme={t}
+                  disabled={sending}
+                  aria-controls={`${uid}-slots`}
+                />
+                <label htmlFor={fieldId("measurement")} className={`cursor-pointer text-[15px] leading-snug ${t.text}`}>
+                  Želim dogovoriti izmjeru
+                  <span className={`mt-0.5 block text-[13px] ${t.muted}`}>Dolazimo u prostor i uzimamo točne mjere.</span>
+                </label>
               </div>
-            </fieldset>
+              <AnimatePresence initial={false}>
+                {values.measurement && (
+                  <motion.div
+                    key="slots"
+                    id={`${uid}-slots`}
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto", transition: { duration: reduce ? 0 : 0.45, ease: EASE } }}
+                    exit={{ opacity: 0, height: 0, transition: { duration: reduce ? 0 : 0.25, ease: EASE } }}
+                    className="overflow-hidden"
+                  >
+                    {/* the padding sits outside the fieldset: a legend ignores its fieldset's top padding */}
+                    <div className="pl-[34px] pt-5">
+                      <fieldset disabled={sending}>
+                        <legend className={`mb-3 text-[13px] font-medium ${t.text}`}>
+                          Kada vam odgovara? <span className={`font-normal ${t.muted}`}>Po želji, može i više odgovora.</span>
+                        </legend>
+                        <div className="flex flex-wrap gap-2">
+                          {MEASUREMENT_SLOTS.map((slot) => {
+                            const on = values.slots.includes(slot);
+                            return (
+                              <label key={slot} className="relative cursor-pointer select-none">
+                                <input type="checkbox" checked={on} onChange={() => toggleSlot(slot)} className="peer sr-only" />
+                                <span
+                                  className={`flex min-h-10 items-center rounded-full border px-4 py-2 text-[13px] font-medium leading-tight transition-colors duration-300 ease-premium peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 ${t.segFocus} ${
+                                    on ? t.chipOn : t.chipOff
+                                  }`}
+                                >
+                                  {slot}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </fieldset>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             <TextField
               className="mt-6"
@@ -490,7 +623,7 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
                     Šaljem…
                   </>
                 ) : (
-                  "Pošalji upit"
+                  "Pošaljite upit"
                 )}
               </Button>
             </div>
@@ -533,6 +666,7 @@ function TextField({
   type = "text",
   inputMode,
   autoComplete,
+  placeholder,
   disabled,
 }: {
   id: string;
@@ -549,14 +683,16 @@ function TextField({
   type?: "text" | "tel" | "email";
   inputMode?: "text" | "tel" | "email";
   autoComplete?: string;
+  /** shown only while the field has focus (the label sits where it would be otherwise) */
+  placeholder?: string;
   disabled?: boolean;
 }) {
   const errId = `${id}-error`;
   const hintId = `${id}-hint`;
   const describedBy = [error ? errId : null, hint ? hintId : null].filter(Boolean).join(" ") || undefined;
   const base = `peer block w-full appearance-none rounded-none border-0 border-b bg-transparent px-0 pb-3 pt-7 text-[17px] leading-snug outline-none transition-colors duration-300 ease-premium focus:outline-none focus-visible:outline-none disabled:opacity-70 [&:-webkit-autofill]:[transition:background-color_99999s_ease-out_0s] ${t.input} ${
-    error ? t.errorBorder : t.border
-  }`;
+    placeholder ? t.placeholder : ""
+  } ${error ? t.errorBorder : t.border}`;
 
   const common = {
     id,
@@ -564,7 +700,8 @@ function TextField({
     onChange,
     onBlur,
     disabled,
-    placeholder: " ",
+    // a blank placeholder still drives the floating label (:placeholder-shown)
+    placeholder: placeholder ?? " ",
     "aria-invalid": error ? true : undefined,
     "aria-describedby": describedBy,
   } as const;
@@ -658,28 +795,17 @@ function Consent({
   return (
     <div className="mt-6">
       <div className="flex items-start gap-3.5">
-        <span className="relative mt-[3px] flex h-5 w-5 shrink-0">
-          <input
-            id={id}
-            type="checkbox"
-            checked={checked}
-            onChange={(e) => onChange(e.target.checked)}
-            disabled={disabled}
-            aria-required="true"
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? errId : undefined}
-            className={`peer h-5 w-5 cursor-pointer appearance-none rounded-[6px] border bg-transparent transition-colors duration-300 ease-premium ${
-              error && !checked ? t.boxError : t.box
-            }`}
-          />
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 20 20"
-            className={`pointer-events-none absolute inset-0 h-5 w-5 opacity-0 transition-opacity duration-300 peer-checked:opacity-100 ${t.tick}`}
-          >
-            <path d="M5.5 10.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
+        <Tick
+          id={id}
+          checked={checked}
+          onChange={onChange}
+          theme={t}
+          disabled={disabled}
+          invalid={Boolean(error) && !checked}
+          aria-required="true"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errId : undefined}
+        />
         <label htmlFor={id} className={`cursor-pointer text-sm leading-relaxed ${t.muted}`}>
           Pročitao/la sam{" "}
           <Link href="/privatnost" target="_blank" className={t.link}>
@@ -706,6 +832,179 @@ function Consent({
   );
 }
 
+/** the form's square checkbox with a drawn tick; the label sits next to it */
+function Tick({
+  id,
+  checked,
+  onChange,
+  theme: t,
+  disabled,
+  invalid = false,
+  ...aria
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  theme: Theme;
+  disabled?: boolean;
+  invalid?: boolean;
+  "aria-required"?: "true";
+  "aria-invalid"?: true;
+  "aria-describedby"?: string;
+  "aria-controls"?: string;
+}) {
+  return (
+    <span className="relative mt-[3px] flex h-5 w-5 shrink-0">
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled}
+        {...aria}
+        className={`peer h-5 w-5 cursor-pointer appearance-none rounded-[6px] border bg-transparent transition-colors duration-300 ease-premium ${
+          invalid ? t.boxError : t.box
+        }`}
+      />
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 20 20"
+        className={`pointer-events-none absolute inset-0 h-5 w-5 opacity-0 transition-opacity duration-300 peer-checked:opacity-100 ${t.tick}`}
+      >
+        <path d="M5.5 10.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
+  );
+}
+
+/**
+ * Pill track with a thumb that glides to the chosen option (radio inputs underneath). `wrap`: two by two on phones,
+ * for longer labels. With `onClear`, tapping the chosen option again clears it (an optional question).
+ */
+function Segmented<T extends string>({
+  legend,
+  name,
+  options,
+  value,
+  onChange,
+  onClear,
+  wrap = false,
+  theme: t,
+  reduce,
+  disabled,
+  className = "",
+}: {
+  legend: string;
+  name: string;
+  options: readonly T[];
+  value: T | "";
+  onChange: (v: T) => void;
+  onClear?: () => void;
+  wrap?: boolean;
+  theme: Theme;
+  reduce: boolean;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <fieldset className={className} disabled={disabled}>
+      <legend className={`kicker mb-4 ${t.muted}`}>{legend}</legend>
+      <div
+        className={`relative grid border p-1 ${t.segTrack} ${
+          wrap ? "grid-cols-2 gap-y-1 rounded-[24px] sm:grid-cols-4 sm:gap-y-0 sm:rounded-full" : "grid-cols-4 rounded-full"
+        }`}
+      >
+        {options.map((opt) => {
+          const on = value === opt;
+          return (
+            <label key={opt} className="relative cursor-pointer select-none">
+              <input
+                type="radio"
+                name={name}
+                value={opt}
+                checked={on}
+                onChange={() => onChange(opt)}
+                // a click on the option that is already chosen fires no change — it clears an optional question
+                onClick={on && onClear ? onClear : undefined}
+                className="peer sr-only"
+              />
+              {on && (
+                <motion.span
+                  layoutId={`${name}-thumb`}
+                  aria-hidden="true"
+                  className={`absolute inset-0 rounded-full ${t.segThumb}`}
+                  transition={{ duration: reduce ? 0 : 0.55, ease: EASE }}
+                />
+              )}
+              <span
+                className={`relative z-10 flex h-10 items-center justify-center rounded-full px-1 text-center text-[12.5px] font-medium leading-tight tracking-wide transition-colors duration-300 ease-premium peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 ${t.segFocus} sm:text-[13px] ${
+                  on ? t.segOn : t.segOff
+                }`}
+              >
+                {opt}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+/** the gallery photo the visitor came from (/kontakt?slika=…), with a way to take it off the inquiry */
+function PhotoChip({ photo, onRemove, theme: t, disabled }: { photo: Photo; onRemove: () => void; theme: Theme; disabled?: boolean }) {
+  return (
+    <div className={`mb-6 flex items-center gap-4 rounded-2xl border p-2 pr-1.5 ${t.panel}`}>
+      <Image
+        src={photo.src}
+        alt=""
+        width={photo.w}
+        height={photo.h}
+        sizes="80px"
+        className="h-[60px] w-20 shrink-0 rounded-xl object-cover"
+      />
+      <p className="min-w-0 flex-1">
+        <span className={`block text-[12.5px] ${t.muted}`}>Sviđa mi se ova kuhinja</span>
+        <span className="mt-0.5 block text-[14.5px] font-medium leading-snug">{photo.title}</span>
+      </p>
+      <button
+        type="button"
+        onClick={onRemove}
+        disabled={disabled}
+        aria-label="Uklonite fotografiju iz upita"
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ease-premium ${t.segOff}`}
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+          <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+/**
+ * How to reach the company when sending fails: lib/site.ts, and where it has no phone or e-mail, what the owner
+ * entered in /admin/postavke (GET /studio/tvrtka, fetched only then).
+ */
+function useDirectContact(): { phone: string | null; email: string | null; whatsapp: string | null } {
+  const [company, setCompany] = useState<CompanyContact | null>(null);
+  useEffect(() => {
+    if (site.contact.phone && site.contact.email) return;
+    let alive = true;
+    void fetchCompanyContact().then((c) => {
+      if (alive) setCompany(c);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return {
+    phone: site.contact.phone ?? company?.phone ?? null,
+    email: site.contact.email ?? company?.email ?? null,
+    whatsapp: site.contact.whatsapp,
+  };
+}
+
 function StatusPanel({
   status,
   theme: t,
@@ -730,7 +1029,7 @@ function StatusPanel({
     },
   };
   const { title, text } = copy[status];
-  const { phone, email, whatsapp } = site.contact;
+  const { phone, email, whatsapp } = useDirectContact();
   const hasDirect = Boolean(phone || email || whatsapp);
   const showPhone = Boolean(phone) || showTodos;
   const showEmail = Boolean(email) || showTodos;
@@ -739,9 +1038,11 @@ function StatusPanel({
     `Ime i prezime: ${values.name.trim()}`,
     `Telefon: ${values.phone.trim()}`,
     `E-mail: ${values.email.trim()}`,
+    ...(values.city.trim() ? [`Grad: ${values.city.trim()}`] : []),
     `Zanima me: ${values.interest}`,
+    ...(values.timeline ? [`Kada planiram: ${values.timeline}`] : []),
     "",
-    values.message.trim().slice(0, 1500),
+    fullMessage(values).slice(0, 1500),
   ].join("\n");
 
   return (
@@ -775,7 +1076,7 @@ function StatusPanel({
                     href={`mailto:${v}?subject=${encodeURIComponent("Upit s web stranice")}&body=${encodeURIComponent(mailBody)}`}
                     className={`text-[13px] ${t.link}`}
                   >
-                    Pošalji ovaj upit e-mailom
+                    Pošaljite ovaj upit e-mailom
                   </a>
                 </span>
               )}

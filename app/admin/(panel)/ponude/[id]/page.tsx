@@ -105,6 +105,9 @@ export default async function QuotePage({ params }: { params: Params }) {
         status={status}
         publicUrl={url}
         customerEmail={q.customerEmail}
+        customerPhone={q.customerPhone}
+        customerName={q.customerName}
+        quoteNumber={q.number}
         mailtoHref={mailtoFor(detail, url, company.name)}
         emailEnabled={isQuoteEmailConfigured()}
         sendEmail={sendQuoteEmailAction}

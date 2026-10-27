@@ -7,8 +7,8 @@
 import { useCallback, useRef, useState } from "react";
 import { leadSchema, type LeadInput } from "@/lib/lead-schema";
 import { sendLead } from "@/lib/lead-client";
+import { MESSAGE_MAX, confirmationOf, leadNumberOf, type Timeline } from "@/lib/lead-extras";
 import type { KitchenConfig } from "@/lib/studio/types";
-import type { Timeline } from "./meta";
 
 export type LeadField = "name" | "phone" | "email" | "city" | "message" | "consent";
 export type LeadStatus = "idle" | "sending" | "invalid" | "not_configured" | "rate_limited" | "server" | "success";
@@ -26,7 +26,7 @@ export interface LeadValues {
 }
 
 export const LEAD_FIELDS: LeadField[] = ["name", "phone", "email", "city", "message", "consent"];
-export const MESSAGE_MAX = 3000;
+export { MESSAGE_MAX };
 /** lib/lead-schema.ts: at most this many summary lines of at most this many characters */
 const SUMMARY_LINES_MAX = 60;
 const SUMMARY_LINE_MAX = 600;
@@ -106,11 +106,16 @@ export interface SentInfo {
   email: string;
   /** a picture of the kitchen went out with the inquiry */
   withImage: boolean;
-  /** the customer's confirmation e-mail: sent, failed, or not reported by the API (null) */
+  /**
+   * the customer's confirmation e-mail: sent (true), failed (false), or nothing to say (null — e-mail is off, or an
+   * older reply that can't tell "off" from "failed"; lib/lead-extras.ts confirmationOf)
+   */
   confirmation: boolean | null;
+  /** the inquiry number ("U-2026-0007") when the API gave one */
+  number: string | null;
 }
 
-/** optional extras an ok reply may carry (`confirmation` / `image`); older replies are just `{ ok: true }` */
+/** optional extras an ok reply may carry (`image`); older replies are just `{ ok: true }` */
 function replyFlag(res: object, ...keys: string[]): boolean | null {
   for (const k of keys) {
     const v = (res as Record<string, unknown>)[k];
@@ -233,12 +238,14 @@ export function useStudioLead({
     sendingRef.current = false;
 
     if (res.ok) {
+      const confirmation = confirmationOf(res);
       setSent({
         first: payload.name.split(/\s+/)[0] ?? payload.name,
         email: payload.email,
         // the server can still drop a picture it doesn't accept — trust its word when it gives one
         withImage: replyFlag(res, "image", "snapshot") ?? Boolean(payload.snapshot),
-        confirmation: replyFlag(res, "confirmation", "confirmationSent"),
+        confirmation: confirmation === "none" ? null : confirmation === "sent",
+        number: leadNumberOf(res),
       });
       setStatus("success");
       return;

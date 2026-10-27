@@ -2,13 +2,16 @@
 
 /**
  * Sidebar widgets of a quote: status (with the customer's timeline), sharing (link, copy, e-mail /
- * mailto), duplicate / delete forms and the print button. They refuse to act while the editor has
- * unsaved changes (useQuoteEditorState), so the customer never gets a link to stale content.
+ * mailto, WhatsApp, the phone's share sheet), duplicate / delete forms and the print button. They refuse
+ * to act while the editor has unsaved changes (useQuoteEditorState), so the customer never gets a link
+ * to stale content.
  */
-import { useState, useTransition, type ReactNode } from "react";
+import { useState, useSyncExternalStore, useTransition, type ReactNode } from "react";
 import { Alert, Button, Card, CardHeader, QuoteStatusBadge, SubmitButton, buttonClass, cx } from "@/components/admin/ui";
+import { IconChat } from "@/components/admin/leads/icons";
 import { formatDate, formatDateTime } from "@/lib/admin/format";
 import { QUOTE_STATUS_LABEL, QUOTE_STATUS_OPTIONS } from "@/lib/admin/status";
+import { quoteText, toWhatsappDigits, whatsappHref } from "@/lib/admin/whatsapp-text";
 import { IconCheck, IconCopy, IconDuplicate, IconLink, IconMail, IconPrint, IconTrash } from "./icons";
 import { useQuoteEditorState } from "./QuoteEditor";
 import type { QuoteActionResult, QuoteStatus } from "./model";
@@ -246,11 +249,27 @@ export function QuoteStatusPanel({
 
 /* ================================================================== share */
 
+/** the system share icon (a box with an arrow out), drawn like ./icons */
+function IconShare() {
+  return (
+    <svg aria-hidden width={16} height={16} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 12.5V3M6.5 6.5 10 3l3.5 3.5M7 9.5H5.5A1.5 1.5 0 0 0 4 11v4.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V11a1.5 1.5 0 0 0-1.5-1.5H13" />
+    </svg>
+  );
+}
+
+const noSubscribe = () => () => {};
+/** the browser has a system share sheet (phones, Safari) — false on the server and while hydrating */
+const useCanShare = () => useSyncExternalStore(noSubscribe, () => typeof navigator.share === "function", () => false);
+
 export function QuoteSharePanel({
   quoteId,
   status,
   publicUrl,
   customerEmail,
+  customerPhone = null,
+  customerName = null,
+  quoteNumber = "",
   mailtoHref,
   emailEnabled,
   sendEmail,
@@ -260,6 +279,11 @@ export function QuoteSharePanel({
   status: QuoteStatus;
   publicUrl: string;
   customerEmail: string | null;
+  /** with a usable number, "Pošaljite WhatsAppom" opens a chat with the link */
+  customerPhone?: string | null;
+  customerName?: string | null;
+  /** "P-2026-0003", for the message */
+  quoteNumber?: string;
   /** prepared mailto: link (subject + body with the link), or null without a customer e-mail */
   mailtoHref: string | null;
   /** Resend is configured on the server */
@@ -271,9 +295,12 @@ export function QuoteSharePanel({
   const [pending, start] = useTransition();
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [copied, setCopied] = useState(false);
+  const canShare = useCanShare();
   const isDraft = status === "nacrt";
   const answered = status === "prihvacena" || status === "odbijena";
   const blocked = dirty || pending;
+  const waDigits = toWhatsappDigits(customerPhone);
+  const waLink = waDigits ? whatsappHref(waDigits, quoteText({ name: customerName, number: quoteNumber, url: publicUrl })) : null;
 
   const copy = async (): Promise<boolean> => {
     try {
@@ -305,6 +332,37 @@ export function QuoteSharePanel({
         }
       }),
     );
+  };
+
+  /** a draft goes out by message: mark it as sent (the customer's link works only then), like markSentAndCopy */
+  const markSent = (done: string) =>
+    start(async () => {
+      try {
+        const res = await changeStatus(quoteId, "poslana");
+        setFeedback(res.ok ? { tone: "success", text: done } : { tone: "danger", text: `Ponuda nije označena kao poslana: ${res.error}` });
+      } catch {
+        setFeedback({ tone: "danger", text: "Ponuda nije označena kao poslana — provjerite vezu." });
+      }
+    });
+
+  // the link opens WhatsApp inside the click; the status change runs alongside
+  const onWhatsapp = () => {
+    setFeedback(null);
+    if (isDraft) markSent("Ponuda je označena kao poslana — dovršite slanje u WhatsAppu.");
+  };
+
+  const share = async () => {
+    setFeedback(null);
+    try {
+      // inside the click (browsers require a user gesture); the share sheet adds the link after the text
+      await navigator.share({ title: `Ponuda ${quoteNumber}`.trim(), text: quoteText({ name: customerName, number: quoteNumber }), url: publicUrl });
+    } catch (err) {
+      // closing the share sheet is not an error, and nothing was sent
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setFeedback({ tone: "danger", text: "Dijeljenje nije uspjelo — kopirajte link i pošaljite ga porukom." });
+      return;
+    }
+    if (isDraft) markSent("Ponuda je označena kao poslana.");
   };
 
   const send = () =>
@@ -399,15 +457,48 @@ export function QuoteSharePanel({
                   Napiši e-mail kupcu
                 </a>
               ) : null}
+            </>
+          )}
+
+          {/* by message from the phone: the chat opens with the text and the link; a draft is marked as sent alongside */}
+          {waLink && (
+            <a
+              href={waLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onWhatsapp}
+              className={buttonClass("secondary", "sm", blocked ? "pointer-events-none opacity-50" : undefined)}
+              aria-disabled={blocked || undefined}
+            >
+              <IconChat size={14} />
+              Pošaljite WhatsAppom
+              <span className="sr-only">(nova kartica, s pripremljenom porukom i poveznicom)</span>
+            </a>
+          )}
+          {canShare && (
+            <Button size="sm" variant="secondary" icon={<IconShare />} disabled={blocked} onClick={() => void share()}>
+              Podijeli…
+            </Button>
+          )}
+
+          {!emailEnabled && (
+            <>
               <p className="w-full text-[12px] leading-snug text-mut">
                 {mailtoHref
-                  ? "Otvara vaš program za e-poštu s pripremljenom porukom i poveznicom. Izravno slanje iz administracije uključuje se kad se postavi Resend."
-                  : "Bez e-maila kupca poveznicu pošaljite porukom (WhatsApp, SMS). Izravno slanje e-mailom uključuje se kad se postavi Resend."}
+                  ? "E-mail otvara vaš program za e-poštu s pripremljenom porukom i poveznicom. Izravno slanje iz administracije uključuje se kad se postavi Resend."
+                  : waLink
+                    ? "Bez e-maila kupca poveznicu pošaljite WhatsAppom ili je kopirajte u SMS. Izravno slanje e-mailom uključuje se kad se postavi Resend."
+                    : "Bez e-maila kupca poveznicu pošaljite porukom (WhatsApp, SMS). Izravno slanje e-mailom uključuje se kad se postavi Resend."}
               </p>
               {!isDraft && mailtoHref && (
                 <p className="w-full text-[12px] leading-snug text-mut">Ponuda je već označena kao poslana.</p>
               )}
             </>
+          )}
+          {isDraft && (waLink || canShare) && (
+            <p className="w-full text-[12px] leading-snug text-mut">
+              Kad je pošaljete porukom, ponuda se odmah označava kao poslana — tek tada je kupac može otvoriti.
+            </p>
           )}
         </div>
       )}
