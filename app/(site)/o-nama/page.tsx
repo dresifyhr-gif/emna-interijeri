@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
-import { cityLine, site } from "@/lib/site";
+import Image from "next/image";
+import { gallery, type Photo } from "@/lib/gallery";
+import { site } from "@/lib/site";
+import { cityLineOf, getPublicCompany } from "@/lib/site-data";
 import { Fill, showTodos } from "@/components/site/Fill";
 import { LinkButton } from "@/components/ui/Button";
 import { Reveal } from "@/components/ui/Reveal";
@@ -10,11 +13,19 @@ import { CtaPair } from "@/components/pages/CtaPair";
 import { pageMetadata } from "@/components/pages/meta";
 
 export const metadata: Metadata = pageMetadata({
-  title: "O nama",
+  title: "O nama: radionica kuhinja i namještaja po mjeri",
   description:
-    "EMNA Interijeri projektira, izrađuje i montira kuhinje, ormare i interijere po mjeri. Kako radimo i do čega nam je stalo: preciznost, jedan tim od izmjere do montaže i jasna cijena.",
+    "EMNA Interijeri projektira, izrađuje i montira kuhinje, ormare i interijere po mjeri. Jedan tim od izmjere do montaže i jasna cijena.",
   path: "/o-nama",
 });
+
+/** real kitchens from lib/gallery.ts (picked by file, not by position, so a reordered gallery keeps this choice) */
+const PHOTO_SRCS = [
+  "/galerija/kuhinja-bijela-drvo-velik.jpg",
+  "/galerija/kuhinja-tamna-drvo-l.jpg",
+  "/galerija/kuhinja-krem-drvo.jpg",
+];
+const photos = PHOTO_SRCS.map((src) => gallery.find((p) => p.src === src)).filter((p): p is Photo => Boolean(p));
 
 const values = [
   {
@@ -31,14 +42,17 @@ const values = [
   },
 ];
 
-export default function ONamaPage() {
-  const { facts, legal } = site;
+export default async function ONamaPage() {
+  const company = await getPublicCompany();
+  const { contact, facts, legal } = company;
+  const cityLine = cityLineOf(company);
   const factRows = [
     { value: facts.years, label: "godina iskustva", todo: "broj godina rada" },
     { value: facts.projects, label: "izrađenih projekata", todo: "broj izrađenih projekata" },
   ].filter((f) => f.value || showTodos);
 
-  // ZTD čl. 21 (d.o.o.) / Zakon o obrtu: only what applies is filled in lib/site.ts; the rest stays hidden in production
+  // ZTD čl. 21 (d.o.o.) / Zakon o obrtu: only what applies is filled in (admin, else lib/site.ts); the rest stays
+  // hidden in production
   const legalRows = [
     { label: "Naziv", value: legal.companyName, todo: "puni naziv tvrtke" },
     { label: "OIB", value: legal.oib, todo: "OIB" },
@@ -124,12 +138,12 @@ export default function ONamaPage() {
                 do kraja imate jednog sugovornika.
               </p>
             </Reveal>
-            {(site.contact.address || cityLine || showTodos) && (
+            {(contact.address || cityLine || showTodos) && (
               <Reveal delay={0.24}>
                 <div className="border-t border-hairline pt-5">
                   <p className="text-[13px] text-taupe">Gdje smo</p>
                   <p className="mt-1.5 text-[15px] text-graphite">
-                    <Fill value={site.contact.address} label="adresa" className="mr-2">
+                    <Fill value={contact.address} label="adresa" className="mr-2">
                       {(v) => <>{v}{cityLine ? ", " : ""}</>}
                     </Fill>
                     <Fill value={cityLine} label="grad" />
@@ -139,6 +153,25 @@ export default function ONamaPage() {
             )}
           </div>
         </div>
+
+        {/* our own work: one wide photo and two beside it in one row (below lg the wide one on top, the others in a pair) */}
+        {photos.length > 0 && (
+          <ul className="shell mt-14 grid grid-cols-2 gap-3 sm:gap-4 lg:mt-20 lg:h-[clamp(300px,26vw,400px)] lg:grid-cols-[1.4fr_1fr_1fr]">
+            {photos.map((p, i) => (
+              <Reveal key={p.src} as="li" delay={i * 0.06} y={24} className={`min-h-0 ${i === 0 ? "col-span-2 lg:col-span-1" : ""}`}>
+                <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-hairline lg:aspect-auto lg:h-full">
+                  <Image
+                    src={p.src}
+                    alt={p.title}
+                    fill
+                    sizes={i === 0 ? "(min-width: 1024px) 40vw, 100vw" : "(min-width: 1024px) 28vw, 50vw"}
+                    className="object-cover"
+                  />
+                </div>
+              </Reveal>
+            ))}
+          </ul>
+        )}
       </section>
 
       {/* ── Kako radimo ── */}

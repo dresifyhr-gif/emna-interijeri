@@ -1,12 +1,20 @@
+import { Arrow } from "@/components/ui/Button";
 import { Reveal } from "@/components/ui/Reveal";
+import { InquiryLink } from "@/components/site/ContactBar";
 
-export type Step = { title: string; text: string };
+export type Step = {
+  title: string;
+  text: string;
+  /** ends with "Zatražite izmjeru": the inquiry form with this page's interest and the wish for a measurement */
+  askMeasurement?: boolean;
+};
 
 /** The four phases every project goes through (also used on the homepage spec). */
 export const defaultSteps: Step[] = [
   {
     title: "Izmjera",
     text: "Mjerimo zidove, kutove, prozore i instalacije te razgovaramo o tome kako prostor koristite: tko kuha, što se sprema, gdje ide svjetlo.",
+    askMeasurement: true,
   },
   {
     title: "3D projekt",
@@ -67,6 +75,15 @@ export function ProcessSteps({ steps = defaultSteps, className = "" }: { steps?:
             {s.title}
           </h3>
           <p className="mt-3 text-[14.5px] leading-relaxed text-taupe">{s.text}</p>
+          {s.askMeasurement && (
+            <InquiryLink
+              measurement
+              className="group mt-4 inline-flex w-fit items-center gap-2 text-[14px] font-medium text-graphite underline decoration-graphite/25 decoration-1 underline-offset-[6px] transition-colors hover:decoration-graphite"
+            >
+              Zatražite izmjeru
+              <Arrow />
+            </InquiryLink>
+          )}
         </Reveal>
       ))}
     </ol>

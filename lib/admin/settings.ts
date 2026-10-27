@@ -26,9 +26,9 @@ export const SETTING_KEYS = {
 } as const;
 
 /**
- * Cache tags revalidated whenever the owner saves a section. Nothing is cached with them yet;
- * the public-site wiring can wrap getCompanySettings() in unstable_cache / "use cache" with
- * COMPANY_SETTINGS_TAG and every save in admin will refresh it.
+ * Cache tags revalidated whenever the owner saves a section. getPublicCompany() (lib/site-data.ts) caches the public
+ * site's company data under COMPANY_SETTINGS_TAG, so the save action's updateTag() refreshes the footer, /kontakt,
+ * /o-nama, /privatnost and the JSON-LD on the next request. Nothing is cached under QUOTE_DEFAULTS_TAG yet.
  */
 export const COMPANY_SETTINGS_TAG = "settings:company";
 export const QUOTE_DEFAULTS_TAG = "settings:quote_defaults";

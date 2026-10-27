@@ -62,6 +62,8 @@ export async function saveCompanyAction(_prev: FormState, formData: FormData): P
     );
     return failed("Spremanje nije uspjelo. Pokušajte ponovno za minutu.", { values });
   }
+  // expires getPublicCompany()'s cache and every public page tagged with it (all of app/(site)): the next visit renders
+  // them with the new data instead of serving the old copy
   updateTag(COMPANY_SETTINGS_TAG);
   revalidatePath("/admin", "layout");
   return { ok: true, message: "Podaci o tvrtki su spremljeni.", errors: {}, values: null, at: now() };

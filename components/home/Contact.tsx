@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { cityLine, site, telHref, waHref } from "@/lib/site";
+import { telHref, waHref } from "@/lib/site";
+import { cityLineOf, getPublicCompany, type CompanySettings } from "@/lib/site-data";
 import { Fill, showTodos } from "@/components/site/Fill";
 import { Reveal } from "@/components/ui/Reveal";
 import { ContactForm } from "@/components/forms/ContactForm";
@@ -12,8 +13,9 @@ interface Row {
   value: ReactNode;
 }
 
-function rows(): Row[] {
-  const { phone, email, whatsapp, address, hours } = site.contact;
+function rows(company: CompanySettings): Row[] {
+  const { phone, email, whatsapp, address, hours } = company.contact;
+  const cityLine = cityLineOf(company);
   const link = "underline decoration-graphite/25 decoration-1 underline-offset-[6px] transition-colors hover:decoration-graphite";
   const out: Row[] = [];
   if (phone || showTodos) {
@@ -83,11 +85,14 @@ function rows(): Row[] {
   return out;
 }
 
-/** Kontakt — greige. Real contact details (or visible TODO markers) and the inquiry form on a white card. */
-export function Contact() {
-  const list = rows();
+/**
+ * Kontakt — greige. Real contact details from getPublicCompany() (or visible TODO markers) and the inquiry form on a
+ * white card. `data-upit`: the phone contact bar (components/site/ContactBar) steps aside while the form is in view.
+ */
+export async function Contact() {
+  const list = rows(await getPublicCompany());
   return (
-    <section id="kontakt" aria-labelledby="kontakt-naslov" className="cv-auto scroll-mt-16 bg-greige">
+    <section id="kontakt" data-upit aria-labelledby="kontakt-naslov" className="cv-auto scroll-mt-16 bg-greige">
       <div className="shell grid gap-12 py-24 sm:py-28 lg:grid-cols-12 lg:gap-10 lg:py-32">
         <div className="lg:col-span-5">
           <Reveal y={12}>

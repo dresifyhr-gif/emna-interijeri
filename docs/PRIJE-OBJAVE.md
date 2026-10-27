@@ -13,31 +13,36 @@ Zato prije objave prođite cijeli ovaj popis. Najlakše je pokrenuti stranicu s 
 
 ---
 
-## 1. Podaci o tvrtki i kontakt — `lib/site.ts`
+## 1. Podaci o tvrtki i kontakt — `/admin/postavke` („Podaci o tvrtki“)
 
-Upisuje se samo ono što je točno; ostalo ostaje `null`.
+Vlasnik ih upisuje sam, i s mobitela: **/admin → Postavke → Podaci o tvrtki → Spremi**. Stranica ih prikaže unutar
+minute, bez programera i bez nove objave. Upisuje se samo ono što je točno; prazno polje ostaje skriveno.
 
-| Polje | Što upisati | Gdje se prikazuje |
+`lib/site.ts` je za ove podatke samo rezerva: vrijednost iz koda vrijedi dok je isto polje u adminu prazno, pa ga
+više ne treba mijenjati. Iznimke koje još čitaju samo `lib/site.ts` (dok se i one ne povežu s adminom): poruke u
+formama i 3D studiju kad slanje ne radi i potvrdni e-mail kupcu.
+
+| Polje u adminu (u kodu) | Što upisati | Gdje se prikazuje |
 |---|---|---|
-| [ ] `contact.phone` | broj za prikaz, npr. `+385 91 123 4567` | zaglavlje (široki zasloni), podnožje, kontakt na naslovnici, `/kontakt`, `/privatnost`, poruke u formama i 3D studiju kad slanje ne radi, potvrdni e-mail kupcu, JSON-LD |
-| [ ] `contact.whatsapp` | broj u wa.me obliku bez `+`, npr. `385911234567` | plutajući WhatsApp gumb (pojavljuje se tek kad je broj upisan), kontakt na naslovnici, `/kontakt` |
-| [ ] `contact.email` | adresa za upite i pitanja o privatnosti | podnožje, naslovnica, `/kontakt` (i rečenica da se fotografije ili tlocrt mogu poslati e-mailom), `/privatnost` (kanal za zahtjeve iz GDPR-a), potvrdni e-mail kupcu, JSON-LD |
-| [ ] `contact.address` | ulica i broj radionice / izložbenog prostora | podnožje, naslovnica, `/kontakt`, `/o-nama`, JSON-LD |
-| [ ] `contact.city` | grad (stari prototip navodio je „Zagreb“, ali to nije potvrđeno) | podnožje, naslovnica, `/kontakt`, `/o-nama` („Gdje smo“), JSON-LD, podnožje potvrdnog e-maila kupcu |
-| [ ] `contact.hours` | radno vrijeme | podnožje, naslovnica, `/kontakt`; u JSON-LD ulazi samo ako je zapisano u schema.org obliku (`Mo-Fr 08:00-16:00`) |
-| [ ] `contact.mapUrl` | poveznica na Google Maps | `/kontakt` („Otvori na karti“), JSON-LD |
-| [ ] `legal.companyName` | puni naziv, npr. `EMNA Interijeri d.o.o.` | podnožje (stupac „Tvrtka“ i ©), `/o-nama`, `/privatnost` (voditelj obrade), potvrdni e-mail, JSON-LD |
-| [ ] `legal.oib` | OIB | podnožje, `/o-nama`, `/privatnost`, JSON-LD |
-| [ ] `legal.seat` | sjedište (registrirana adresa) | podnožje, `/o-nama`, `/privatnost` |
-| [ ] `legal.registry` | npr. `Trgovački sud u …, MBS …` (d.o.o.) | podnožje, `/o-nama` |
-| [ ] `legal.shareCapital` | d.o.o.: iznos temeljnog kapitala i je li uplaćen u cijelosti | `/o-nama` („Podaci o tvrtki“) |
-| [ ] `legal.management` | d.o.o.: članovi uprave | `/o-nama` |
-| [ ] `legal.bank` | banka i IBAN poslovnog računa | `/o-nama` |
-| [ ] `legal.owner` | obrt: ime vlasnika obrta | `/o-nama`, `/privatnost` |
-| [ ] `social.instagram`, `social.facebook` | puni URL profila | podnožje, JSON-LD |
-| [ ] `facts.projects`, `facts.years` | samo stvarne, potvrđene brojke | naslovnica (manifest), `/o-nama` („Brojke“) |
+| [ ] Telefon (`contact.phone`) | broj za prikaz, npr. `+385 91 123 4567` | zaglavlje (široki zasloni) i izbornik na mobitelu, traka za kontakt na mobitelu („Nazovite“), podnožje, kontakt na naslovnici, `/kontakt`, `/privatnost`, JSON-LD |
+| [ ] WhatsApp (`contact.whatsapp`) | broj mobitela s WhatsAppom, npr. `+385 91 123 4567` (admin ga sprema u wa.me obliku) | traka za kontakt na mobitelu, plutajući WhatsApp gumb na širim zaslonima (oboje tek kad je broj upisan), kontakt na naslovnici, `/kontakt` |
+| [ ] E-mail (`contact.email`) | adresa za upite i pitanja o privatnosti | podnožje, naslovnica, `/kontakt` (i rečenica da se fotografije ili tlocrt mogu poslati e-mailom), `/privatnost` (kanal za zahtjeve iz GDPR-a), JSON-LD |
+| [ ] Adresa radionice / izložbenog prostora (`contact.address`) | ulica i broj | podnožje, naslovnica, `/kontakt`, `/o-nama`, JSON-LD |
+| [ ] Grad (`contact.city`) | grad (stari prototip navodio je „Zagreb“, ali to nije potvrđeno) | podnožje, naslovnica, `/kontakt`, `/o-nama` („Gdje smo“), JSON-LD |
+| [ ] Radno vrijeme (`contact.hours`) | radno vrijeme | podnožje, naslovnica, `/kontakt`; u JSON-LD ulazi samo ako je zapisano u schema.org obliku (`Mo-Fr 08:00-16:00`) |
+| [ ] Poveznica na Google karte (`contact.mapUrl`) | poveznica na Google Maps | `/kontakt` („Otvori na karti“), JSON-LD |
+| [ ] Puni naziv tvrtke ili obrta (`legal.companyName`) | npr. `EMNA Interijeri d.o.o.` | podnožje (stupac „Tvrtka“ i ©), `/o-nama`, `/privatnost` (voditelj obrade), JSON-LD |
+| [ ] OIB (`legal.oib`) | OIB | podnožje, `/o-nama`, `/privatnost`, JSON-LD |
+| [ ] Sjedište (`legal.seat`) | registrirana adresa | podnožje, `/o-nama`, `/privatnost` |
+| [ ] Upis u registar (`legal.registry`) | npr. `Trgovački sud u …, MBS …` (d.o.o.) | podnožje, `/o-nama` |
+| [ ] Temeljni kapital (`legal.shareCapital`) | d.o.o.: iznos i je li uplaćen u cijelosti | `/o-nama` („Podaci o tvrtki“) |
+| [ ] Uprava (`legal.management`) | d.o.o.: članovi uprave | `/o-nama` |
+| [ ] Banka i IBAN (`legal.bank`) | banka i IBAN poslovnog računa | `/o-nama` |
+| [ ] Vlasnik obrta (`legal.owner`) | obrt: ime vlasnika obrta | `/o-nama`, `/privatnost` |
+| [ ] Instagram, Facebook (`social.*`) | @ime ili poveznica na profil | podnožje, JSON-LD |
+| [ ] Brojke (`facts.projects`, `facts.years`) | samo stvarne, potvrđene brojke | `/o-nama` („Brojke“) |
 
-Polja `shareCapital` i `management` vrijede za d.o.o., a `owner` za obrt; u `registry` ide sudski registar i MBS
+Temeljni kapital i Uprava vrijede za d.o.o., a Vlasnik obrta za obrt; u Upis u registar ide sudski registar i MBS
 (d.o.o.) ili upis u obrtni registar (obrt). Što je točno obvezno ovisi o pravnom obliku (za trgovačka društva ZTD čl. 21);
 to neka potvrdi računovođa ili pravnik.
 
@@ -108,11 +113,12 @@ Odgovori su sada namjerno neutralni. Kad vlasnik potvrdi, odgovor (`a`) se napi�
 
 Tekst je **nacrt**. Neka ga prije objave pregleda pravnik ili savjetnik za zaštitu podataka.
 
-- [ ] Podaci voditelja obrade (puni naziv, OIB, sjedište, e-mail, za obrt i vlasnik) dolaze iz `lib/site.ts` (točka 1).
-  Dok nedostaju, stranica u produkciji pokazuje vidljivu napomenu, a zahtjevi iz GDPR-a idu na formu za upit.
-  Ta forma ne radi dok nije uključeno slanje (točka 6), pa je **e-mail obvezan prije objave**.
+- [ ] Podaci voditelja obrade (puni naziv, OIB, sjedište, e-mail, za obrt i vlasnik) dolaze iz `/admin/postavke`
+  (točka 1). Dok nedostaju, stranica u produkciji pokazuje vidljivu napomenu, a zahtjevi iz GDPR-a idu na formu za
+  upit, pa je **e-mail obvezan prije objave**.
 - [ ] Rok čuvanja upita bez suradnje: `RETENTION_MONTHS` (sada 12 mjeseci).
-- [ ] Naziv pružatelja hostinga (npr. Vercel Inc., SAD) i pružatelja poslovne e-pošte (markeri u točki 4 politike).
+- [ ] Izvršitelji u točki 4 politike: Vercel (hosting i spremište slika), Neon (baza upita), Resend (samo kad je uključeno
+  slanje e-pošte) i pružatelj poslovne e-pošte (marker u politici).
 - [ ] Mehanizam prijenosa podataka u SAD za svakog izvršitelja (EU–SAD okvir ili standardne ugovorne klauzule).
 - [ ] **Privola u formama**: tekst kvačice u formi za upit (`components/forms/ContactForm.tsx`) i u 3D studiju
   (`components/studio/steps/SendStep.tsx`), poruka greške bez kvačice i točka 3 politike (pravna osnova) moraju govoriti

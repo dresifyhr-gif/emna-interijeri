@@ -41,9 +41,10 @@ export default async function CompanySettingsPage() {
 
   return (
     <div className="space-y-6">
-      <Alert tone="info" title="Ovi se podaci za sada spremaju samo u administraciju.">
-        Javna stranica (kontakt, podnožje, O nama, politika privatnosti) povezuje se s njima u sljedećem koraku — do tada
-        prikazuje podatke upisane u kod. Upisujte samo stvarne podatke; prazno polje se nigdje ne prikazuje.
+      <Alert tone="info" title="Ovo što upišete vidi se na stranici unutar minute.">
+        Telefon, WhatsApp, e-mail, adresa i radno vrijeme pojavljuju se u podnožju, na stranici Kontakt, na naslovnici i na
+        mobitelu u traci za kontakt; naziv tvrtke i OIB na stranici O nama i u politici privatnosti. Upisujte samo stvarne
+        podatke. Prazno polje ostaje skriveno.
       </Alert>
 
       <p className="text-[12.5px] text-mut">

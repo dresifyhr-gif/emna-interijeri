@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { cityLine, site, telHref, waHref } from "@/lib/site";
+import { telHref, waHref } from "@/lib/site";
+import { cityLineOf, type CompanySettings } from "@/lib/site-data";
 import { Fill, showTodos } from "@/components/site/Fill";
 import { Reveal } from "@/components/ui/Reveal";
 
@@ -8,11 +9,12 @@ type Row = { label: string; value: string | null; todo: string; render: (v: stri
 const linkCls = "underline decoration-graphite/25 decoration-1 underline-offset-[6px] transition-colors hover:decoration-graphite";
 
 /**
- * Contact facts from lib/site.ts. Rows whose value is unknown are hidden in production
- * and shown as "upisati …" markers in development. Nothing is invented.
+ * Contact facts from getPublicCompany() (admin values over lib/site.ts). Rows whose value is unknown are hidden in
+ * production and shown as "upisati …" markers in development. Nothing is invented.
  */
-export function ContactDetails() {
-  const { contact } = site;
+export function ContactDetails({ company }: { company: CompanySettings }) {
+  const { contact } = company;
+  const cityLine = cityLineOf(company);
 
   const rows: Row[] = [
     {

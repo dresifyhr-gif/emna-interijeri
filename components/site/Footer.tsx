@@ -1,11 +1,14 @@
 import Link from "next/link";
-import { cityLine, nav, site, telHref } from "@/lib/site";
+import { nav, navMore, site, telHref } from "@/lib/site";
+import { cityLineOf, type CompanySettings } from "@/lib/site-data";
 import { Fill, showTodos } from "./Fill";
 import { Wordmark } from "./Wordmark";
 import { FooterCta } from "./FooterCta";
 
-export function Footer() {
-  const { contact, legal, social } = site;
+/** `company` is getPublicCompany() from the (site) layout: admin values over lib/site.ts */
+export function Footer({ company }: { company: CompanySettings }) {
+  const { contact, legal, social } = company;
+  const cityLine = cityLineOf(company);
   // company data rows: only facts that exist (or "upisati" markers in development) — never a dangling "OIB:"
   const companyRows = [
     { key: "name", value: legal.companyName, label: "puni naziv tvrtke", prefix: null, muted: false },
@@ -26,18 +29,13 @@ export function Footer() {
         <div>
           <p className="kicker text-mut">Stranice</p>
           <ul className="mt-5 space-y-2.5 text-sm">
-            {nav.map((n) => (
+            {[...nav, ...navMore].map((n) => (
               <li key={n.href}>
                 <Link href={n.href} className="text-fg/75 transition-colors hover:text-fg">
                   {n.label}
                 </Link>
               </li>
             ))}
-            <li>
-              <Link href="/pitanja" className="text-fg/75 transition-colors hover:text-fg">
-                Česta pitanja
-              </Link>
-            </li>
           </ul>
         </div>
 
@@ -82,7 +80,7 @@ export function Footer() {
               </li>
             )}
             <li>
-              <Link href="/kontakt" className="text-fg underline decoration-white/25 underline-offset-4 transition-colors hover:decoration-fg">
+              <Link href="/kontakt#upit" className="text-fg underline decoration-white/25 underline-offset-4 transition-colors hover:decoration-fg">
                 Pošaljite upit
               </Link>
             </li>
@@ -118,7 +116,8 @@ export function Footer() {
         )}
       </div>
 
-      <div className="shell flex flex-col justify-between gap-4 border-t border-white/[0.08] py-8 text-xs text-mut sm:flex-row">
+      {/* phones: room below the last row for the contact bar (ContactBar), so it never covers these links */}
+      <div className="shell flex flex-col justify-between gap-4 border-t border-white/[0.08] pb-[calc(6rem+env(safe-area-inset-bottom))] pt-8 text-xs text-mut sm:flex-row md:pb-8">
         <p>
           © {new Date().getFullYear()} {legal.companyName ?? site.name}. Sva prava pridržana.
         </p>

@@ -4,19 +4,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { nav, site, telHref } from "@/lib/site";
+import { nav, navMore, telHref } from "@/lib/site";
 import { usePrefersReducedMotion } from "@/components/ui/motion";
 import { Wordmark } from "./Wordmark";
 import { LinkButton } from "@/components/ui/Button";
 
 const MENU_ID = "mobilni-izbornik";
 const DESKTOP = "(min-width: 1024px)"; // lg: the menu and its toggle are hidden from here up
-const menuItems = [{ href: "/", label: "Naslovnica" }, ...nav];
+const menuItems = [{ href: "/", label: "Naslovnica" }, ...nav, ...navMore];
 
 const isActive = (pathname: string, href: string) =>
   href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 
-export function Header() {
+/** `phone` comes from getPublicCompany() in the (site) layout (a plain string: this is a client component) */
+export function Header({ phone = null }: { phone?: string | null }) {
   const pathname = usePathname();
   const reduce = usePrefersReducedMotion();
   const [scrolled, setScrolled] = useState(false);
@@ -200,9 +201,9 @@ export function Header() {
           </nav>
 
           <div className="flex items-center gap-4">
-            {site.contact.phone && (
-              <a href={telHref(site.contact.phone)} className="hidden text-[13px] opacity-70 transition-opacity hover:opacity-100 xl:block">
-                {site.contact.phone}
+            {phone && (
+              <a href={telHref(phone)} className="hidden text-[13px] opacity-70 transition-opacity hover:opacity-100 xl:block">
+                {phone}
               </a>
             )}
             <LinkButton href="/studio" variant={onDark ? "cream" : "ink"} className="hidden !px-[18px] !py-2.5 !text-[13px] sm:inline-flex">
@@ -265,9 +266,9 @@ export function Header() {
               })}
             </nav>
             <div className="shell mt-auto space-y-4 pb-10 pt-10">
-              {site.contact.phone && (
-                <a href={telHref(site.contact.phone)} className="block text-[15px] text-taupe">
-                  {site.contact.phone}
+              {phone && (
+                <a href={telHref(phone)} className="block text-[15px] text-taupe">
+                  {phone}
                 </a>
               )}
               <LinkButton href="/studio" variant="ink" arrow className="w-full" onClick={() => closeMenu()}>
