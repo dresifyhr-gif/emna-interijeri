@@ -3,9 +3,9 @@
  * editor, "Podigni strop na X cm" and the bar's length switch do with lib/studio/edit.ts. Kept here so they are tested
  * (lib/studio/ui.test.ts) and the walls step, the 3D length editor and the island panel do the same thing.
  */
-import { raiseCeilingFor, setHeights, type EditResult, type IslandChoices, type KitchenExtentInfo } from "@/lib/studio/edit";
+import { raiseCeilingFor, roomWalls, setHeights, setWallKitchen, type EditResult, type IslandChoices, type KitchenExtentInfo } from "@/lib/studio/edit";
 import type { Range } from "@/lib/studio/plan";
-import type { KitchenConfig } from "@/lib/studio/types";
+import type { KitchenConfig, WallId } from "@/lib/studio/types";
 
 /** a kitchen shorter than its wall starts 60 cm (one cabinet) shorter, so the bare wall shows right away */
 export const SHORTER_BY = 60;
@@ -47,4 +47,30 @@ export function raiseForTall(cfg: KitchenConfig, wish: number): { result: EditRe
 export function shorterBar(bar: IslandChoices["bar"]): number {
   const { min, max } = bar.length;
   return Math.max(min, Math.min(max - 20, Math.round((max * 0.75) / 5) * 5));
+}
+
+/**
+ * The room's walls as the "Zidovi" step shows them (edit.ts roomWalls): each wall's length, whether the kitchen stands
+ * on it or it is a bare room wall, and what "Bez kuhinje" / "Dodaj kuhinju" would do there — worked out once, so a
+ * button shows only where its edit goes through (setWallKitchen refuses e.g. wall B of a U, a kitchen on C without B).
+ */
+export interface RoomWallRow {
+  wall: WallId;
+  length: number;
+  kitchen: boolean;
+  bare: boolean;
+  /** a bare wall can go here (no kitchen run, no peninsula on that side) */
+  canBare: boolean;
+  /** "Bez kuhinje": the kitchen off this wall, the room's wall stays (null: not possible here) */
+  takeOff: EditResult | null;
+  /** "Dodaj kuhinju": a kitchen on this bare wall (null: not possible here) */
+  putOn: EditResult | null;
+}
+
+export function roomWallRows(cfg: KitchenConfig): RoomWallRow[] {
+  return roomWalls(cfg).map((w) => {
+    const off = w.kitchen && w.wall !== "a" ? setWallKitchen(cfg, w.wall, false) : null;
+    const on = w.bare ? setWallKitchen(cfg, w.wall, true) : null;
+    return { ...w, takeOff: off?.ok ? off : null, putOn: on?.ok ? on : null };
+  });
 }

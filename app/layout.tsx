@@ -48,7 +48,8 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="hr" className={`${sans.variable} ${head.variable}`} data-scroll-behavior="smooth">
-      <body className="min-h-screen bg-ink font-sans text-fg antialiased">{children}</body>
+      {/* no background of its own: html paints the canvas — dark ink, light on the public site (globals.css, per route group) */}
+      <body className="min-h-screen font-sans text-fg antialiased">{children}</body>
     </html>
   );
 }

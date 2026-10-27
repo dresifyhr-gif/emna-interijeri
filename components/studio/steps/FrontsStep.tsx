@@ -4,19 +4,20 @@
  * "Boje": the front library (families as tabs, large swatches) and the two-tone switch. With two tones on, the
  * customer first picks the part of the kitchen (donji, gornji, visoki stup, otok), then its colour; each part keeps
  * its own colour from then on. Then how the fronts open (Ručke / Na dodir / Gola / Luft za prste, FrontOptions), folded
- * away the glass of vitrines, and the room's walls (all of them or one) and floor — only for the look in 3D (clicking a
- * wall or the floor in 3D opens the same samples there).
+ * away the glass of vitrines, and the room's walls (all of them or one, the bare room walls too), floor and ceiling (with
+ * its light) — only for the look in 3D (clicking a wall or the floor in 3D opens the same samples there).
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
 import { catalog, frontDef } from "@/lib/studio/catalog";
-import { roomFinishes, setRoomFinish } from "@/lib/studio/edit";
-import { frontFor, isPeninsula, wallsFor, type KitchenPlan } from "@/lib/studio/plan";
+import { roomFinishes, setRoomCeiling, setRoomFinish } from "@/lib/studio/edit";
+import { frontFor, isPeninsula, type KitchenPlan } from "@/lib/studio/plan";
 import type { FrontZone, KitchenConfig, WallId } from "@/lib/studio/types";
 import { Disclosure, RadioGrid, SectionLabel, Segmented, Switch } from "../controls";
 import { PaletteIcon } from "../icons";
 import { MaterialLibrary } from "../MaterialLibrary";
-import { EASE, FRONT_FAMILY_TAB, FRONT_ZONE_LONG, FRONT_ZONE_NAME, WALL_HINT } from "../meta";
+import { EASE, FRONT_FAMILY_TAB, FRONT_ZONE_LONG, FRONT_ZONE_NAME, WALL_HINT, frontZones, roomWallIds } from "../meta";
+import { SwitchLine } from "../OptionPickers";
 import { FLOORS, RoomSwatches, WALL_FINISHES, WALL_PAINTS } from "../SurfacePicker";
 import { GlassSection, OpeningSection } from "./FrontOptions";
 import type { StepProps } from "./types";
@@ -29,12 +30,6 @@ export interface FrontsUi {
 }
 
 const FAMILIES = catalog.frontFamilies.map((f) => ({ id: f.id, name: FRONT_FAMILY_TAB[f.id] ?? f.name }));
-
-/** the zones this kitchen has (only those can wear their own front) */
-export function frontZones(plan: KitchenPlan): FrontZone[] {
-  const has = (z: FrontZone) => plan.slots.some((s) => s.zone === z);
-  return (["base", "upper", "tall", "island"] as FrontZone[]).filter((z) => z === "base" || has(z));
-}
 
 /** the config with `id` on `zone`; in two-tone mode the other zones keep the colour they show now */
 export function withZoneFront(cfg: KitchenConfig, plan: KitchenPlan, zone: FrontZone, id: string, twoTone: boolean): Partial<KitchenConfig> {
@@ -159,7 +154,7 @@ export function FrontsStep({ cfg, plan, update, edit, engine, advanced, fronts }
 
       <p className="mt-5 text-[12px] leading-relaxed text-mut">Boje na zaslonu su približne.</p>
 
-      <OpeningSection cfg={cfg} plan={plan} update={update} />
+      <OpeningSection cfg={cfg} plan={plan} update={update} edit={edit} advanced={advanced} />
       <GlassSection cfg={cfg} edit={edit} advanced={advanced} />
 
       <RoomSection cfg={cfg} edit={edit} engine={engine} />
@@ -167,9 +162,12 @@ export function FrontsStep({ cfg, plan, update, edit, engine, advanced, fronts }
   );
 }
 
-/** "Prostor": the room's walls (every wall, or one) and the floor — the look in 3D only, not the kitchen or its price */
+/**
+ * "Prostor": the room's walls (every wall, or one — the bare room walls too) and the floor, and the ceiling with its
+ * light (seen from inside the room: the view switch's "Iz prostorije") — the look in 3D only, not the kitchen or its price
+ */
 function RoomSection({ cfg, edit, engine }: Pick<StepProps, "cfg" | "edit" | "engine">) {
-  const walls = wallsFor(cfg.layout);
+  const walls = roomWallIds(cfg);
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<WallId | "all">("all");
   const which: WallId | "all" = scope !== "all" && walls.includes(scope) ? scope : "all";
@@ -178,6 +176,8 @@ function RoomSection({ cfg, edit, engine }: Pick<StepProps, "cfg" | "edit" | "en
   const mixed = walls.some((w) => f.walls[w] !== f.walls[walls[0]]);
   const name = (id: string) => catalog.room.walls.find((w) => w.id === id)?.name ?? "";
   const floorName = catalog.room.floors.find((x) => x.id === f.floor)?.name ?? "";
+  const ceiling = Boolean(cfg.room?.ceiling);
+  const lamp = Boolean(cfg.room?.lamp);
   const pick = (id: string) =>
     edit(setRoomFinish(cfg, { wall: which, finish: id }), {
       coalesce: `room-wall-${which}`,
@@ -187,8 +187,8 @@ function RoomSection({ cfg, edit, engine }: Pick<StepProps, "cfg" | "edit" | "en
   return (
     <div className="mt-8">
       <Disclosure
-        title="Zidovi i pod prostorije"
-        value={`Zidovi: ${mixed ? "različiti" : name(f.walls[walls[0]]).toLowerCase()} · pod: ${floorName.toLowerCase()}`}
+        title="Zidovi, pod i strop"
+        value={`Zidovi: ${mixed ? "različiti" : name(f.walls[walls[0]]).toLowerCase()} · pod: ${floorName.toLowerCase()}${ceiling ? " · strop" : ""}`}
         icon={<PaletteIcon className="h-5 w-5" />}
         open={open}
         onToggle={() => setOpen((o) => !o)}
@@ -226,6 +226,24 @@ function RoomSection({ cfg, edit, engine }: Pick<StepProps, "cfg" | "edit" | "en
         </p>
         <div className="mt-3">
           <RoomSwatches label="Pod" items={FLOORS} value={f.floor} onChange={(id) => edit(setRoomFinish(cfg, { floor: id }), { coalesce: "room-floor", say: `Pod: ${catalog.room.floors.find((x) => x.id === id)?.name ?? ""}.` })} square />
+        </div>
+
+        <p className="mt-6 text-[13px] text-fg">Strop</p>
+        <p className="mt-1 text-[12px] leading-relaxed text-mut">
+          Vidi se kad gledate iz prostorije{engine ? " (prikaz „Iz prostorije” ili „Frontalno” gore lijevo)" : ""}.
+        </p>
+        <div className="mt-3 space-y-3">
+          <SwitchLine
+            label="Strop prostorije"
+            checked={ceiling}
+            onChange={(on) => edit(setRoomCeiling(cfg, { ceiling: on }), { say: on ? "Strop je prikazan." : "Strop je skriven." })}
+          />
+          <SwitchLine
+            label="Stropno svjetlo"
+            description="Okrugla svjetiljka na sredini stropa."
+            checked={lamp}
+            onChange={(on) => edit(setRoomCeiling(cfg, { lamp: on, ...(on ? { ceiling: true } : {}) }), { say: on ? "Stropno svjetlo je uključeno." : "Bez stropnog svjetla." })}
+          />
         </div>
       </Disclosure>
     </div>

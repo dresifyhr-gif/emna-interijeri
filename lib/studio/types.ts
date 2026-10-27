@@ -82,7 +82,68 @@ export interface ElementOpts {
   rows?: number;
   /** open shelves with a light (floating shelves, open niches): LED under the boards; absent = on */
   led?: boolean;
+  /**
+   * tall units and the side-by-side bridge cabinet in a "do stropa" kitchen: true = one piece from the plinth up to the
+   * column's top line (one front, no seam on the wall units' top-row line — doors up to plan.ts TALL_DOOR_MAX), false =
+   * split into the unit and a top box even when the kitchen says one piece; absent = HeightSpec.onePiece
+   */
+  onePiece?: boolean;
+  /** oven columns ("pecnica", "pecnica-mikro"): what is under the oven — two drawers (absent) or one door ("vrata") */
+  below?: "vrata";
+  /**
+   * oven columns: where the oven sits — absent = as every older column (two drawers' height above the plinth), "nisko" =
+   * low (one drawer's height), "oci" = at eye level (its bottom on the worktop line, the photo's column)
+   */
+  ovenAt?: OvenAt;
+  /** drawer units (and the hob's drawers): the drawer split (catalog.drawerLayouts); absent = KitchenConfig.drawerLayout, else the type's own */
+  drawers?: DrawerLayout;
+  /** hobs: the hob's own width (cm, plan.ts HOB_WIDTHS: a 60 cm hob in a 90 cm cabinet); absent = what the cabinet takes (60 → 58, 80–90 → 78, ≥ 100 → 88) */
+  hob?: number;
+  /** sinks: where the bowl sits in its cabinet; absent = centred */
+  bowl?: "left" | "right";
 }
+
+/** where the oven of an oven column sits (ElementOpts.ovenAt) */
+export type OvenAt = "nisko" | "oci";
+
+/**
+ * The drawer split of a drawer unit, top → bottom (catalog.drawerLayouts; ElementOpts.drawers / KitchenConfig.drawerLayout):
+ *   jednake3   three equal drawers
+ *   msv        small + medium + large (0,2 / 0,28 / 0,52 — the photo's drawer unit)
+ *   duboke2    two deep drawers
+ *   1+2        one shallow + two deep (0,22 / 0,39 / 0,39 — what "Tri ladice" always had)
+ *   4          four drawers (0,19 / 0,27 / 0,27 / 0,27)
+ *   2+1        two shallow + one deep (0,25 / 0,25 / 0,5 — the photo's drawer unit as measured: 18 / 19 / 39 cm)
+ */
+export type DrawerLayout = "jednake3" | "msv" | "duboke2" | "1+2" | "4" | "2+1";
+
+/** the side-by-side fridge's handles (FinishSpec.fridgeHandle): long bar handles (absent) or recessed grips in the door edge */
+export type FridgeHandle = "letvica" | "udubljena";
+
+/**
+ * LED zones (KitchenConfig.ledZones) when not all of them follow KitchenConfig.led: under the wall units, in the plinth,
+ * inside niches / vitrines / open units. false = that zone off; absent = it follows `led`. Only meaningful while `led` is on.
+ */
+export interface LedZones {
+  under?: boolean;
+  plinth?: boolean;
+  inner?: boolean;
+}
+
+/** the Gola profile (handles "bez") beyond its colour (FinishSpec.handleColor) */
+export interface GolaSpec {
+  /** a horizontal Gola channel between the drawers of handleless drawer units (each drawer gets its own grip); absent = only under the worktop */
+  between?: boolean;
+}
+
+/** the plinth beyond its finish (FinishSpec.plinth) */
+export interface PlinthSpec {
+  /** how far the plinth stands back from the base fronts (cm, plan.ts PLINTH_RECESSES); absent = 6 */
+  recess?: number;
+}
+
+/** the 3D camera presets of the studio (StudioEngineApi.setView) */
+export type ViewPreset = "studio" | "prostorija" | "frontalno" | "odozgo";
 
 /** worktop thickness (cm): catalog.worktopThickness — 1,2 compact, 2 slim stone, 4 standard (every older link), 6 massive */
 export interface WorktopSpec {
@@ -184,6 +245,10 @@ export interface FinishSpec {
   plinth?: string;
   /** LED colour temperature */
   led?: string;
+  /** the side-by-side fridge (catalog.finishes.fridges: inox, tamni inox, crni, bijeli); absent = the appliance finish (every older link) */
+  fridge?: string;
+  /** the side-by-side fridge's handles; absent = long bar handles */
+  fridgeHandle?: FridgeHandle;
 }
 
 /**
@@ -215,6 +280,21 @@ export interface HeightSpec {
    * deeper than the 35 cm wall units, e.g. 60 flush with a tall column); absent = 35. Per element: CabinetSpec.opt.depth
    */
   topDepth?: number;
+  /**
+   * cm from the worktop surface up to the wall units' underside (plan.ts UPPER_GAPS 45–65); absent = 57. Works in every
+   * mode (the standard wall units keep their 72 cm and move with it)
+   */
+  gap?: number;
+  /**
+   * "do stropa": the height of the second row of top cabinets (cm, plan.ts TOP_ROWS 30–60; the main row takes the rest),
+   * 0 = one row of wall units up to the ceiling where that fits (DIM.upperMainMax); absent = the planner's split
+   */
+  topRow?: number;
+  /**
+   * "do stropa": tall units (and the side-by-side bridge cabinet) in one piece up to the column's top line instead of the
+   * unit + a top box on the top row's line (doors up to plan.ts TALL_DOOR_MAX); per element: ElementOpts.onePiece
+   */
+  onePiece?: boolean;
 }
 
 /** what the island / peninsula worktop holds besides plain cabinets (the planner places it and leaves it off the walls) */
@@ -294,6 +374,16 @@ export interface RoomSpec {
   floor?: string;
   /** one wall in another finish than `wall` (clicking a wall in 3D: StudioEngineOptions.onSurfaceClick) */
   walls?: Partial<Record<WallId, string>>;
+  /**
+   * room walls with no kitchen on them (only "b" / "c", and only those the layout does not use for a kitchen run): an L
+   * kitchen in a closed room with a bare right wall = layout "L" + bare ["c"]. Their length: KitchenConfig.walls.b / c
+   * (the room's depth). Drawn as plain walls (no run, no "+", no note); edit.ts setBareWall / setWallKitchen
+   */
+  bare?: WallId[];
+  /** show the room's ceiling (seen from inside: StudioEngineApi.setView "prostorija"); absent = no ceiling */
+  ceiling?: boolean;
+  /** a simple round ceiling light in the middle of the room (with `ceiling`); absent = none */
+  lamp?: boolean;
 }
 
 export interface KitchenConfig {
@@ -389,6 +479,19 @@ export interface KitchenConfig {
   backsplash?: BacksplashSpec;
   /** walls with a hanging rail with hooks on the backsplash (reling s kukama); absent = none */
   rails?: WallId[];
+  /** LED zones switched off one by one (while `led` is on); absent = every zone follows `led` */
+  ledZones?: LedZones;
+  /**
+   * how the fronts of one zone open instead of `handles` (base Gola, wall units and the tall column push-to-open …);
+   * an element's own CabinetSpec.opt.open still wins. Absent = every zone opens as `handles`
+   */
+  zoneHandles?: Partial<Record<FrontZone, HandleStyle>>;
+  /** the Gola profile beyond its colour: a channel between the drawers; absent = only under the worktop */
+  gola?: GolaSpec;
+  /** the drawer split of every drawer unit (catalog.drawerLayouts); absent = each type's own; per element ElementOpts.drawers */
+  drawerLayout?: DrawerLayout;
+  /** the plinth's recess behind the fronts; absent = 6 cm */
+  plinth?: PlinthSpec;
 }
 
 export const DEFAULT_CONFIG: KitchenConfig = {
@@ -654,6 +757,20 @@ export interface StudioEngineApi {
   subscribe?(listener: (info: ViewInfo) => void): () => void;
   /** studio: ViewInfo as of the last rendered frame (null before the kitchen is built) */
   viewInfo?(): ViewInfo | null;
+  /**
+   * studio: the camera preset — "studio" (the orbit around the kitchen, the default), "prostorija" (standing in the room
+   * at the entrance, eye level ~165 cm, a wide ~60° lens, looking at wall A — with KitchenConfig.room.ceiling the ceiling
+   * shows), "frontalno" (straight at wall A), "odozgo" (from above). Every preset can still be orbited / zoomed; a
+   * rebuild keeps the preset. Optional: engines built before it do not have it.
+   */
+  setView?(preset: ViewPreset): void;
+  /** the current camera preset */
+  getView?(): ViewPreset;
+  /**
+   * show / hide the ceiling and its light now (overrides KitchenConfig.room.ceiling / lamp until the next config that
+   * changes them); absent `light` keeps the light as it is
+   */
+  setCeiling?(on: boolean, light?: boolean): void;
   resize(): void;
   dispose(): void;
 }

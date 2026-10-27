@@ -1,12 +1,15 @@
+import { ModuleGlyph } from "@/components/studio/icons";
 import { STEPS } from "@/components/studio/meta";
 import { catalog, moduleDef } from "@/lib/studio/catalog";
+import { planKitchen } from "@/lib/studio/plan";
 import { estimate } from "@/lib/studio/price";
 import { buildPoster } from "./posterGeometry";
 import { HERO_CONFIG } from "./heroConfig";
 
 /** the elements step of the studio, as the preview's side panel shows it */
 const STEP = STEPS.findIndex((s) => s.id === "elementi");
-const TILES = ["ladice", "vrata", "sudoper", "ploca", "perilica", "smece"];
+/** how many element rows the panel lists (wall A's base cabinets, left → right — as the real "Elementi" step does) */
+const ROWS = 5;
 
 const FACE: Record<string, string> = { front: "#232226", top: "#2b2a2e", side: "#1b1a1d" };
 const STROKE: Record<string, { o: number; w: number }> = {
@@ -21,14 +24,19 @@ const eur = (n: number) => new Intl.NumberFormat("hr-HR", { maximumFractionDigit
 
 /**
  * A still of the 3D studio for the homepage's studio band: the hero kitchen as a line drawing (generated from the real
- * planner, like the hero's poster) with "+" places, and the studio's side panel on its elements step — real step
- * names, element names and the studio's rough price for this kitchen. Decorative: the band's text says the same.
+ * planner, like the hero's poster) with "+" places, and the studio's side panel on its elements step as the studio
+ * shows it — the same dark glass panel, step bars, "Korak 03 / 06", the element rows of wall A (names and widths from
+ * the planner, the first one selected) and the rough price for this kitchen. Decorative: the band's text says the same.
  * Server component (the planner and the catalogue stay on the server).
  */
 export function StudioPreview() {
   const p = buildPoster(HERO_CONFIG);
   const price = estimate(HERO_CONFIG);
-  const tiles = TILES.map((id) => moduleDef("base", id)).filter((m) => m !== undefined);
+  const rows = planKitchen(HERO_CONFIG)
+    .slots.filter((s) => s.run === "a" && s.zone === "base" && !moduleDef(s.zone, s.type)?.spacer)
+    .sort((a, b) => a.x - b.x)
+    .slice(0, ROWS)
+    .map((s) => ({ id: s.id, type: s.type, name: moduleDef(s.zone, s.type)?.name ?? s.type, width: Math.round(s.width) }));
   const front = catalog.fronts.find((f) => f.id === HERO_CONFIG.front);
 
   return (
@@ -64,34 +72,42 @@ export function StudioPreview() {
         </span>
       </div>
 
-      {/* the side panel */}
-      <div className="absolute bottom-3 right-3 top-3 hidden w-[34%] flex-col rounded-2xl bg-white/[0.94] p-4 text-graphite shadow-[0_10px_30px_rgba(0,0,0,.25)] sm:flex lg:p-5">
+      {/* the side panel — the studio's own: dark glass, accent step bar, element rows, price and "Dalje" */}
+      <div className="glass absolute bottom-3 right-3 top-3 hidden w-[34%] flex-col overflow-hidden rounded-[20px] p-4 text-fg shadow-[0_24px_70px_-30px_rgba(0,0,0,.9)] sm:flex lg:p-5">
+        <span className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
         <div className="flex gap-1.5">
           {STEPS.map((s, i) => (
-            <span key={s.id} className={`h-[3px] flex-1 rounded-full ${i <= STEP ? "bg-graphite" : "bg-hairline"}`} />
+            <span key={s.id} className={`h-[2px] flex-1 rounded-full ${i === STEP ? "bg-accent" : i < STEP ? "bg-fg/45" : "bg-white/[0.1]"}`} />
           ))}
         </div>
-        <p className="kicker mt-4 text-[9.5px] text-taupe">
-          Korak {STEP + 1} / {STEPS.length}
+        <p className="mt-4 text-[9.5px] font-medium uppercase tabular-nums tracking-[0.2em] text-mut">
+          Korak {String(STEP + 1).padStart(2, "0")} <span className="text-mut/50">/ {String(STEPS.length).padStart(2, "0")}</span>
         </p>
-        <p className="heading mt-2 text-[19px] tracking-head-sm lg:text-[21px]">{STEPS[STEP]?.title ?? "Elementi"}</p>
-        <div className="mt-3 grid grid-cols-2 gap-1.5 lg:gap-2">
-          {tiles.map((m, i) => (
+        <p className="mt-2 font-head text-[19px] font-medium leading-tight tracking-tight lg:text-[22px]">{STEPS[STEP]?.title ?? "Elementi"}</p>
+        <p className="mt-3 flex items-center gap-2 text-[8.5px] font-medium uppercase tracking-[0.2em] text-mut lg:text-[9px]">
+          <span className="h-px w-4 bg-accent/60" />
+          Donji elementi
+        </p>
+        <div className="mt-2 space-y-1 lg:space-y-1.5">
+          {rows.map((r, i) => (
             <span
-              key={m.id}
-              className={`rounded-[10px] border bg-white p-2 text-[10px] leading-tight lg:text-[11px] ${i === 0 ? "border-graphite" : "border-hairline"}`}
+              key={r.id}
+              className={`flex items-center gap-2 rounded-[9px] border px-1.5 py-1 text-[10px] leading-tight lg:text-[10.5px] ${
+                i === 0 ? "border-accent/60 bg-accent/[0.08] text-fg" : "border-white/[0.07] text-fg/80"
+              }`}
             >
-              <span className="mb-1.5 block h-5 rounded-[4px] bg-[linear-gradient(135deg,#f1ece4,#dcd2c3)] lg:h-6" />
-              <span className="line-clamp-2">{m.name}</span>
+              <ModuleGlyph type={r.type} zone="base" className={`h-5 w-5 shrink-0 lg:h-6 lg:w-6 ${i === 0 ? "text-accent" : "text-fg/55"}`} />
+              <span className="min-w-0 flex-1 truncate">{r.name}</span>
+              <span className="shrink-0 tabular-nums text-mut">{r.width} cm</span>
             </span>
           ))}
         </div>
-        <div className="mt-auto flex items-end justify-between gap-2 pt-3">
-          <span className="text-[10.5px] leading-tight text-taupe">
+        <div className="mt-auto flex items-end justify-between gap-2 border-t border-white/10 pt-3">
+          <span className="text-[10.5px] leading-tight text-mut">
             okvirno
-            <span className="block font-head text-[14px] font-semibold tabular-nums text-graphite lg:text-[15px]">od {eur(price.low)} €</span>
+            <span className="block font-head text-[14px] font-semibold tabular-nums text-fg lg:text-[15px]">od {eur(price.low)} €</span>
           </span>
-          <span className="rounded-full bg-graphite px-3 py-1.5 text-[11px] font-medium text-white">Dalje</span>
+          <span className="rounded-full bg-accent px-3 py-1.5 text-[11px] font-semibold tracking-wide text-ink">Dalje</span>
         </div>
       </div>
 

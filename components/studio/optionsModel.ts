@@ -10,13 +10,17 @@
  *               "+" of a full row and "+ lijevo / + desno" say it before the pick ("susjedni elementi suzit će se: …")
  *   end units   endChoice: whether the selected element stands at a free end of its run and which završeci can go there
  *               (or, on an end unit itself, what it can become)
+ *   photo round the zones' own ways of opening (zoneOpenOptions — Gola allowed), the 3D camera presets of the view switch
+ *               (CAMERA_PRESETS), an oven column's choices (OVEN_AT, OVEN_BELOW), the sink bowl's places, a hob's widths
+ *               (hobChoices)
  *
  * Everything that changes the kitchen goes through lib/studio/edit.ts.
  */
 import { endTypes, handleDef, moduleDef, moduleTypes, type ModuleZone } from "@/lib/studio/catalog";
 import { insertAfter, insertAtGap, insertBefore, type EditResult, type SlotEditInfo, type TypeChoice } from "@/lib/studio/edit";
+import { hobWidthOf } from "@/lib/studio/fronts";
 import { planKitchen, type KitchenPlan, type ListId, type PlanGap, type PlanSlot } from "@/lib/studio/plan";
-import type { BacksplashKind, HandleStyle, HoodKind, IslandHoodStyle, KitchenConfig } from "@/lib/studio/types";
+import type { BacksplashKind, HandleStyle, HoodKind, IslandHoodStyle, KitchenConfig, OvenAt, ViewPreset } from "@/lib/studio/types";
 import { CHIP_WIDTHS, bestWidth } from "./addModel";
 import { rowOf, rowSlots } from "./meta";
 
@@ -73,6 +77,77 @@ export function elementOpenOptions(kitchen: HandleStyle, own: HandleStyle | null
 
 /** "Metalna letvica" → the short chip name under "Ručke" */
 export const handleTypeName = (h: HandleStyle) => ({ letvica: "Letvica", gumb: "Gumb", utor: "Utorna ručka" })[h as "letvica"] ?? handleDef(h)?.name ?? h;
+
+/**
+ * One zone's way of opening (KitchenConfig.zoneHandles — "Boje" → "Otvaranje po dijelovima"): the kitchen's way first
+ * ("kao kuhinja": the zone's own one is dropped), then the others — Gola too (a zone is a whole row, the profile runs
+ * along it). `own` = the zone's own style now (null: as the kitchen).
+ */
+export function zoneOpenOptions(kitchen: HandleStyle, own: HandleStyle | null = null): ElementOpenOption[] {
+  const k = openKindOf(kitchen);
+  const kinds: OpenKind[] = [k, ...OPEN_KINDS.map((o) => o.id).filter((x) => x !== k)];
+  return kinds.map((kind) => ({
+    kind,
+    style: kind === k ? null : own && openKindOf(own) === kind ? own : styleForKind(kind, kitchen),
+    name: openKindName(kind),
+    kitchen: kind === k,
+  }));
+}
+
+/* ------------------------------------------------------------------ the 3D camera (ViewSwitch) */
+
+export interface CameraPresetDef {
+  id: ViewPreset;
+  /** the switch's label (desktop) */
+  name: string;
+  /** a phone's label */
+  short: string;
+  /** what it is, read out and in the tooltip */
+  aria: string;
+  /** the room's ceiling can show (the camera stands under it) — the switch offers "Strop" here */
+  ceiling: boolean;
+}
+
+export const CAMERA_PRESETS: readonly CameraPresetDef[] = [
+  { id: "studio", name: "3D studio", short: "Studio", aria: "3D studio: okrećite kuhinju sa svih strana", ceiling: false },
+  { id: "prostorija", name: "Iz prostorije", short: "Prostorija", aria: "Pogled iz prostorije: s ulaza, u visini očiju", ceiling: true },
+  { id: "frontalno", name: "Frontalno", short: "Sprijeda", aria: "Frontalno: ravno prema zidu A", ceiling: true },
+  { id: "odozgo", name: "Odozgo", short: "Odozgo", aria: "Odozgo: kuhinja iz ptičje perspektive", ceiling: false },
+];
+export const cameraPresetDef = (p: ViewPreset): CameraPresetDef => CAMERA_PRESETS.find((c) => c.id === p) ?? CAMERA_PRESETS[0];
+
+/* ------------------------------------------------------------------ element options of the "photo" round */
+
+/** an oven column: what is under the oven, where the oven sits (edit.ts setOvenColumn) */
+export const OVEN_BELOW: readonly { id: "ladice" | "vrata"; name: string }[] = [
+  { id: "ladice", name: "Dvije ladice" },
+  { id: "vrata", name: "Vrata" },
+];
+export const OVEN_AT: readonly { id: OvenAt | "standard"; name: string; sub: string }[] = [
+  { id: "nisko", name: "Nisko", sub: "iznad postolja" },
+  { id: "standard", name: "Standardno", sub: "iznad ladica" },
+  { id: "oci", name: "U visini očiju", sub: "na liniji ploče" },
+];
+
+/** a sink's bowl in its cabinet */
+export const BOWL_PLACES: readonly { id: "left" | "center" | "right"; name: string }[] = [
+  { id: "left", name: "Lijevo" },
+  { id: "center", name: "Sredina" },
+  { id: "right", name: "Desno" },
+];
+
+/**
+ * A hob's own width (ElementOpts.hob): the glass sizes that fit its cabinet, the one it takes by itself first marked
+ * "standardno" (picking it drops the element's own width). Only worth showing when there is more than one.
+ */
+export function hobChoices(info: { value: number; own: boolean; options: number[] }, cabinet: number): { value: number; auto: number; options: number[] } {
+  const auto = hobWidthOf(cabinet);
+  const options = [...new Set([...info.options, auto])].filter((w) => w <= cabinet - 2).sort((a, b) => a - b);
+  return { value: info.value, auto, options };
+}
+
+/** 3 → "3 ladice" */
+export const drawersWord = (n: number) => (n === 1 ? "1 ladica" : n >= 2 && n <= 4 ? `${n} ladice` : `${n} ladica`);
 
 /* ------------------------------------------------------------------ short tile names */
 

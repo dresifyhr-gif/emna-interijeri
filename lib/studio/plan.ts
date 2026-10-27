@@ -85,6 +85,7 @@ import {
   worktopThicknessDef,
   type ModuleTypeDef,
 } from "./catalog";
+import { DRAWER_LAYOUT_IDS, DRAWER_TYPES, HOB_WIDTHS, drawerLayoutOf, golaBetween, hobWidthOf } from "./fronts";
 import {
   DEFAULT_CONFIG,
   type BacksplashSpec,
@@ -92,9 +93,14 @@ import {
   type BaseRunId,
   type CabinetSpec,
   type CornerId,
+  type DrawerLayout,
   type ElementOpts,
   type FinishSpec,
+  type FridgeHandle,
   type FrontZone,
+  type GolaSpec,
+  type LedZones,
+  type PlinthSpec,
   type GlassSpec,
   type HandleStyle,
   type HeightSpec,
@@ -309,6 +315,18 @@ export const SHELF_ROWS = [1, 2, 3] as const;
 export const SHELF_ROWS_DEFAULT = 2;
 /** the standard heights, as every older link has them */
 export const STANDARD_HEIGHTS: Readonly<Required<Pick<HeightSpec, "mode" | "worktop">>> = { mode: "standard", worktop: 90 };
+/** worktop surface → wall units' underside (HeightSpec.gap), cm; absent = DIM.upperGap (57) */
+export const UPPER_GAPS = [45, 50, 55, 57, 60, 65] as const;
+/** "do stropa": heights of the second row of top cabinets (HeightSpec.topRow), cm; 0 = one row up to the ceiling */
+export const TOP_ROWS = [0, 30, 35, 40, 45, 50, 60] as const;
+/**
+ * the tallest front a tall unit may have in one piece (HeightSpec.onePiece / ElementOpts.onePiece), cm: doors of
+ * 2,5–2,9 m (a straightened 19 mm board, three to four hinges); a taller column is still split, with a note
+ */
+export const TALL_DOOR_MAX = 290;
+/** how far the plinth stands back from the base fronts (KitchenConfig.plinth.recess), cm; absent = 6 */
+export const PLINTH_RECESSES = [0, 3, 6, 9, 12] as const;
+export const PLINTH_RECESS_DEFAULT = 6;
 
 /**
  * plinth and base carcass (cm) for a worktop height and thickness: 85 = 5 + 76 + 4, 90 = 10 + 76 + 4, 95 = 15 + 76 + 4;
@@ -341,9 +359,74 @@ export function glassOf(cfg: Pick<KitchenConfig, "glass">, opt?: ElementOpts): R
   };
 }
 
-/** how an element's fronts open: its own style (opt.open) or the kitchen's (KitchenConfig.handles) */
-export function openingOf(cfg: Pick<KitchenConfig, "handles">, opt?: ElementOpts): HandleStyle {
-  return opt?.open ?? cfg.handles;
+/**
+ * how an element's fronts open: its own style (opt.open), its zone's (KitchenConfig.zoneHandles, with `zone`) or the
+ * kitchen's (KitchenConfig.handles)
+ */
+export function openingOf(cfg: Pick<KitchenConfig, "handles" | "zoneHandles">, opt?: ElementOpts, zone?: SlotZone | FrontZone): HandleStyle {
+  return opt?.open ?? (zone ? cfg.zoneHandles?.[zone] : undefined) ?? cfg.handles;
+}
+
+/** a tall unit (or the side-by-side bridge) in one piece up to the column's top line: its own (opt.onePiece), else the kitchen's (HeightSpec.onePiece) */
+export function onePieceOf(cfg: Pick<KitchenConfig, "heights">, opt?: ElementOpts): boolean {
+  return opt?.onePiece ?? cfg.heights?.onePiece ?? false;
+}
+
+/**
+ * Where a tall unit is split into the unit and its top box (cm above the floor), or null for one piece: the plan's
+ * line (HeightPlan.tallSplit), unless the element is in one piece (onePieceOf) and its front stays within TALL_DOOR_MAX.
+ */
+export function tallSplitOf(cfg: Pick<KitchenConfig, "heights">, h: HeightPlan, opt?: ElementOpts): number | null {
+  if (h.tallSplit === null) return null;
+  if (onePieceOf(cfg, opt) && h.tallTop - h.plinth <= TALL_DOOR_MAX) return null;
+  return h.tallSplit;
+}
+
+/** the plinth's recess behind the base fronts (cm): KitchenConfig.plinth.recess, else 6 */
+export function plinthRecessOf(cfg: Pick<KitchenConfig, "plinth">): number {
+  return cfg.plinth?.recess ?? PLINTH_RECESS_DEFAULT;
+}
+
+/** an LED zone is lit: the kitchen's LED is on and the zone is not switched off (KitchenConfig.ledZones) */
+export function ledZoneOn(cfg: Pick<KitchenConfig, "led" | "ledZones">, zone: keyof LedZones): boolean {
+  return cfg.led && cfg.ledZones?.[zone] !== false;
+}
+
+/** the side-by-side fridge niche (catalog SBS): it has its own side panels */
+export const isSbsType = (type: string): boolean => type === "hladnjak-sbs" || type === "hladnjak-sbs-vrata";
+
+/**
+ * the cover panel on each side of a tall column (cm): DIM.panel, or none for a column that is nothing but side-by-side
+ * fridge niches — the niche's own side panels (bočne obloge) close it, so it takes exactly SBS.niche (96) cm
+ */
+export function columnPanel(units: readonly { type: string }[] | null | undefined): number {
+  return units && units.length && units.every((u) => isSbsType(u.type)) ? 0 : DIM.panel;
+}
+
+/**
+ * a side-by-side niche standing in a tall column of nothing but niches (no other tall unit touching it on its run): its
+ * bridge cabinet then starts just above the appliance instead of on the line of an integrated fridge's top door (engine
+ * modules.ts buildSbs, drawings face.ts sbsFace)
+ */
+export function sbsAlone(slots: readonly PlanSlot[], slot: PlanSlot): boolean {
+  if (slot.zone !== "tall" || !isSbsType(slot.type)) return false;
+  const talls = slots.filter((s) => s.zone === "tall" && s.run === slot.run);
+  // the column: tall units touching one another (a cover panel's width apart at most)
+  let lo = slot.x;
+  let hi = slot.x + slot.width;
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const s of talls) {
+      const a = s.x;
+      const b = s.x + s.width;
+      if (b >= lo - DIM.panel - 0.5 && a <= hi + DIM.panel + 0.5 && (a < lo || b > hi)) {
+        lo = Math.min(lo, a);
+        hi = Math.max(hi, b);
+        grew = true;
+      }
+    }
+  }
+  return talls.every((s) => s.x + s.width <= lo + 0.01 || s.x >= hi - 0.01 || isSbsType(s.type));
 }
 
 /** the hood of a hob: its own (opt.hood), else the kitchen's (KitchenConfig.hood.kind), else hidden in a wall unit */
@@ -710,6 +793,21 @@ export function cleanOpts(v: unknown, zone: ListZone, type: string): ElementOpts
     }
   }
   if (def.lit && v.led === false) out.led = false;
+  // the "photo" round: one piece up to the ceiling (tall units, the side-by-side bridge), the oven column's variants,
+  // the drawer split, the hob's own width, the sink bowl's place
+  if (zone === "tall" && !def.endUnit && !def.spacer && typeof v.onePiece === "boolean") out.onePiece = v.onePiece;
+  if (zone === "tall" && (type === "pecnica" || type === "pecnica-mikro")) {
+    if (v.below === "vrata") out.below = "vrata";
+    if (v.ovenAt === "nisko" || v.ovenAt === "oci") out.ovenAt = v.ovenAt;
+  }
+  if (zone !== "upper" && zone !== "tall" && DRAWER_TYPES[type] && typeof v.drawers === "string" && (DRAWER_LAYOUT_IDS as readonly string[]).includes(v.drawers)) {
+    out.drawers = v.drawers as DrawerLayout;
+  }
+  if (zone !== "upper" && zone !== "tall" && (type === "ploca" || type === "ploca-pecnica")) {
+    const hw = num(v.hob, NaN);
+    if (Number.isFinite(hw)) out.hob = nearest(HOB_WIDTHS, hw);
+  }
+  if (zone !== "upper" && zone !== "tall" && def.feature === "sink" && (v.bowl === "left" || v.bowl === "right")) out.bowl = v.bowl;
   return Object.keys(out).length ? out : undefined;
 }
 
@@ -764,6 +862,9 @@ function cleanFinish(v: unknown): FinishSpec | undefined {
   pick("appliances", "appliances");
   pick("plinth", "plinths");
   pick("led", "leds");
+  // the side-by-side fridge: its own finish (absent = the appliance finish) and handles (absent = bars)
+  if (typeof v.fridge === "string" && finishDef("fridges", v.fridge)) out.fridge = v.fridge;
+  if (v.fridgeHandle === "udubljena") out.fridgeHandle = v.fridgeHandle as FridgeHandle;
   return Object.keys(out).length ? out : undefined;
 }
 
@@ -793,7 +894,17 @@ function cleanHeights(v: unknown): HeightSpec | undefined {
     const x = nearest(TOP_DEPTHS, td);
     if (x !== TOP_DEPTH_DEFAULT) out.topDepth = x;
   }
-  if (mode === "standard" && out.worktop === undefined && out.topDepth === undefined) return undefined;
+  // the gap to the wall units (every mode), the top row's height and one-piece tall units ("do stropa"; kept in every
+  // mode like topDepth: they show again when the kitchen goes up to the ceiling)
+  const gap = num(v.gap, NaN);
+  if (Number.isFinite(gap)) {
+    const x = nearest(UPPER_GAPS, gap);
+    if (x !== DIM.upperGap) out.gap = x;
+  }
+  const tr = num(v.topRow, NaN);
+  if (Number.isFinite(tr)) out.topRow = nearest(TOP_ROWS, tr);
+  if (v.onePiece === true) out.onePiece = true;
+  if (mode === "standard" && Object.keys(out).length === 1) return undefined;
   return out;
 }
 
@@ -860,9 +971,17 @@ function cleanIslandSpec(v: unknown): IslandSpec | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
-function cleanRoom(v: unknown): RoomSpec | undefined {
+function cleanRoom(v: unknown, layout: Layout): RoomSpec | undefined {
   if (!isObj(v)) return undefined;
   const out: RoomSpec = {};
+  // room walls without a kitchen: B / C, only where the layout has no kitchen run
+  if (Array.isArray(v.bare)) {
+    const used = wallsFor(layout);
+    const bare = (["b", "c"] as WallId[]).filter((w) => (v.bare as unknown[]).includes(w) && !used.includes(w));
+    if (bare.length) out.bare = bare;
+  }
+  if (v.ceiling === true) out.ceiling = true;
+  if (v.lamp === true) out.lamp = true;
   if (typeof v.wall === "string" && roomWallDef(v.wall) && v.wall !== FINISH_DEFAULTS.wall) out.wall = v.wall;
   if (typeof v.floor === "string" && roomFloorDef(v.floor) && v.floor !== FINISH_DEFAULTS.floor) out.floor = v.floor;
   if (isObj(v.walls)) {
@@ -1042,8 +1161,14 @@ function sanitizeShallow(input: unknown): KitchenConfig {
   }
   const finish = cleanFinish(src.finish);
   if (finish) cfg.finish = finish;
-  const room = cleanRoom(src.room);
-  if (room) cfg.room = room;
+  const room = cleanRoom(src.room, layout);
+  // a peninsula stands out from its end of wall A where a bare wall on that side would be
+  if (room?.bare && isPeninsula(layout)) {
+    const side = layout === "G" || !(isObj(src.islandSpec) && src.islandSpec.side === "left") ? "c" : "b";
+    room.bare = room.bare.filter((w) => w !== side);
+    if (!room.bare.length) delete room.bare;
+  }
+  if (room && Object.keys(room).length) cfg.room = room;
   const heights = cleanHeights(src.heights);
   if (heights) cfg.heights = heights;
   const islandSpec = cleanIslandSpec(src.islandSpec);
@@ -1059,6 +1184,30 @@ function sanitizeShallow(input: unknown): KitchenConfig {
   if (Array.isArray(src.rails)) {
     const rails = WALLS.filter((w) => (src.rails as unknown[]).includes(w));
     if (rails.length) cfg.rails = rails;
+  }
+  // ---- the "photo" round (all optional; absent = every older link)
+  if (isObj(src.ledZones)) {
+    const lz: LedZones = {};
+    for (const k of ["under", "plinth", "inner"] as const) if (src.ledZones[k] === false) lz[k] = false;
+    if (Object.keys(lz).length) cfg.ledZones = lz;
+  }
+  if (isObj(src.zoneHandles)) {
+    const zh: Partial<Record<FrontZone, HandleStyle>> = {};
+    for (const z of FRONT_ZONES) {
+      const h = src.zoneHandles[z];
+      // the kitchen's own style is the same as leaving it out
+      if (typeof h === "string" && HANDLES.includes(h as HandleStyle) && h !== cfg.handles) zh[z] = h as HandleStyle;
+    }
+    if (Object.keys(zh).length) cfg.zoneHandles = zh;
+  }
+  if (isObj(src.gola) && src.gola.between === true) cfg.gola = { between: true } satisfies GolaSpec;
+  if (typeof src.drawerLayout === "string" && (DRAWER_LAYOUT_IDS as readonly string[]).includes(src.drawerLayout)) cfg.drawerLayout = src.drawerLayout as DrawerLayout;
+  if (isObj(src.plinth)) {
+    const r = num(src.plinth.recess, NaN);
+    if (Number.isFinite(r)) {
+      const x = nearest(PLINTH_RECESSES, r);
+      if (x !== PLINTH_RECESS_DEFAULT) cfg.plinth = { recess: x } satisfies PlinthSpec;
+    }
   }
   return cfg;
 }
@@ -1107,6 +1256,11 @@ export function geometryKey(cfg: KitchenConfig): string {
     // module stands higher / lower) — absent for every older link: the same key
     ...(cfg.hood ? [["h", cfg.hood.kind ?? 0, cfg.hood.finish ?? 0, cfg.hood.island ?? 0]] : []),
     ...(cfg.worktop ? [["w", worktopThickness(cfg)]] : []),
+    // the "photo" round — absent for every older link: the same key. The gap to the wall units, the top row's height
+    // (the wall units move), the plinth's recess (every base module), bare room walls (the room)
+    ...(cfg.heights && (cfg.heights.gap !== undefined || cfg.heights.topRow !== undefined) ? [["hg", cfg.heights.gap ?? 0, cfg.heights.topRow ?? -1]] : []),
+    ...(cfg.plinth ? [["pr", plinthRecessOf(cfg)]] : []),
+    ...(cfg.room?.bare ? [["rb", cfg.room.bare.map((w) => [w, cfg.walls[w]])]] : []),
   ]);
 }
 
@@ -1237,6 +1391,8 @@ export interface HeightPlan {
   cornices: { run: WallId; zone: "upper" | "tall"; from: number; to: number }[];
   /** the highest cabinet edge */
   top: number;
+  /** the plinth's recess behind the base fronts (cm, KitchenConfig.plinth); absent in plans made before it = 6 */
+  plinthRecess?: number;
 }
 
 export interface RunPlan {
@@ -1467,6 +1623,12 @@ export interface KitchenPlan {
   hobId: string | null;
   /** human-readable Croatian notes when something did not fit */
   warnings: string[];
+  /**
+   * room walls with no kitchen on them (KitchenConfig.room.bare): drawn as plain walls (no run, no "+", no note). The
+   * wall frame is the run frame a kitchen on it would have (B: from the entrance to the corner with A, C: from the corner
+   * with A to the entrance). Absent in plans made before it = none
+   */
+  bareWalls?: { wall: WallId; length: number }[];
 }
 
 // ---------------------------------------------------------------- options
@@ -1981,13 +2143,28 @@ function withTallPanels(items: (ModItem | FillerItem)[], share: PanelShare = NO_
     while (j >= 0 && j < items.length && items[j].kind === "filler") j += d;
     return items[j];
   };
+  /** the tall units of the column item i stands in (consecutive tall units, filler strips between them) */
+  const column = (i: number): ModItem[] => {
+    const col: ModItem[] = [];
+    for (const d of [-1, 1] as const) {
+      for (let j = d < 0 ? i : i + 1; j >= 0 && j < items.length; j += d) {
+        const x = items[j];
+        if (x.kind === "filler") continue;
+        if (!isTall(x)) break;
+        col.push(x as ModItem);
+      }
+    }
+    return col;
+  };
   items.forEach((it, i) => {
     const tall = isTall(it);
     const prev = beyond(i, -1);
     const next = beyond(i, 1);
-    if (tall && !isTall(prev)) out.push({ kind: "panel", width: !prev && share.left ? 0 : DIM.panel, tall: true });
+    // a column of side-by-side fridge niches only: their own side panels close it (columnPanel)
+    const P = tall && (!isTall(prev) || !isTall(next)) ? columnPanel(column(i)) : DIM.panel;
+    if (tall && !isTall(prev)) out.push({ kind: "panel", width: !prev && share.left ? 0 : P, tall: true });
     out.push(it);
-    if (tall && !isTall(next)) out.push({ kind: "panel", width: !next && share.right ? 0 : DIM.panel, tall: true });
+    if (tall && !isTall(next)) out.push({ kind: "panel", width: !next && share.right ? 0 : P, tall: true });
   });
   return out;
 }
@@ -2676,7 +2853,7 @@ function planCtx(cfg: KitchenConfig): PlanCtx {
   }
   const winRange = (wall: WallId): Range | null =>
     win && win.wall === wall ? { from: win.offset - DIM.windowMargin, to: win.offset + win.width + DIM.windowMargin } : null;
-  const tallZone = cfg.tallRun && cfg.tallRun.length ? cfg.tallRun.reduce((s, t) => s + t.width, 0) + 2 * DIM.panel : DIM.tallZone;
+  const tallZone = cfg.tallRun && cfg.tallRun.length ? cfg.tallRun.reduce((s, t) => s + t.width, 0) + 2 * columnPanel(cfg.tallRun) : DIM.tallZone;
 
   // ---- where the kitchen stands on the room's walls, and what closes each run end
   const K = { a: kitchenRange(cfg, "a"), b: kitchenRange(cfg, "b"), c: kitchenRange(cfg, "c") };
@@ -2686,10 +2863,22 @@ function planCtx(cfg: KitchenConfig): PlanCtx {
   const ab = LUG && touches("a", "left") && touches("b", "right");
   const ac = layout === "U" && touches("a", "right") && touches("c", "left");
   const pen = peninsulaSide(cfg);
+  // a bare room wall (KitchenConfig.room.bare) closes wall A's end like a kitchen-less corner: no end panel there
+  const bare = cfg.room?.bare ?? [];
   const ends = {} as Record<RunEnd, EndKind>;
-  ends["a-left"] = LUG ? (ab ? "cornerUnit" : touches("a", "left") ? "wall" : "open") : pen === "left" ? "cornerUnit" : "open";
+  ends["a-left"] = LUG ? (ab ? "cornerUnit" : touches("a", "left") ? "wall" : "open") : pen === "left" ? "cornerUnit" : bare.includes("b") && touches("a", "left") ? "wall" : "open";
   ends["a-right"] =
-    layout === "U" ? (ac ? "cornerUnit" : touches("a", "right") ? "wall" : "open") : layout === "G" || pen === "right" ? "cornerUnit" : "open";
+    layout === "U"
+      ? ac
+        ? "cornerUnit"
+        : touches("a", "right")
+          ? "wall"
+          : "open"
+      : layout === "G" || pen === "right"
+        ? "cornerUnit"
+        : bare.includes("c") && touches("a", "right")
+          ? "wall"
+          : "open";
   ends["b-left"] = "open";
   ends["b-right"] = ab ? "cornerEdge" : touches("b", "right") ? "wall" : "open";
   ends["c-left"] = ac ? "cornerEdge" : touches("c", "left") ? "wall" : "open";
@@ -2705,7 +2894,7 @@ function planCtx(cfg: KitchenConfig): PlanCtx {
     if (!units?.length) continue;
     const { wall, side } = parseRunEnd(e);
     if (!walls.includes(wall)) continue;
-    const zone = units.reduce((n, u) => n + u.width, 0) + 2 * DIM.panel;
+    const zone = units.reduce((n, u) => n + u.width, 0) + 2 * columnPanel(units);
     const list: TallListId = `tall:${e}`;
     if (tallFits(partial, wall, side, zone, columnDepth(units))) extras.push({ list, wall, side, units, zone });
     else lostTall.push({ list, wall, units });
@@ -2795,7 +2984,8 @@ export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: s
   const C = cfg.ceiling;
   const notes: string[] = [];
   const maxTop = C - DIM.ceilingGap;
-  let ub = worktop + DIM.upperGap;
+  const gap = spec?.gap ?? DIM.upperGap;
+  let ub = worktop + gap;
   let ut: number;
   let topRow: Range | null = null;
   let tallTop: number;
@@ -2807,7 +2997,15 @@ export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: s
     // a very low ceiling: wall units at least 50 cm, the gap to the worktop gives way first
     if (line - ub < 50) ub = Math.max(worktop + DIM.upperGapMin, line - 50);
     const avail = line - ub;
-    if (avail <= DIM.upperRowMax) ut = line;
+    const wantTop = spec?.topRow;
+    if (wantTop === 0 && avail <= DIM.upperMainMax) ut = line;
+    else if (wantTop !== undefined && wantTop > 0 && avail - wantTop >= 50) {
+      // the customer's split: the top row as asked, the main row the rest (at most DIM.upperMainMax — the cornice above
+      // the top row takes what is left)
+      const main = Math.min(DIM.upperMainMax, avail - wantTop);
+      ut = ub + main;
+      topRow = { from: ut, to: Math.min(line, ut + Math.min(DIM.topRowMax, Math.max(DIM.topRowMin, avail - main))) };
+    } else if (avail <= DIM.upperRowMax) ut = line;
     else {
       // main row 72–105 cm with a 30–45 cm top row; on very high ceilings up to 120 + 60 (the cornice takes the rest)
       let main = clamp(avail - 45, 72, DIM.upperRowMax);
@@ -2823,9 +3021,14 @@ export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: s
       ut = ub + main;
       topRow = { from: ut, to: ut + top };
     }
+    if (wantTop !== undefined && wantTop > 0 && !topRow) notes.push(`Nadgradni ormarići od ${wantTop} cm ne stanu ispod stropa od ${C} cm — gornji elementi idu u jednom redu.`);
+    if (wantTop === 0 && topRow) notes.push(`Gornji elementi u jednom redu do stropa od ${C} cm bili bi viši od ${DIM.upperMainMax} cm — dodan je red nadgradnih ormarića.`);
     tallTop = topRow ? topRow.to : ut;
     tallSplit = topRow ? topRow.from : tallTop - plinth > DIM.tallOnePiece ? tallTop - 45 : null;
     cornice = { from: tallTop, to: C };
+    if (spec?.onePiece && tallSplit !== null && tallTop - plinth > TALL_DOOR_MAX) {
+      notes.push(`Visoki elementi u jednom komadu do ${Math.round(tallTop)} cm bili bi viši od ${TALL_DOOR_MAX + plinth} cm — podijeljeni su na element i nadgradni ormarić.`);
+    }
   } else if (mode === "custom") {
     const want = spec?.upper ?? 72;
     let h = want;
@@ -2833,7 +3036,7 @@ export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: s
       ub = Math.max(worktop + DIM.upperGapMin, maxTop - h);
       if (ub + h > maxTop) {
         h = nearestBelow(UPPER_HEIGHTS, maxTop - worktop - DIM.upperGapMin) ?? Math.max(30, maxTop - worktop - DIM.upperGapMin);
-        ub = Math.min(worktop + DIM.upperGap, maxTop - h);
+        ub = Math.min(worktop + gap, maxTop - h);
         notes.push(`Gornji elementi od ${want} cm ne stanu ispod stropa od ${C} cm — prikazani su s ${h} cm.`);
       }
     }
@@ -2847,6 +3050,11 @@ export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: s
       // the split sits on the wall units' top line when that leaves a sensible top box, else 45 cm below the top
       tallSplit = ut > tallTop - 70 && ut < tallTop - DIM.topRowMin ? ut : tallTop - 45;
     }
+  } else if (spec?.gap !== undefined) {
+    // standard wall units (72 cm) at the customer's distance above the worktop, under the ceiling
+    ut = Math.min(ub + (DIM.upperTopMax - DIM.upperBottom), maxTop);
+    ub = Math.min(ub, ut - 50);
+    tallTop = ut;
   } else {
     ut = Math.min(DIM.upperTopMax + (worktop - STANDARD_HEIGHTS.worktop), maxTop);
     ub = Math.min(ub, ut - 50);
@@ -2867,6 +3075,7 @@ export function planHeights(cfg: KitchenConfig): { heights: HeightPlan; notes: s
     cornice,
     cornices: [],
     top: Math.max(topRow ? topRow.to : ut, tallTop),
+    ...(cfg.plinth ? { plinthRecess: plinthRecessOf(cfg) } : {}),
   };
   return { heights, notes };
 }
@@ -3190,9 +3399,11 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     const worktop: Range = { from: tl ? tl.to : eL === "cornerEdge" ? k.from + DIM.worktopDepth : k.from, to: tr ? tr.from : eR === "cornerEdge" ? k.to - DIM.worktopDepth : k.to };
     const splash: Range = { from: eL === "cornerEdge" ? k.from + DIM.backsplashT : worktop.from, to: eR === "cornerEdge" ? k.to - DIM.backsplashT : worktop.to };
 
-    // open (non-wall) ends of the room's wall: a property of the room, not of where the kitchen stands on it
-    const openLeft = !LUG || w === "b";
-    const openRight = !LUG || w === "c" || (w === "a" && layout !== "U");
+    // open (non-wall) ends of the room's wall: a property of the room, not of where the kitchen stands on it (a bare
+    // room wall B / C closes wall A's end too: KitchenConfig.room.bare)
+    const bareRoom = cfg.room?.bare ?? [];
+    const openLeft = w === "b" || (w === "a" ? !LUG && !bareRoom.includes("b") : !LUG);
+    const openRight = w === "c" || (w === "a" ? layout !== "U" && !bareRoom.includes("c") : !LUG);
     sk.push({
       wall: w,
       length: len,
@@ -3358,11 +3569,12 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     for (const t of runTalls) blocks.push({ range: t, kind: "tall" });
     // the hobs of this run and the hood each wants (KitchenConfig.hood / the hob's opt.hood): hidden in a wall unit (the
     // planner's own wall units put it above the first such hob), a visible wall hood, or none (a downdraft hob)
-    const allHobs: (Range & { kind: HoodKind })[] = [];
+    const allHobs: (Range & { kind: HoodKind; glass?: number })[] = [];
     {
       let hx = s.baseSpan.from;
       for (const it of res.items) {
-        if (it.kind === "module" && it.feature === "ploca") allHobs.push({ from: hx, to: hx + it.width, kind: hoodKindOf(cfg, it.opt) });
+        // (a hob of its own width — ElementOpts.hob — gets the hood its glass asks for)
+        if (it.kind === "module" && it.feature === "ploca") allHobs.push({ from: hx, to: hx + it.width, kind: hoodKindOf(cfg, it.opt), ...(it.opt?.hob !== undefined ? { glass: hobWidthOf(it.width, it.opt) } : {}) });
         hx += it.width;
       }
     }
@@ -3381,7 +3593,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     for (const h of allHobs) {
       if (!visibleHood(h.kind)) continue;
       const hw = h.to - h.from;
-      const w = hoodWidthFor(hw);
+      const w = hoodWidthFor(h.glass ?? hw);
       const c = (h.from + h.to) / 2;
       // centred above the hob; at the end of the wall-unit row it may shift in as far as it still covers the whole hob
       const slack = Math.max(0, (w - hw) / 2);
@@ -3670,8 +3882,10 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
       const outerEnd = (i: number) => (right ? i === units.length - 1 : i === 0) && Boolean(moduleDef("tall", units[i].type)?.endUnit);
       const outerIdx = right ? units.length - 1 : 0;
       const ownEnd = units.length > 0 && outerEnd(outerIdx);
-      if (!(ownEnd && !right)) pieces.push({ kind: "panel", zone: "tall", run: b.wall, x: t0, width: DIM.panel });
-      let tx = t0 + DIM.panel;
+      // (a column of side-by-side niches only has no cover panels: the niches' own side panels close it)
+      const P = columnPanel(units);
+      if (!(ownEnd && !right) && P > 0) pieces.push({ kind: "panel", zone: "tall", run: b.wall, x: t0, width: P });
+      let tx = t0 + P;
       units.forEach((u, i) => {
         const sl = mkSlot(`${prefix}${i}`, "tall", b.wall, tx, u.width, u.type, false);
         sl.list = { id: place.list, index: i };
@@ -3681,7 +3895,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
         slots.push(sl);
         tx += u.width;
       });
-      if (!(ownEnd && right)) pieces.push({ kind: "panel", zone: "tall", run: b.wall, x: tx, width: DIM.panel });
+      if (!(ownEnd && right) && P > 0) pieces.push({ kind: "panel", zone: "tall", run: b.wall, x: tx, width: P });
       lists.push({
         id: place.list,
         zone: "tall",
@@ -3689,7 +3903,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
         explicit: place.list !== "tall" || Boolean(cfg.tallRun),
         entries: [],
         dropped: [],
-        capacity: tx - t0 - DIM.panel,
+        capacity: tx - t0 - P,
         used: 0,
       });
     }
@@ -3736,7 +3950,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
 
   // ---- what each element looks like beyond its type (resolved options, the end it stands at): PlanSlot.look
   for (const s of slots) {
-    const look = lookOf(cfg, s);
+    const look = lookOf(cfg, s, slots);
     if (look) s.look = look;
   }
 
@@ -3866,6 +4080,8 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     }
   }
 
+  // room walls without a kitchen (KitchenConfig.room.bare): plain walls, the room's depth
+  const bareWalls = (cfg.room?.bare ?? []).filter((w) => !walls.includes(w)).map((w) => ({ wall: w, length: L[w] }));
   return {
     cfg,
     walls,
@@ -3882,6 +4098,7 @@ function layoutKitchen(ctx: PlanCtx, tall: TallAt | null): KitchenPlan {
     sinkId,
     hobId,
     warnings,
+    ...(bareWalls.length ? { bareWalls } : {}),
   };
 }
 
@@ -3951,7 +4168,7 @@ function endMarks(
 }
 
 /** PlanSlot.look: what beyond its type changes how the engine builds this element (undefined: nothing) */
-function lookOf(cfg: KitchenConfig, s: PlanSlot): string | undefined {
+function lookOf(cfg: KitchenConfig, s: PlanSlot, slots: readonly PlanSlot[]): string | undefined {
   const def = moduleDef(s.zone === "island" ? "base" : s.zone, s.type);
   const parts: unknown[] = [];
   if (s.opt) parts.push(["o", s.opt]);
@@ -3959,6 +4176,16 @@ function lookOf(cfg: KitchenConfig, s: PlanSlot): string | undefined {
   if (def?.feature === "hob" && (cfg.hood || s.opt?.hood)) parts.push(["h", hoodKindOf(cfg, s.opt)]);
   if (s.zone === "upper" && (cfg.heights?.topDepth !== undefined || s.opt?.depth !== undefined)) parts.push(["d", topDepthOf(cfg, s.opt)]);
   if (s.end) parts.push(["e", s.end.side, s.end.pad]);
+  // the "photo" round's kitchen-level options as they apply to this element (an element's own ride on s.opt above)
+  const zone = s.zone;
+  if (cfg.zoneHandles?.[zone] && def && def.demo !== false) parts.push(["z", openingOf(cfg, s.opt, zone)]);
+  if (cfg.drawerLayout && DRAWER_TYPES[s.type] && zone !== "upper" && zone !== "tall") parts.push(["l", drawerLayoutOf(cfg, s.type, s.opt)]);
+  if (cfg.gola?.between && DRAWER_TYPES[s.type] && zone !== "upper" && zone !== "tall") parts.push(["m", golaBetween(cfg, openingOf(cfg, s.opt, zone))]);
+  if (zone === "tall" && cfg.heights?.onePiece && s.opt?.onePiece === undefined) parts.push(["p", true]);
+  // the side-by-side fridge's recessed grips are geometry (its finish is a material: no rebuild)
+  if (isSbsType(s.type) && cfg.finish?.fridgeHandle) parts.push(["f", cfg.finish.fridgeHandle]);
+  // a niche alone in its column: its bridge cabinet sits right above the appliance (sbsAlone)
+  if (sbsAlone(slots, s)) parts.push(["a", true]);
   return parts.length ? JSON.stringify(parts) : undefined;
 }
 

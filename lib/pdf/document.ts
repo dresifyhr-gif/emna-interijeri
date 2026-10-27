@@ -1,5 +1,5 @@
 /**
- * The kitchen PDF, page by page — A4 landscape, Croatian, in the site's look (ink cover, white pages, Space Grotesk
+ * The kitchen PDF, page by page — A4 landscape, Croatian, in the site's look (ink cover, white pages, Inter Tight
  * titles, Inter text, accent hairlines):
  *
  *   naslovnica        wordmark, "Vaša kuhinja", hero render (or the floor plan as line art), date, shape and size,

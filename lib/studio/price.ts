@@ -27,10 +27,13 @@ import {
   FINISH_DEFAULTS,
   type HandleDef,
 } from "./catalog";
+import { extraDrawers, golaBetween, drawerRatios, GOLA_MID } from "./fronts";
 import {
   DIM,
   TOP_DEPTH_DEFAULT,
   backsplashOfCfg,
+  ledZoneOn,
+  tallSplitOf,
   frontFor,
   glassOf,
   hasTopBox,
@@ -101,14 +104,75 @@ export interface PriceBreakdown {
   hoods: number;
   /** hanging rails with hooks (KitchenConfig.rails) */
   rails: number;
+  /**
+   * the "photo" round's options beyond the cabinets (optionsCost): tall units in one piece up to the ceiling, the Gola
+   * channel between drawers, extra drawers of a drawer split. 0 for every older link
+   */
+  options: number;
   total: number;
+}
+
+/** one priced option of the "photo" round (optionsCost) — lib/admin/quote-from-config.ts itemises them */
+export interface OptionCost {
+  id: "tallOnePiece" | "golaMid" | "drawerExtra";
+  /** Croatian line for the quote / summary */
+  label: string;
+  details: string;
+  qty: number;
+  unit: "kom" | "m";
+  /** EUR per unit — TODO(vlasnik): catalog.extras */
+  each: number;
+}
+
+/**
+ * What the "photo" round's options cost beyond the cabinets (catalog.extras, TODO(vlasnik)): a tall unit / side-by-side
+ * bridge in one piece up to the ceiling (instead of a top box with a lift-up flap), the Gola channel between the drawers of
+ * a handleless drawer unit (per metre), the drawers a drawer split has beyond the type's own. [] for every older link.
+ */
+export function optionsCost(plan: KitchenPlan): OptionCost[] {
+  const c = plan.cfg;
+  const x = catalog.extras;
+  const out: OptionCost[] = [];
+  let one = 0;
+  let golaM = 0;
+  let drawers = 0;
+  for (const s of plan.slots) {
+    const def = moduleDef(s.zone, s.type);
+    if (!def || def.spacer) continue;
+    if (s.zone === "tall" && plan.heights.tallSplit !== null && tallSplitOf(c, plan.heights, s.opt) === null && !def.endUnit) one++;
+    if (s.zone !== "upper" && s.zone !== "tall") {
+      const r = drawerRatios(c, s.type, s.opt);
+      if (r && r.length > 1 && golaBetween(c, openingOf(c, s.opt, s.zone))) golaM += ((r.length - 1) * s.width) / 100;
+      drawers += extraDrawers(c, s.type, s.opt);
+    }
+  }
+  if (one) out.push({ id: "tallOnePiece", label: "Visoki elementi u jednom komadu do stropa", details: "fronte do stropa bez nadgradnog ormarića: dulje fronte, dodatne šarke", qty: one, unit: "kom", each: x.tallOnePiece });
+  if (golaM > 0.005) {
+    out.push({
+      id: "golaMid",
+      label: "Profil Gola između ladica",
+      details: `vodoravni kanal između ladica bez ručki (${GOLA_MID} cm)`,
+      qty: Math.round(golaM * 100) / 100,
+      unit: "m",
+      each: x.golaMidPerMeter,
+    });
+  }
+  if (drawers) out.push({ id: "drawerExtra", label: "Dodatne ladice", details: "podjela ladica s više ladica od osnovnog elementa: vodilice i ladica", qty: drawers, unit: "kom", each: x.drawerExtra });
+  return out;
+}
+
+/** the share of the LED strip's price the lit zones take (KitchenConfig.ledZones; 1 with every zone on — every older link) */
+export function ledShare(cfg: KitchenConfig): number {
+  if (!cfg.ledZones) return 1;
+  const k = catalog.extras.ledZoneShare;
+  return (ledZoneOn(cfg, "under") ? k.under : 0) + (ledZoneOn(cfg, "plinth") ? k.plinth : 0) + (ledZoneOn(cfg, "inner") ? k.inner : 0);
 }
 
 /** the handle style an element is priced with (null: it has no fronts — open shelves, empty space, side panels) */
 export function slotHandle(cfg: KitchenConfig, s: PlanSlot): HandleDef | null {
   const def = moduleDef(s.zone, s.type);
   if (!def || def.spacer || def.filler) return null;
-  return handleDef(openingOf(cfg, s.opt)) ?? catalog.handles[0];
+  return handleDef(openingOf(cfg, s.opt, s.zone)) ?? catalog.handles[0];
 }
 
 /** glass-door element: EUR surcharge of its glass kind and frame (per running metre of the element), 0 otherwise */
@@ -289,7 +353,8 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
       const k = s.corner ? 1 : topDepthFactor(topDepthOf(c, s.opt));
       cabinets += front("upper").pricePerMeter * ZONE_FACTOR.upper * w * hs.top * k + TOP_BOX_HARDWARE;
     }
-    if (s.zone === "tall" && plan.heights.tallSplit !== null) cabinets += TOP_BOX_HARDWARE;
+    // (a tall unit in one piece up to the ceiling has no top box: optionsCost prices its taller fronts instead)
+    if (s.zone === "tall" && tallSplitOf(c, plan.heights, s.opt) !== null) cabinets += TOP_BOX_HARDWARE;
     const h = slotHandle(c, s);
     if (h) {
       handles += h.pricePerMeter * w * share;
@@ -335,12 +400,15 @@ export function breakdown(cfg: KitchenConfig): PriceBreakdown {
   finishes += sinks * ((finishDef("sinks", c.finish?.sink ?? FINISH_DEFAULTS.sink)?.priceAdd ?? 0) + (finishDef("taps", c.finish?.tap ?? FINISH_DEFAULTS.tap)?.priceAdd ?? 0));
   finishes += (finishDef("plinths", c.finish?.plinth ?? FINISH_DEFAULTS.plinth)?.priceAdd ?? 0) * (run.base + run.tall + run.island);
 
-  const led = c.led ? catalog.extras.ledPerMeter * Math.max(run.upper, 0.6) + catalog.extras.ledFixed : 0;
+  // (LED zones switched off one by one take their share of the strip off: ledShare — 1 for every older link)
+  const lit = ledShare(c);
+  const led = c.led && lit > 0 ? catalog.extras.ledPerMeter * Math.max(run.upper, 0.6) * lit + catalog.extras.ledFixed : 0;
   const install = catalog.extras.installPerMeter * (run.base + run.tall + run.island + run.upper * 0.5 + backRowM * 0.5);
   const hoods = hoodsCost(plan).reduce((n, h) => n + h.count * h.each, 0);
   const rails = railMetres(plan) * catalog.extras.railPerMeter;
-  const total = cabinets + worktop + backsplash + handles + mechanisms + finishes + led + install + islandTotal + glass + hoods + rails;
-  return { cabinets, worktop, backsplash, handles, mechanisms, finishes, led, install, island: islandTotal, glass, hoods, rails, total };
+  const options = optionsCost(plan).reduce((n, o) => n + o.qty * o.each, 0);
+  const total = cabinets + worktop + backsplash + handles + mechanisms + finishes + led + install + islandTotal + glass + hoods + rails + options;
+  return { cabinets, worktop, backsplash, handles, mechanisms, finishes, led, install, island: islandTotal, glass, hoods, rails, options, total };
 }
 
 /** Rough price range in EUR, rounded to 100 € (about ±8 %). */

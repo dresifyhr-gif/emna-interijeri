@@ -9,15 +9,19 @@
  * A tall column is an element like any other — there is no switch for it: a "+" (a run's end, between two cabinets),
  * "Zamijeni" or the editor's "Dodaj lijevo / desno" adds one, "Ukloni" on one of its units takes the unit or the whole
  * column away (ElementToolbar / ElementEditor), "Vrati sve elemente na zadano" brings the planner's column back.
+ * "Napredno" (or once chosen): one drawer split for every drawer unit ("Ladice u cijeloj kuhinji", edit.ts setDrawerLayout).
  */
 import { useEffect } from "react";
-import { moduleDef } from "@/lib/studio/catalog";
-import { isEdited, setWallShelves } from "@/lib/studio/edit";
-import { planGaps, planKitchen, sanitizeConfig, type PlanSlot, type RunId } from "@/lib/studio/plan";
+import { catalog, moduleDef } from "@/lib/studio/catalog";
+import { isEdited, setDrawerLayout, setWallShelves } from "@/lib/studio/edit";
+import { DRAWER_TYPES, golaBetween } from "@/lib/studio/fronts";
+import { openingOf, planGaps, planKitchen, sanitizeConfig, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { elementOptionsText } from "@/lib/studio/summary";
 import type { WallId } from "@/lib/studio/types";
 import { Notes, Segmented, SectionLabel } from "../controls";
-import { ChevronRight, ModuleGlyph, PlusIcon, ResetIcon } from "../icons";
+import { ChevronRight, DrawerSplitGlyph, ModuleGlyph, PlusIcon, ResetIcon } from "../icons";
+import { TileRadio } from "../OptionPickers";
+import { drawersWord } from "../optionsModel";
 import { isInRunTall, islandWord, rowName, rowSlots, runName, sideHint, type RowZone } from "../meta";
 import { RunElevation } from "../RunElevation";
 import css from "../studio.module.css";
@@ -78,6 +82,7 @@ export function ElementsStep({ cfg, plan, edit, compact, engine, advanced, eleme
   const gapsNow = planGaps(plan);
   const anyFree = gapsNow.some((g) => g.kind !== "seam");
   const anySeam = !anyFree && gapsNow.length > 0;
+  const hasDrawers = plan.slots.some((s) => s.zone !== "upper" && s.zone !== "tall" && DRAWER_TYPES[s.type]);
 
   return (
     <div>
@@ -205,6 +210,8 @@ export function ElementsStep({ cfg, plan, edit, compact, engine, advanced, eleme
         )}
       </p>
 
+      {hasDrawers && (advanced || cfg.drawerLayout) && <KitchenDrawers cfg={cfg} edit={edit} />}
+
       {isEdited(cfg) && (
         <button
           type="button"
@@ -217,6 +224,41 @@ export function ElementsStep({ cfg, plan, edit, compact, engine, advanced, eleme
       )}
 
       <Notes items={plan.warnings} />
+    </div>
+  );
+}
+
+/**
+ * "Napredno" (or once chosen) → one drawer split for every drawer unit of the kitchen (edit.ts setDrawerLayout); "Po
+ * elementu" = each type its own (the default). One element keeps its own split (its editor → "Ladice").
+ */
+function KitchenDrawers({ cfg, edit }: { cfg: StepProps["cfg"]; edit: StepProps["edit"] }) {
+  const mid = golaBetween(cfg, openingOf(cfg, undefined, "base"));
+  const value = cfg.drawerLayout ?? "own";
+  return (
+    <div className="mt-8">
+      <SectionLabel id="studio-kitchen-drawers">Ladice u cijeloj kuhinji</SectionLabel>
+      <TileRadio
+        labelledBy="studio-kitchen-drawers"
+        className="mt-3"
+        cols={3}
+        options={[
+          { id: "own" as const, name: "Po elementu", sub: "zadano", icon: <ModuleGlyph type="ladice" zone="base" className="h-9 w-9" /> },
+          ...catalog.drawerLayouts.map((d) => ({
+            id: d.id,
+            name: d.name,
+            sub: drawersWord(d.ratios.length),
+            icon: <DrawerSplitGlyph ratios={d.ratios} mid={mid} className="h-9 w-9" />,
+          })),
+        ]}
+        value={value}
+        onChange={(id) =>
+          edit(setDrawerLayout(cfg, id === "own" ? null : id), {
+            say: id === "own" ? "Svaki element s ladicama po svom." : `Ladice u cijeloj kuhinji: ${catalog.drawerLayouts.find((d) => d.id === id)?.name.toLowerCase() ?? ""}.`,
+          })
+        }
+      />
+      <p className="mt-2 text-[11.5px] leading-snug text-mut">Vrijedi za sve elemente s ladicama. Jednom elementu podjelu mijenjate klikom na njega → Više.</p>
     </div>
   );
 }

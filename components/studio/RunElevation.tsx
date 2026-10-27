@@ -6,10 +6,11 @@
  * assistive tech use the element list next to it, so the drawing itself is one image.
  *
  * The island is drawn mirrored (as seen from the room, towards wall A) — see meta.isFlipped.
- * Heights come from plan.heights (worktop 85 / 90 / 95, wall units, the top row and cornice of "do stropa").
+ * Heights come from plan.heights (worktop 85 / 90 / 95, wall units, the top row and cornice of "do stropa"); a tall unit
+ * in one piece up to the ceiling (plan.ts tallSplitOf) has no split line.
  */
 import { useState } from "react";
-import { DIM, type KitchenPlan, type PlanSlot, type RunId } from "@/lib/studio/plan";
+import { DIM, tallSplitOf, type KitchenPlan, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { cornerFoot, moduleDef } from "@/lib/studio/catalog";
 import { ModuleGlyph } from "./icons";
 import { isFlipped, islandWord, runName } from "./meta";
@@ -220,6 +221,8 @@ export function RunElevation({
         const hot = s.id === hover;
         const g = Math.min(s.width * 0.62, h * 0.62, 44);
         const showGlyph = g * scale >= 13 && s.width >= 25;
+        // the line a tall unit is split on ("do stropa": the unit + its top box) — none when it is in one piece
+        const split = s.zone === "tall" ? tallSplitOf(plan.cfg, hp, s.opt) : null;
         return (
           <g
             key={s.id}
@@ -241,12 +244,12 @@ export function RunElevation({
               style={{ transition: "fill .3s cubic-bezier(.2,.8,.2,1), stroke .3s cubic-bezier(.2,.8,.2,1)" }}
             />
             {/* the top row on a wall unit / the top box on a tall unit ("do stropa") */}
-            {!spacer && ((s.zone === "upper" && hp.topRow) || (s.zone === "tall" && hp.tallSplit !== null)) && (
+            {!spacer && ((s.zone === "upper" && hp.topRow) || split !== null) && (
               <line
                 x1={x + 0.6}
                 x2={x + s.width - 0.6}
-                y1={Y(s.zone === "upper" ? hp.upperTop : (hp.tallSplit ?? hp.tallTop))}
-                y2={Y(s.zone === "upper" ? hp.upperTop : (hp.tallSplit ?? hp.tallTop))}
+                y1={Y(s.zone === "upper" ? hp.upperTop : (split ?? hp.tallTop))}
+                y2={Y(s.zone === "upper" ? hp.upperTop : (split ?? hp.tallTop))}
                 stroke="currentColor"
                 strokeOpacity={0.55}
                 strokeWidth={1}

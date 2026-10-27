@@ -3,7 +3,7 @@
  * Materials, prices and module types come from lib/studio/catalog.ts — this file only holds UI wording.
  */
 import { isPeninsula, stoolsWord, wallsFor, type KitchenPlan, type ListId, type PlanGap, type PlanSlot, type RunId } from "@/lib/studio/plan";
-import type { FrontZone, Layout, WallId } from "@/lib/studio/types";
+import type { FrontZone, KitchenConfig, Layout, WallId } from "@/lib/studio/types";
 
 /** the site-wide premium ease, as a framer-motion bezier */
 export const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -60,6 +60,16 @@ export const LAYOUTS: { id: Layout; name: string; desc: string }[] = [
 ];
 
 export const WALL_HINT: Record<WallId, string> = { a: "stražnji", b: "lijevi", c: "desni" };
+
+/**
+ * the room's walls in 3D, A → C: the layout's walls (with the kitchen on them) and the bare room walls
+ * (KitchenConfig.room.bare — an L kitchen in a closed room) — what can be painted, clicked, measured
+ */
+export function roomWallIds(cfg: Pick<KitchenConfig, "layout" | "room">): WallId[] {
+  const used = wallsFor(cfg.layout);
+  const bare = cfg.room?.bare ?? [];
+  return (["a", "b", "c"] as WallId[]).filter((w) => used.includes(w) || bare.includes(w));
+}
 
 /** "Otok" / "Poluotok" — the island run's name in this layout */
 export const islandWord = (layout?: Layout) => (layout && isPeninsula(layout) ? "Poluotok" : "Otok");
@@ -120,6 +130,11 @@ export const FRONT_ZONE_NAME: Record<FrontZone, string> = {
   tall: "Visoki",
   island: "Otok",
 };
+/** the zones this kitchen has (only those can wear their own front, or open their own way) */
+export function frontZones(plan: KitchenPlan): FrontZone[] {
+  const has = (z: FrontZone) => plan.slots.some((s) => s.zone === z);
+  return (["base", "upper", "tall", "island"] as FrontZone[]).filter((z) => z === "base" || has(z));
+}
 export const FRONT_ZONE_LONG: Record<FrontZone, string> = {
   base: "donji elementi",
   upper: "gornji elementi",

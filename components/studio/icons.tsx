@@ -1222,3 +1222,87 @@ export const FitIcon = (p: P) => (
     <path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15" {...line} />
   </Svg>
 );
+
+/* ------------------------------------------------------------------ the 3D camera presets (ViewSwitch) and the ceiling */
+
+/**
+ * A camera preset of the 3D view: "studio" (a cube with an arrow around it — orbiting the kitchen), "prostorija" (an
+ * eye — standing in the room), "frontalno" (a wall straight on), "odozgo" (a room from above, an arrow down)
+ */
+export function CameraGlyph({ preset, ...rest }: P & { preset: string }) {
+  let body: ReactNode;
+  switch (preset) {
+    case "prostorija":
+      body = (
+        <>
+          <path d="M3.5 12c2.2-3.6 5.1-5.4 8.5-5.4s6.3 1.8 8.5 5.4c-2.2 3.6-5.1 5.4-8.5 5.4S5.7 15.6 3.5 12Z" {...line} />
+          <circle cx="12" cy="12" r="2.6" {...line} />
+        </>
+      );
+      break;
+    case "frontalno":
+      body = (
+        <>
+          <path d="M4 19.5h16M5.5 19.5v-6.5h13v6.5M12 13v6.5" {...line} />
+          <path d="M5.5 4.5h13V9h-13Z" {...line} />
+        </>
+      );
+      break;
+    case "odozgo":
+      body = (
+        <>
+          <path d="M5 9.5v10h14v-10" {...line} />
+          <path d="M7.5 12h9v5h-9Z" {...line} strokeOpacity={0.55} />
+          <path d="M12 2.8v5.4M9.8 6l2.2 2.2L14.2 6" {...line} />
+        </>
+      );
+      break;
+    default:
+      // a cube with an arrow around it
+      body = (
+        <>
+          <path d="M12 3.8 16.6 6.4v5.2L12 14.2l-4.6-2.6V6.4Z" {...line} />
+          <path d="M7.4 6.4 12 9l4.6-2.6M12 9v5.2" {...line} />
+          <path d="M4 13.8c.4 2.8 3.9 5 8 5s7.6-2.2 8-5" {...line} />
+          <path d="M17.7 18.9l2.2-.3-.7-2.1" {...line} />
+        </>
+      );
+  }
+  return <Svg {...rest}>{body}</Svg>;
+}
+
+/** the room's ceiling with a round light under it ("Strop") */
+export const CeilingIcon = (props: P) => (
+  <Svg {...props}>
+    <path d="M3 5h18" {...line} />
+    <path d="M12 5v3" {...line} />
+    <path d="M7.5 11.5a4.5 3.5 0 0 1 9 0Z" {...line} />
+    <path d="M9.6 14.6 8.6 16.4M12 15.2v2M14.4 14.6l1 1.8" {...line} strokeOpacity={0.6} />
+  </Svg>
+);
+
+/**
+ * A drawer unit's front split (catalog.drawerLayouts — shares top → bottom), drawn to scale; `mid` = the Gola channel
+ * between the drawers (KitchenConfig.gola.between)
+ */
+export function DrawerSplitGlyph({ ratios, mid = false, ...rest }: P & { ratios: readonly number[]; mid?: boolean }) {
+  const x0 = 8;
+  const x1 = 24;
+  const top = 5.5;
+  const bottom = 27;
+  const gap = mid ? 1.6 : 0.9;
+  const H = bottom - top - gap * (ratios.length - 1);
+  // each front starts below the ones above it (and their gaps)
+  const fronts = ratios.map((r, i) => ({ y: top + ratios.slice(0, i).reduce((n, x) => n + x * H + gap, 0), h: r * H }));
+  return (
+    <Svg viewBox="0 0 32 32" {...rest}>
+      <path d="M5 3.5h22" {...line} strokeOpacity={0.55} />
+      {fronts.map((f, i) => (
+        <g key={i}>
+          <rect x={x0} y={f.y} width={x1 - x0} height={Math.max(0.6, f.h)} rx="0.6" {...line} />
+          {mid && i > 0 && <rect x={x0} y={f.y - gap} width={x1 - x0} height={gap} fill="currentColor" fillOpacity={0.22} stroke="none" />}
+        </g>
+      ))}
+    </Svg>
+  );
+}

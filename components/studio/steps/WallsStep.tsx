@@ -5,13 +5,18 @@
  * dužina kuhinje je drugo"):
  *
  *   Prostorija           the floor plan, the room's wall lengths and the window — a room measure (no undo step, like
- *                        before); a kitchen that takes a whole wall follows that wall (sanitizeConfig / setWallLength)
+ *                        before); a kitchen that takes a whole wall follows that wall (sanitizeConfig / setWallLength).
+ *                        A room wall with no kitchen (KitchenConfig.room.bare — an L kitchen in a closed room) is added
+ *                        with "+ Zid C" and taken away again ("otvoren prostor"): edit.ts setBareWall, an undo step
  *   Kuhinja na zidovima  per wall: whether the kitchen takes the whole wall, else how long it is and how far from the
  *                        chosen end of the wall it starts (lib/studio/edit.ts kitchenExtent / setKitchenExtent, one undo
- *                        step per gesture), with a bar that shows the kitchen inside the wall; then the island's /
- *                        peninsula's length
+ *                        step per gesture), with a bar that shows the kitchen inside the wall; "Bez kuhinje na zidu B"
+ *                        takes the kitchen off a wall and keeps the room's wall (setWallKitchen: L → ravna, U → L …),
+ *                        "Dodaj kuhinju" on a bare wall puts it back (room.ts roomWallRows offers each only where it
+ *                        goes through); then the island's / peninsula's length
  *   Strop i visine       the ceiling, the top of the tall column right under it (with why it cannot go higher and
- *                        "Podigni strop na X cm"), "Kuhinja do stropa", the worktop, wall-unit heights (HeightsSection)
+ *                        "Podigni strop na X cm"), "Kuhinja do stropa", tall units in one piece, the top row's height
+ *                        and depth, worktop → wall units, the worktop, wall-unit heights (HeightsSection)
  *
  * What a change caused (a kitchen run moved off a corner, an element left out) stays next to the control that caused it
  * until the room changes again; the planner's other notes are listed at the end. "Jednostavno" leaves out the window
@@ -19,12 +24,13 @@
  */
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useMemo, useState } from "react";
-import { kitchenExtent, setKitchenExtent, wallLimits, type ExtentResult } from "@/lib/studio/edit";
+import { kitchenExtent, setBareWall, setKitchenExtent, wallLimits, type EditResult, type ExtentResult } from "@/lib/studio/edit";
 import { geometryKey, hasIsland, isPeninsula, limitsFor, planHeights, wallsFor } from "@/lib/studio/plan";
 import type { KitchenConfig, WallId, WindowSpec } from "@/lib/studio/types";
 import { MoreOptions, Notes, NumberField, Segmented, SectionLabel, Switch, ToggleRow } from "../controls";
 import { KitchenBar } from "../KitchenBar";
-import { shorterKitchen } from "../room";
+import { MinusIcon, PlusIcon } from "../icons";
+import { roomWallRows, shorterKitchen } from "../room";
 import { fitToPlanner, windowLimits } from "../limits";
 import { EASE, WALL_HINT, isRoomCorner, islandOf, islandWord, stepIndex, wallEndName } from "../meta";
 import { WallSchematic, type SchematicFocus } from "../WallSchematic";
@@ -70,6 +76,13 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo, advanced }: S
     update({ window: { wall, width, offset: Math.round((len - width) / 2), sill: 95 } });
   };
 
+  // the room's walls: the kitchen's, the bare ones and the ones a bare wall can still go on (room.ts roomWallRows)
+  const rows = useMemo(() => roomWallRows(cfg), [cfg]);
+  const roomCount = rows.filter((w) => w.kitchen || w.bare).length;
+  const addable = rows.filter((w) => !w.kitchen && !w.bare && w.canBare);
+  const toggleBare = (w: WallId, on: boolean) =>
+    edit(setBareWall(cfg, w, on), { say: on ? `Dodan je zid ${w.toUpperCase()} prostorije, bez kuhinje.` : `Bez zida ${w.toUpperCase()}: prostor je s te strane otvoren.` });
+
   const winLen = win ? cfg.walls[win.wall] : 0;
   // the planner's own ranges (wall − 10 cm, sill 40 cm under the window top), so the field never shows a number the plan ignores
   const winLim = win ? windowLimits(cfg, win.wall) : null;
@@ -90,18 +103,52 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo, advanced }: S
       <SectionLabel className="mt-7">Zidovi prostorije</SectionLabel>
       {engine && <p className="mt-2.5 text-[12px] leading-snug text-mut">Ili kliknite sivu kotu u 3D prikazu.</p>}
       <div className="mt-4 space-y-5">
-        {used.map((w) => (
-          <NumberField
-            key={w}
-            label={`Zid ${w.toUpperCase()}`}
-            sub={used.length > 1 ? WALL_HINT[w] : undefined}
-            value={cfg.walls[w]}
-            min={lim[w][0]}
-            max={lim[w][1]}
-            onChange={(v) => setWall(w, v)}
-            onActive={active(w)}
-          />
-        ))}
+        {rows
+          .filter((w) => w.kitchen || w.bare)
+          .map((w) => (
+            <div key={w.wall}>
+              <NumberField
+                label={`Zid ${w.wall.toUpperCase()}`}
+                sub={roomCount > 1 ? WALL_HINT[w.wall] : undefined}
+                hint={w.bare ? "Bez kuhinje — dubina prostorije uz ovaj zid." : undefined}
+                value={cfg.walls[w.wall]}
+                min={lim[w.wall][0]}
+                max={lim[w.wall][1]}
+                onChange={(v) => setWall(w.wall, v)}
+                onActive={active(w.wall)}
+              />
+              {w.bare && (
+                <button
+                  type="button"
+                  onClick={() => toggleBare(w.wall, false)}
+                  className="mt-1.5 inline-flex min-h-9 items-center gap-1.5 text-[12px] font-medium text-mut transition-colors duration-300 hover:text-fg"
+                >
+                  <MinusIcon className="h-3.5 w-3.5" />
+                  Bez zida {w.wall.toUpperCase()} (otvoren prostor)
+                </button>
+              )}
+            </div>
+          ))}
+        {addable.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {addable.map((w) => (
+              <button
+                key={w.wall}
+                type="button"
+                onClick={() => toggleBare(w.wall, true)}
+                onPointerEnter={() => setFocus(w.wall)}
+                onPointerLeave={() => setFocus((f) => (f === w.wall ? null : f))}
+                className="inline-flex min-h-10 items-center gap-2 rounded-full border border-dashed border-white/20 px-3.5 text-[12.5px] text-fg/80 transition-colors duration-300 ease-premium hover:border-accent/60 hover:text-fg"
+              >
+                <PlusIcon className="h-3.5 w-3.5 text-accent" />
+                Zid {w.wall.toUpperCase()} <span className="text-mut">({WALL_HINT[w.wall]}, bez kuhinje)</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {addable.length > 0 && rows.every((w) => !w.bare) && (
+          <p className="-mt-2 text-[12px] leading-snug text-mut">Zatvorena prostorija: dodajte zid uz koji ne stoji kuhinja — vidi se u 3D prikazu i na tlocrtu.</p>
+        )}
       </div>
 
       <SectionLabel className="mt-8">Prozor</SectionLabel>
@@ -194,8 +241,32 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo, advanced }: S
             onActive={active(`k-${w}` as SchematicFocus)}
             notes={freshOf(`ext-${w}`)}
             onNotes={(items, next) => remember(`ext-${w}`, items, next)}
+            takeOff={rows.find((x) => x.wall === w)?.takeOff ?? null}
           />
         ))}
+        {rows
+          .filter((w) => w.bare)
+          .map((w) => (
+            <div key={w.wall} className="flex items-center gap-3 rounded-2xl border border-dashed border-white/[0.14] px-4 py-3.5">
+              <div className="min-w-0 flex-1">
+                <p className="font-display text-[15px] font-medium leading-tight">
+                  Zid {w.wall.toUpperCase()}
+                  <span className="ml-1.5 font-sans text-[12.5px] font-normal text-mut">{WALL_HINT[w.wall]}</span>
+                </p>
+                <p className="mt-1 text-[12px] tabular-nums leading-snug text-mut">Zid {w.length} cm · bez kuhinje</p>
+              </div>
+              {w.putOn && (
+                <button
+                  type="button"
+                  onClick={() => w.putOn && edit(w.putOn, { notify: true, say: `Kuhinja i na zidu ${w.wall.toUpperCase()}.` })}
+                  className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border border-white/15 px-3.5 text-[12px] font-medium text-fg/85 transition-colors duration-300 ease-premium hover:border-accent hover:text-accent"
+                >
+                  <PlusIcon className="h-3.5 w-3.5" />
+                  Dodaj kuhinju
+                </button>
+              )}
+            </div>
+          ))}
         {island && (
           <div
             className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"
@@ -238,7 +309,12 @@ export function WallsStep({ cfg, plan, update, edit, engine, goTo, advanced }: S
         onCeilingActive={active("ceiling")}
       />
 
-      {!advanced && <MoreOptions what="Visina parapeta, razmak kuhinje od kraja zida, vrh visokog stupa, visina radne ploče i gornjih elemenata." className="mt-8" />}
+      {!advanced && (
+        <MoreOptions
+          what="Visina parapeta, razmak kuhinje od kraja zida, vrh visokog stupa, visina radne ploče i gornjih elemenata, razmak od ploče do gornjih elemenata, visina nadgradnih ormarića."
+          className="mt-8"
+        />
+      )}
       <Notes items={rest} className="mt-8" />
     </div>
   );
@@ -291,6 +367,7 @@ function KitchenOnWall({
   onActive,
   notes,
   onNotes,
+  takeOff,
 }: Pick<StepProps, "cfg" | "plan" | "edit" | "advanced"> & {
   wall: WallId;
   many: boolean;
@@ -299,6 +376,8 @@ function KitchenOnWall({
   /** what the last change of this wall's kitchen caused */
   notes: string[];
   onNotes: (items: string[], next: KitchenConfig) => void;
+  /** "Bez kuhinje": the kitchen off this wall, the room's wall stays (room.ts roomWallRows; null: not possible here) */
+  takeOff: EditResult | null;
 }) {
   const info = kitchenExtent(cfg, wall);
   if (!info) return null;
@@ -404,6 +483,16 @@ function KitchenOnWall({
         </div>
       )}
       <div aria-live="polite">{notes.length > 0 && <Notes items={notes} className="mt-4" />}</div>
+      {takeOff && (
+        <button
+          type="button"
+          onClick={() => edit(takeOff, { notify: true, say: `Zid ${W} bez kuhinje.` })}
+          className="mt-3 inline-flex min-h-9 items-center gap-1.5 text-[12px] font-medium text-mut transition-colors duration-300 hover:text-fg"
+        >
+          <MinusIcon className="h-3.5 w-3.5" />
+          Bez kuhinje na zidu {W}
+        </button>
+      )}
     </div>
   );
 }

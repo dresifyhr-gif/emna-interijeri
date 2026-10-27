@@ -33,7 +33,7 @@ export interface TexOpts {
 /** per-material pattern knobs (catalog MaterialRender.density / veins); the defaults paint what v1 painted */
 export interface Detail {
   density?: number;
-  veins?: "fine" | "bold";
+  veins?: "fine" | "bold" | "diagonal";
 }
 
 function canvasTex(w: number, h: number, opts: TexOpts, draw: (g: CanvasRenderingContext2D, w: number, h: number) => void): THREE.CanvasTexture {
@@ -128,7 +128,57 @@ export function marbleTexture(id: string, tones: [string, string, string], opts:
       }
     };
     const d = detail.density ?? 1;
-    if (detail.veins === "bold") {
+    if (detail.veins === "diagonal") {
+      // Port Laurent / Nero zlatni: long, nearly parallel diagonal veins with a bright core and short forks (seamless:
+      // every stroke is drawn once more one repeat over in each direction)
+      const strokes: { pts: [number, number][]; lw: number; alpha: number; col: string; blur: number }[] = [];
+      const walk = (x: number, y: number, ang: number, len: number, bend: number): [number, number][] => {
+        const pts: [number, number][] = [[x, y]];
+        for (let s = 0; s < len; s++) {
+          ang += (rnd() - 0.5) * bend;
+          x += Math.cos(ang) * 6 * k;
+          y += Math.sin(ang) * 6 * k;
+          pts.push([x, y]);
+        }
+        return pts;
+      };
+      const light = shade(dark, 0.42);
+      const n = Math.max(3, Math.round(7 * d));
+      for (let i = 0; i < n; i++) {
+        // spread across the repeat, falling to the right at about 60°
+        const x = ((i + 0.2 + rnd() * 0.6) / n) * w;
+        const y = rnd() * h;
+        const ang = 0.82 + rnd() * 0.2;
+        const pts = walk(x, y, ang, Math.round((h * 1.25) / (6 * k)), 0.07);
+        const core = 1.6 + rnd() * 2.2;
+        strokes.push({ pts, lw: core * 5, alpha: 0.12, col: mid, blur: 18 });
+        strokes.push({ pts, lw: core, alpha: 0.9, col: dark, blur: 2 });
+        strokes.push({ pts, lw: core * 0.5, alpha: 0.95, col: light, blur: 0 });
+        // forks: short, thinner, leaving the vein at a shallow angle
+        for (let f = 0; f < 2 + Math.floor(rnd() * 3); f++) {
+          const at = pts[Math.floor(rnd() * pts.length * 0.8)];
+          const fork = walk(at[0], at[1], ang + (rnd() < 0.5 ? -1 : 1) * (0.2 + rnd() * 0.25), 12 + Math.floor(rnd() * 40), 0.12);
+          strokes.push({ pts: fork, lw: 0.6 + rnd() * 1.1, alpha: 0.7, col: dark, blur: 1 });
+        }
+      }
+      // hairline veining in between
+      for (let i = 0; i < Math.round(10 * d); i++) {
+        const pts = walk(rnd() * w, rnd() * h, 0.9 + rnd() * 0.5, 20 + Math.floor(rnd() * 60), 0.2);
+        strokes.push({ pts, lw: 0.6, alpha: 0.35, col: mid, blur: 0 });
+      }
+      for (const st of strokes)
+        for (const ox of [-w, 0, w])
+          for (const oy of [-h, 0, h]) {
+            g.beginPath();
+            st.pts.forEach(([px, py], j) => (j ? g.lineTo(px + ox, py + oy) : g.moveTo(px + ox, py + oy)));
+            g.strokeStyle = st.col;
+            g.globalAlpha = st.alpha;
+            g.lineWidth = st.lw * k;
+            g.shadowColor = st.col;
+            g.shadowBlur = st.blur * k;
+            g.stroke();
+          }
+    } else if (detail.veins === "bold") {
       // Calacatta: a few wide, high-contrast veins with a soft halo, little fine veining
       vein(6, 16, 0.1, mid, 22);
       vein(5, 4.2, 0.55, dark, 3);
@@ -226,14 +276,14 @@ export function brushedTexture(id: string, tones: [string, string, string], opts
 }
 
 /** floor boards: planks of `tones` with seams and per-board shade, grain along v */
-export function plankTexture(id: string, tones: [string, string, string], opts: TexOpts): THREE.CanvasTexture {
+export function plankTexture(id: string, tones: [string, string, string], opts: TexOpts, boards = 6): THREE.CanvasTexture {
   const rnd = mulberry32(hashSeed(id));
   const S = opts.size;
   return canvasTex(S, S, opts, (g, w, h) => {
     const [base, dark, light] = tones;
     g.fillStyle = base;
     g.fillRect(0, 0, w, h);
-    const cols = 6;
+    const cols = Math.max(2, Math.round(boards));
     const bw = w / cols;
     for (let c = 0; c < cols; c++) {
       // two boards per column, staggered
@@ -499,6 +549,31 @@ export function terrazzoTexture(id: string, tones: [string, string, string], opt
     }
     g.globalAlpha = 1;
   });
+}
+
+/**
+ * the glow a ceiling light throws on the ceiling around it: a soft radial falloff (white in the middle, black at the
+ * edge of the disc; the ceiling's emissive map, clamped — engine/index.ts syncCeiling centres it on the lamp)
+ */
+export function haloTexture(opts: TexOpts): THREE.CanvasTexture {
+  const t = canvasTex(256, 256, opts, (g, w, h) => {
+    g.fillStyle = "#000";
+    g.fillRect(0, 0, w, h);
+    const grd = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    for (const [at, v] of [
+      [0, 1],
+      [0.12, 0.8],
+      [0.3, 0.42],
+      [0.55, 0.16],
+      [0.8, 0.04],
+      [1, 0],
+    ] as const)
+      grd.addColorStop(at, `rgb(${Math.round(255 * v)},${Math.round(255 * v)},${Math.round(255 * v)})`);
+    g.fillStyle = grd;
+    g.fillRect(0, 0, w, h);
+  });
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
 }
 
 /** induction hob glass with zone rings */

@@ -124,14 +124,17 @@ export function Segmented<T extends string>({
   value,
   onChange,
   size = "md",
+  fit = false,
   className = "",
 }: {
   label?: string;
   labelledBy?: string;
-  options: readonly { id: T; label: ReactNode; aria?: string }[];
+  options: readonly { id: T; label: ReactNode; aria?: string; title?: string }[];
   value: T;
   onChange: (v: T) => void;
   size?: "sm" | "md";
+  /** each option as wide as its label (not equal columns) — the group is as wide as its labels */
+  fit?: boolean;
   className?: string;
 }) {
   const uid = useId();
@@ -146,7 +149,7 @@ export function Segmented<T extends string>({
       aria-label={label}
       aria-labelledby={labelledBy}
       className={`relative grid rounded-full border border-white/10 bg-white/[0.03] p-1 ${className}`}
-      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+      style={{ gridTemplateColumns: fit ? `repeat(${options.length}, auto)` : `repeat(${options.length}, minmax(0, 1fr))` }}
     >
       {options.map((o, i) => {
         const on = i === current;
@@ -160,6 +163,7 @@ export function Segmented<T extends string>({
             role="radio"
             aria-checked={on}
             aria-label={o.aria}
+            title={o.title}
             tabIndex={on || (current < 0 && i === 0) ? 0 : -1}
             onClick={() => onChange(o.id)}
             onKeyDown={(e) => {
@@ -169,7 +173,7 @@ export function Segmented<T extends string>({
               onChange(options[n].id);
               refs.current[n]?.focus();
             }}
-            className={`relative flex items-center justify-center gap-1.5 rounded-full px-2 font-medium tracking-wide transition-colors duration-300 ease-premium ${h} ${
+            className={`relative flex items-center justify-center gap-1.5 rounded-full font-medium tracking-wide transition-colors duration-300 ease-premium ${fit ? "px-2.5" : "px-2"} ${h} ${
               on ? "text-ink" : "text-fg/60 hover:text-fg"
             }`}
           >

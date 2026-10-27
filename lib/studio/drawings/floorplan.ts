@@ -11,6 +11,7 @@
  */
 
 import { cornerFoot, moduleDef } from "../catalog";
+import { hobWidthOf, sinkBowl } from "../fronts";
 import { DIM, hoodKindOf, wallsFor, type IslandPlan, type KitchenPlan, type PlanSlot, type RunId, type RunPlan } from "../plan";
 import type { Layout, WallId } from "../types";
 import { WALL_T, elementLabels, isSpacer, runOf, runTitle, slotDef, slotTypeName } from "./common";
@@ -102,10 +103,12 @@ function roundRect(x0: number, y0: number, x1: number, y1: number, r: number): P
 /** the sink in a base / island cabinet (engine modules.ts: bowl 70 / 86 cm, 12–52 cm from the back, tap at 7,5) */
 function sinkSymbol(g: Frame, s: PlanSlot): void {
   const w = s.width;
-  const wide = w >= 99;
-  const bw = Math.min(w - 14, wide ? 86 : 70);
+  // centred, or at one side of its cabinet (ElementOpts.bowl) — fronts.ts sinkBowl, as the engine builds it
+  const sb = sinkBowl(w, s.opt);
+  const wide = sb.wide;
+  const bw = sb.x1 - sb.x0;
   if (bw < 10) return;
-  const xc = s.x + w / 2;
+  const xc = s.x + (sb.x0 + sb.x1) / 2;
   const st: Style = { layer: "uredaj", weight: "light", ref: s.id };
   g.poly(roundRect(xc - bw / 2, -52, xc + bw / 2, -12, 5), true, st);
   if (wide) {
@@ -120,7 +123,8 @@ function sinkSymbol(g: Frame, s: PlanSlot): void {
 /** the hob on a base / island cabinet (engine: 58 / 78 / 88 cm wide, 51 deep, centred 33 cm from the back) */
 function hobSymbol(plan: KitchenPlan, g: Frame, s: PlanSlot): void {
   const w = s.width;
-  const hw = Math.min(w >= 99 ? 88 : w >= 80 ? 78 : 58, w - 4);
+  // as the cabinet takes it, or of its own width (ElementOpts.hob) — fronts.ts hobWidthOf
+  const hw = hobWidthOf(w, s.opt);
   if (hw < 20) return;
   const xc = s.x + w / 2;
   const zc = -DIM.hobCenterZ;
@@ -270,7 +274,8 @@ function drawRun(plan: KitchenPlan, run: RunId, g: Frame, labels: Map<string, st
  */
 function drawWalls(plan: KitchenPlan, prims: Prim[]): void {
   const w = plan.cfg.walls;
-  const walls = wallsFor(plan.cfg.layout);
+  // the kitchen's walls and the room's bare walls (KitchenConfig.room.bare: no kitchen on them, the same wall frame)
+  const walls = [...wallsFor(plan.cfg.layout), ...(plan.bareWalls ?? []).map((b) => b.wall)];
   const T = WALL_T;
   const pieces: Box[] = [];
   for (const wall of walls) {
@@ -423,6 +428,15 @@ export function floorPlan(plan: KitchenPlan): Drawing {
     const parts = kitchenStops(r);
     if (parts.length > 2) dims.push(...chain(axis, parts.map(along), at, { ref, dir, tier: tier++ }, `${id}:kuhinja`));
     dims.push({ axis, a: at(along(0)), b: at(along(len)), place: { ref, dir, tier: tier++ }, chain: `${id}:zid`, label: runTitle(plan, w) });
+  }
+  // a bare room wall (no kitchen on it): its length, the room's depth
+  for (const bw of plan.bareWalls ?? []) {
+    const w = bw.wall;
+    const len = bw.length;
+    const along = (u: number) => (w === "b" ? u - cfg.walls.b : -u);
+    const at = (v: number): Pt => (w === "b" ? [-T, v] : [cfg.walls.a + T, v]);
+    const ref = w === "b" ? -T : cfg.walls.a + T;
+    dims.push({ axis: "y", a: at(along(0)), b: at(along(len)), place: { ref, dir: w === "b" ? -1 : 1, tier: 0 }, chain: `tlocrt:${w}:zid`, label: `Zid ${w.toUpperCase()}` });
   }
 
   // ---- the island: where it stands along wall A and how far from it; the peninsula: its length and depth

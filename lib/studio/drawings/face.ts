@@ -7,8 +7,9 @@
  * Element-local x (0 = the slot's left edge, cm), absolute heights (cm above the floor). Pure: no DOM, no three.js.
  */
 
-import { SBS, cornerFoot, glassFrameDef, moduleDef } from "../catalog";
-import { DIM, glassOf, hasTopBox, openingOf, shelvesOf, type HeightPlan, type KitchenPlan, type PlanSlot } from "../plan";
+import { SBS, SBS_GRIP, cornerFoot, glassFrameDef, moduleDef } from "../catalog";
+import { drawerRatios, drawerStack, golaBetween, ovenColumn } from "../fronts";
+import { DIM, glassOf, hasTopBox, openingOf, sbsAlone, shelvesOf, tallSplitOf, type HeightPlan, type KitchenPlan, type PlanSlot } from "../plan";
 import type { HandleStyle } from "../types";
 import { box, line, poly, rect, type Box, type Prim, type Pt, type Style } from "./model";
 
@@ -169,15 +170,11 @@ class FaceBuilder {
     if (!fixed) this.grip(b, { edge: "top" });
   }
 
-  /** drawers top → bottom by ratio of y0..y1 (engine Mod.drawers) */
-  drawers(x0: number, x1: number, y0: number, y1: number, ratios: number[], fixedTop = false): void {
-    const H = y1 - y0;
-    let y = y1;
-    ratios.forEach((r, i) => {
-      const h = r * H;
-      this.drawer(box(x0, y - h, x1, y), fixedTop && i === 0);
-      y -= h;
-    });
+  /** drawers top → bottom by ratio of y0..y1 (engine Mod.drawers); `mid`: the Gola channel between them (fronts.ts drawerStack) */
+  drawers(x0: number, x1: number, y0: number, y1: number, ratios: number[], fixedTop = false, mid = false): void {
+    const st = drawerStack(y0, y1, ratios, mid);
+    st.fronts.forEach(([a, b], i) => this.drawer(box(x0, a, x1, b), fixedTop && i === 0));
+    for (const [a, b] of st.channels) this.channel(x0, x1, a, b);
   }
 
   /** a lift-up flap hinged at the top */
@@ -308,7 +305,8 @@ function endSpan(slot: PlanSlot): { x0: number; x1: number } {
 export function slotFace(slot: PlanSlot, ctx: FaceCtx): Face {
   const { plan } = ctx;
   const h = plan.heights;
-  const handles: HandleStyle = slot.opt?.open ? openingOf(plan.cfg, slot.opt) : plan.cfg.handles;
+  // its own style, its zone's (KitchenConfig.zoneHandles) or the kitchen's — as the engine builds it
+  const handles: HandleStyle = openingOf(plan.cfg, slot.opt, slot.zone);
   const b = new FaceBuilder(slot, slot.width, handles);
   const w = slot.width;
   const zone = slot.zone === "island" ? "base" : slot.zone;
@@ -380,15 +378,18 @@ export function slotFace(slot: PlanSlot, ctx: FaceCtx): Face {
     return { prims: b.prims, box: corner === "left" ? box(BLIND.base, 0, w, top) : box(0, 0, w - BLIND.base, top), spacer: false };
   }
 
+  // the drawer split (KitchenConfig.drawerLayout / opt.drawers) and the Gola channel between drawers (gola.between)
+  const split = drawerRatios(plan.cfg, type, slot.opt);
+  const mid = golaBetween(plan.cfg, handles);
   switch (type) {
     case "ladice":
-      b.drawers(0, w, yb, yt, [0.22, 0.39, 0.39]);
+      b.drawers(0, w, yb, yt, split ?? [0.22, 0.39, 0.39], false, mid);
       break;
     case "ladice2":
-      b.drawers(0, w, yb, yt, [0.5, 0.5]);
+      b.drawers(0, w, yb, yt, split ?? [0.5, 0.5], false, mid);
       break;
     case "ladice4":
-      b.drawers(0, w, yb, yt, [0.19, 0.27, 0.27, 0.27]);
+      b.drawers(0, w, yb, yt, split ?? [0.19, 0.27, 0.27, 0.27], false, mid);
       break;
     case "ladice-unutarnja": {
       const mid = yb + (yt - yb) * 0.5;
@@ -399,7 +400,7 @@ export function slotFace(slot: PlanSlot, ctx: FaceCtx): Face {
       break;
     }
     case "ploca":
-      b.drawers(0, w, yb, yt, [0.22, 0.39, 0.39], true);
+      b.drawers(0, w, yb, yt, split ?? [0.22, 0.39, 0.39], true, mid);
       break;
     case "ploca-pecnica":
     case "pecnica-donja": {
@@ -591,12 +592,14 @@ function tallFace(b: FaceBuilder, slot: PlanSlot, ctx: FaceCtx, h: HeightPlan): 
   const { plan } = ctx;
   const w = slot.width;
   const y0 = h.plinth;
-  const y1 = tallUnitTop(h);
+  // a tall unit in one piece up to the ceiling (HeightSpec.onePiece / opt.onePiece): no split, no top box
+  const split = tallSplitOf(plan.cfg, h, slot.opt);
+  const y1 = split ?? h.tallTop;
   const H = y1 - y0;
   const type = slot.type;
   const hinge = ctx.tallHinge;
   const def = moduleDef("tall", type);
-  const topBox = h.tallSplit !== null && !def?.endUnit && h.tallTop - h.tallSplit > 10 ? { from: h.tallSplit, to: h.tallTop } : null;
+  const topBox = split !== null && !def?.endUnit && h.tallTop - split > 10 ? { from: split, to: h.tallTop } : null;
   const env = box(0, 0, w, topBox ? topBox.to : y1);
   if (def?.spacer) {
     b.spacer(env);
@@ -610,7 +613,7 @@ function tallFace(b: FaceBuilder, slot: PlanSlot, ctx: FaceCtx, h: HeightPlan): 
     return { prims: b.prims, box: box(x0, 0, x1, top), spacer: false };
   }
   b.plinth(0, w, y0);
-  if (type === "hladnjak-sbs" || type === "hladnjak-sbs-vrata") sbsFace(b, slot, h, y1);
+  if (type === "hladnjak-sbs" || type === "hladnjak-sbs-vrata") sbsFace(b, slot, h, y1, plan.cfg.finish?.fridgeHandle === "udubljena", sbsAlone(plan.slots, slot));
   else
     switch (type) {
       case "vitrina":
@@ -650,21 +653,14 @@ function tallFace(b: FaceBuilder, slot: PlanSlot, ctx: FaceCtx, h: HeightPlan): 
       }
       case "pecnica":
       case "pecnica-mikro": {
-        const drawerH = Math.min(29, H * 0.14);
-        const strip = 9;
-        const ovenY0 = y0 + 2 * drawerH;
-        const ovenY1 = Math.min(y1 - 20, ovenY0 + 59.5);
-        b.drawer(box(0, y0 + drawerH, w, y0 + 2 * drawerH));
-        b.drawer(box(0, y0, w, y0 + drawerH));
-        b.controlStrip(box(0, ovenY1 - strip, w, ovenY1));
-        b.ovenDoor(box(0, ovenY0, w, ovenY1 - strip));
-        if (type === "pecnica") {
-          if (y1 - ovenY1 > 15) b.door(box(0, ovenY1, w, y1), hinge, "bottom");
-        } else {
-          const microY1 = Math.min(y1 - 12, ovenY1 + 38);
-          b.microwave(0, w, ovenY1, microY1);
-          if (y1 - microY1 > 12) b.door(box(0, microY1, w, y1), hinge, "bottom");
-        }
+        // drawers / a door under the oven, the oven low / standard / at eye level, the microwave (fronts.ts ovenColumn)
+        const oc = ovenColumn(y0, y1, h.worktop, type === "pecnica-mikro", slot.opt);
+        for (const [a, c] of oc.drawers) b.drawer(box(0, a, w, c));
+        if (oc.door) b.door(box(0, oc.door[0], w, oc.door[1]), hinge, "top");
+        b.controlStrip(box(0, oc.strip[0], w, oc.strip[1]));
+        b.ovenDoor(box(0, oc.oven[0], w, oc.oven[1]));
+        if (oc.micro) b.microwave(0, w, oc.micro[0], oc.micro[1]);
+        if (oc.above) b.door(box(0, oc.above[0], w, oc.above[1]), hinge, "bottom");
         break;
       }
       case "smocnica":
@@ -689,7 +685,7 @@ function tallFace(b: FaceBuilder, slot: PlanSlot, ctx: FaceCtx, h: HeightPlan): 
  * the side-by-side fridge niche (catalog SBS): a side panel each side, the appliance's two doors (freezer left), the
  * bridge cabinet above it up to the column's line (engine modules.ts buildSbs)
  */
-function sbsFace(b: FaceBuilder, slot: PlanSlot, h: HeightPlan, y1: number): void {
+function sbsFace(b: FaceBuilder, slot: PlanSlot, h: HeightPlan, y1: number, recessed = false, alone = false): void {
   const w = slot.width;
   const P = SBS.panel;
   const aw = Math.min(SBS.appliance, w - 2 * P - 2 * SBS.gap);
@@ -698,7 +694,8 @@ function sbsFace(b: FaceBuilder, slot: PlanSlot, h: HeightPlan, y1: number): voi
   const aTop = Math.min(SBS.applianceHeight, y1 - 20);
   const Hc = y1 - h.plinth;
   const fridgeLine = y1 - Math.max(20, Hc - Math.min(72, Hc * 0.34) - 102);
-  const bridge0 = Math.min(Math.max(aTop + SBS.topGap, fridgeLine), y1 - 12);
+  // (alone in its column — plan.ts sbsAlone — right above the appliance)
+  const bridge0 = Math.min(alone ? aTop + SBS.topGap : Math.max(aTop + SBS.topGap, fridgeLine), y1 - 12);
   const split = ax0 + aw * 0.44;
   const s = { layer: "fronta" as const, weight: "light" as const, ref: slot.id };
   b.push(rect(box(0, 0, P, y1), s));
@@ -708,18 +705,27 @@ function sbsFace(b: FaceBuilder, slot: PlanSlot, h: HeightPlan, y1: number): voi
     const lb = box(x0, dy0, x1, aTop);
     b.push(rect(lb, { layer: "uredaj", weight: "light", fill: "appliance", ref: slot.id }));
     b.symbol(lb, hinge);
-    // the long vertical bar handle at the free side
-    const fx = hinge === "left" ? x1 - 3 : x0 + 3;
+    // the long vertical bar handle at the free side — or a recessed grip in the door's edge (FinishSpec.fridgeHandle)
     const L = Math.min(110, (aTop - dy0) * 0.62);
     const ym = (dy0 + aTop) / 2 + 5;
-    b.push(rect(box(fx - 0.9, ym - L / 2, fx + 0.9, ym + L / 2), { layer: "uredaj", weight: "medium", fill: "dark", ref: slot.id }));
+    if (recessed) {
+      const gx = hinge === "left" ? x1 - 2.4 : x0;
+      const gl = SBS_GRIP.length / 2;
+      b.push(rect(box(gx, SBS_GRIP.centre - gl, gx + 2.4, SBS_GRIP.centre + gl), { layer: "uredaj", weight: "fine", fill: "dark", ref: slot.id }));
+    } else {
+      const fx = hinge === "left" ? x1 - 3 : x0 + 3;
+      b.push(rect(box(fx - 0.9, ym - L / 2, fx + 0.9, ym + L / 2), { layer: "uredaj", weight: "medium", fill: "dark", ref: slot.id }));
+    }
   };
   leaf(ax0, split, "left");
   leaf(split, ax1, "right");
-  // the dispenser on the freezer door
+  // the dispenser on the freezer door — flat doors with recessed grips: a slim display instead
   const dx = ax0 + (split - ax0) * 0.5;
   const dyc = dy0 + (aTop - dy0) * 0.58;
-  b.push(rect(box(dx - 7.5, dyc - 15, dx + 7.5, dyc + 13), { layer: "uredaj", weight: "fine", fill: "dark", ref: slot.id }));
+  if (recessed) {
+    const sx = ax0 + (split - ax0) * 0.6;
+    b.push(rect(box(sx - 2.6, SBS_GRIP.display - 10.5, sx + 2.6, SBS_GRIP.display + 10.5), { layer: "uredaj", weight: "fine", fill: "dark", ref: slot.id }));
+  } else b.push(rect(box(dx - 7.5, dyc - 15, dx + 7.5, dyc + 13), { layer: "uredaj", weight: "fine", fill: "dark", ref: slot.id }));
   if (y1 - bridge0 > 10) {
     const x0 = P;
     const x1 = w - P;

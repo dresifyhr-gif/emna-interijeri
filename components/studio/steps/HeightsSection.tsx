@@ -12,8 +12,10 @@
  * controls until the room changes again — <WallsStep> keeps that note and leaves it out of its own list.
  *
  * "Jednostavno" shows the ceiling and "Kuhinja do stropa" only (with the depth of its top row — 30 / 35 / 45 / 60 cm,
- * the owner's "plići ili dublji od visećih" — while that row is there); the top of the tall column, the worktop height
- * and the wall-unit heights join them in "Napredno" (or while they are not the standard ones).
+ * the owner's "plići ili dublji od visećih" — while that row is there, and "Visoki ormari iz jednog komada" — HeightSpec
+ * onePiece, no seam on the top row's line — while the kitchen splits its tall units); the top of the tall column, the top
+ * row's height (HeightSpec.topRow, "Bez" = one row up to the ceiling), worktop → wall units (HeightSpec.gap, 45–65 cm),
+ * the worktop height and the wall-unit heights join them in "Napredno" (or while they are not the standard ones).
  */
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { heightChoices, setCeiling, setHeights, type HeightChoices } from "@/lib/studio/edit";
@@ -25,6 +27,9 @@ import { raiseForTall } from "../room";
 import type { StepEditOptions, StepProps } from "./types";
 
 const r = Math.round;
+
+/** worktop → wall units when nothing says otherwise (cm; HeightSpec.gap absent) */
+const GAP_DEFAULT = DIM.upperGap;
 
 /** "60, 72 i 80" */
 const andList = (xs: (string | number)[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} i ${xs[xs.length - 1]}`);
@@ -117,6 +122,11 @@ export function HeightsSection({
   // "Jednostavno": the finer heights only while they are in use
   const fine = advanced || custom;
   const showWorktop = advanced || worktop !== 90;
+  // tall units in one piece: wherever the kitchen splits them now ("do stropa", custom heights), in both modes
+  const onePieceShown = hasTall && (choices.onePiece.shown || choices.onePiece.value);
+  // the second row's height ("do stropa") and worktop → wall units: "Napredno", or once chosen
+  const showTopRow = choices.topRow.shown && (advanced || choices.topRow.value !== null);
+  const showGap = advanced || cfg.heights?.gap !== undefined;
 
   return (
     <>
@@ -155,6 +165,24 @@ export function HeightsSection({
           }
         />
 
+        {onePieceShown && (
+          <ToggleRow
+            title="Visoki ormari iz jednog komada"
+            checked={choices.onePiece.value}
+            onChange={(on) =>
+              change(
+                { onePiece: on ? true : undefined },
+                { say: on ? "Visoki ormari iz jednog komada do stropa." : "Visoki ormari s nadgradnim ormarićem." },
+              )
+            }
+            description={
+              choices.onePiece.fits
+                ? "Vrata od postolja do vrha, bez spoja na liniji nadgradnih ormarića — vrijedi i za ormarić iznad hladnjaka side-by-side."
+                : `Visoki stup je viši od ${choices.onePiece.max} cm vrata — ostaje iz dva dijela. Spustite vrh stupa ili strop.`
+            }
+          />
+        )}
+
         {choices.topDepth.shown && (
           <div>
             <p id={`${uid}-td`} className="mb-2.5 text-[13px] text-fg">
@@ -175,6 +203,49 @@ export function HeightsSection({
               Gornji red do stropa može biti plići ili dublji od gornjih elemenata (35 cm) — 60 cm je u ravnini s visokim stupom. Jednom
               ormariću dubinu mijenjate klikom na njega → Više.
             </p>
+          </div>
+        )}
+
+        {showTopRow && (
+          <div>
+            <p id={`${uid}-tr`} className="mb-2.5 text-[13px] text-fg">
+              Visina nadgradnih ormarića
+            </p>
+            <ChipRadio
+              labelledBy={`${uid}-tr`}
+              describedBy={`${uid}-tr-d`}
+              cols={4}
+              options={[
+                { value: -1, label: "Prema stropu", sub: choices.topRow.drawn ? `${choices.topRow.drawn} cm` : "jedan red" },
+                ...choices.topRow.options.map((v) => ({ value: v, label: v === 0 ? "Bez" : `${v} cm`, sub: v === 0 ? "jedan red" : undefined })),
+              ]}
+              value={choices.topRow.value ?? -1}
+              onChange={(v) =>
+                change(
+                  { topRow: v < 0 ? undefined : v },
+                  { coalesce: "heights-toprow", say: v < 0 ? "Nadgradni ormarići prema stropu." : v === 0 ? "Jedan red gornjih elemenata do stropa." : `Nadgradni ormarići visoki ${v} cm.` },
+                )
+              }
+            />
+            <p id={`${uid}-tr-d`} className="mt-2 text-[12px] leading-snug text-mut">
+              Drugi red ormarića do stropa; gornji elementi ispod njih uzimaju ostatak visine. „Bez” — jedan red visokih gornjih elemenata (gdje stane).
+            </p>
+          </div>
+        )}
+
+        {showGap && (
+          <div>
+            <p id={`${uid}-gap`} className="mb-2.5 text-[13px] text-fg">
+              Od radne ploče do gornjih elemenata
+            </p>
+            <ChipRadio
+              labelledBy={`${uid}-gap`}
+              cols={choices.gap.options.length}
+              options={choices.gap.options.map((v) => ({ value: v, label: String(v), sub: v === GAP_DEFAULT ? "standard" : "cm" }))}
+              value={choices.gap.value}
+              onChange={(v) => change({ gap: v === GAP_DEFAULT ? undefined : v }, { coalesce: "heights-gap", say: `Gornji elementi ${v} cm iznad radne ploče.` })}
+            />
+            <p className="mt-2 text-[12px] leading-snug text-mut">Standardno {GAP_DEFAULT} cm; niže (50 cm) je bliže ruci, više daje mjesta aparatima na ploči.</p>
           </div>
         )}
 

@@ -31,7 +31,9 @@
  * the "+" stand at the drawing's empty places; the overlays read the drawing's ViewInfo from a ViewHub instead of the
  * engine's. Meanwhile the engine keeps its kitchen but renders nothing: its canvas is moved out of view (its own
  * IntersectionObserver pauses the render loop) and comes back, rendering again, with "3D". Without WebGL the 2D views
- * still work.
+ * still work. In 3D the switch's second row says where the camera stands ("3D studio", "Iz prostorije" — the room's
+ * entrance at eye level, "Frontalno", "Odozgo": engine setView, remembered for the visit) and, under the ceiling, shows the
+ * room's ceiling with its light ("Strop": KitchenConfig.room.ceiling / lamp, an undo step).
  *
  * "Jednostavno / Napredno" (the step header; remembered, hooks.ts StudioMode) leaves the finer controls out for
  * customers by default. A first visit gets three skippable coach marks (CoachMarks; on a phone on the step sheet, never
@@ -46,12 +48,12 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { moduleDef } from "@/lib/studio/catalog";
-import { isEdited, remove, removeColumn, resetAll, resetRun, slotEditInfo, type EditResult, type RunRef } from "@/lib/studio/edit";
+import { isEdited, remove, removeColumn, resetAll, resetRun, setRoomCeiling, slotEditInfo, type EditResult, type RunRef } from "@/lib/studio/edit";
 import { geometryKey, planKitchen, sanitizeConfig, wallsFor, type PlanSlot, type RunId } from "@/lib/studio/plan";
 import { estimate } from "@/lib/studio/price";
 import { configFromQuery, encodeConfig, studioPath } from "@/lib/studio/share";
 import { summarize } from "@/lib/studio/summary";
-import type { DimLabelTarget, FrontZone, KitchenConfig, Layout, ModuleInfo, Mood, ScreenRect, SurfaceHit, WallId } from "@/lib/studio/types";
+import type { DimLabelTarget, FrontZone, KitchenConfig, Layout, ModuleInfo, Mood, ScreenRect, SurfaceHit, ViewPreset, WallId } from "@/lib/studio/types";
 import { DimEditor, type DimTargetState } from "./DimEditor";
 import { GapLayer } from "./GapLayer";
 import { ElementEditor, type ApplyOptions, type EditNote } from "./ElementEditor";
@@ -61,6 +63,7 @@ import { readCoach, setCoach, setStudioMode, useCoach, useMediaQuery, useOrigin,
 import { OrbitIcon, PlanIcon, Spinner } from "./icons";
 import { fitToPlanner } from "./limits";
 import { EASE, LAST_STEP, STEPS, clamp, columnSlots, eur, islandWord, resetTarget, runName, stepIndex } from "./meta";
+import { cameraPresetDef } from "./optionsModel";
 import { isTyping, type Insets, type ViewSource } from "./overlay";
 import { DesktopPanel, MobileSheet, MobileSummary, PANEL_GAP, PANEL_W } from "./Panel";
 import { PlanView } from "./PlanView";
@@ -83,8 +86,20 @@ import { ShapeStep } from "./steps/ShapeStep";
 import { TopStep } from "./steps/TopStep";
 import type { StepEditOptions, StepProps } from "./steps/types";
 import { WallsStep } from "./steps/WallsStep";
-import { createViewHub, readStudioView, setNacrtPick, setStudioView, useNacrtPick, useStudioView, type NacrtPick, type StudioView } from "./viewMode";
-import { ViewSwitch, viewDockHeight } from "./ViewSwitch";
+import {
+  createViewHub,
+  readStudioView,
+  setCameraPreset,
+  setNacrtPick,
+  setStudioView,
+  useCameraPreset,
+  useNacrtPick,
+  useStudioView,
+  viewDockHeight,
+  type NacrtPick,
+  type StudioView,
+} from "./viewMode";
+import { ViewSwitch } from "./ViewSwitch";
 
 const INSET_DESKTOP = { top: TOPBAR_H.desktop, right: PANEL_W + PANEL_GAP * 2, bottom: 0, left: 0 };
 /** how long the engine may report "nothing selected" while it rebuilds / re-lays out under an edit */
@@ -175,6 +190,10 @@ export function Studio() {
   // ---- 3D / 2D
   const view = useStudioView();
   const nacrtPick = useNacrtPick();
+  /** where the 3D camera stands ("3D studio", "Iz prostorije", "Frontalno", "Odozgo" — remembered for the visit) */
+  const camera = useCameraPreset();
+  /** phone: the camera presets row is open under the view switch (the 3D view is short there; a desktop always shows it) */
+  const [cameraOpen, setCameraOpen] = useState(false);
   /** the 2D view's ViewInfo for the overlays (PlanView publishes, they subscribe like to the engine) */
   const [hub] = useState(createViewHub);
   const hubRef = useRef<ViewSource | null>(hub);
@@ -302,6 +321,7 @@ export function Studio() {
     onSelect: handleSelect,
     onDimLabel: handleDimLabel,
     onSurfaceClick: handleSurface,
+    camera,
     start: !engineHeld,
   });
   useEffect(() => {
@@ -876,6 +896,30 @@ export function Studio() {
     [view],
   );
 
+  /**
+   * a camera preset of the 3D view (the second row of the view switch): the engine moves there (useStudioEngine); the
+   * preset already chosen puts the camera back to it (after the customer turned the view away)
+   */
+  const changeCamera = useCallback(
+    (p: ViewPreset) => {
+      setHintsGone(true);
+      if (p === camera) apiRef.current?.setView?.(p);
+      else setCameraPreset(p);
+      setAnnounce(`${cameraPresetDef(p).aria}.`);
+    },
+    [camera, apiRef],
+  );
+
+  /** "Strop" in the view switch: the room's ceiling with its light, both on or both off (one undo step, in the link) */
+  const toggleCeiling = useCallback(
+    (on: boolean) => {
+      const r = setRoomCeiling(cfg, { ceiling: on, lamp: on });
+      const keep = selId && planKitchen(r.cfg).slots.some((x) => x.id === selId) ? selId : null;
+      applyEdit(r, { select: keep, quiet: true, say: on ? "Prikazan je strop sa stropnim svjetlom." : "Strop je skriven." });
+    },
+    [cfg, selId, applyEdit],
+  );
+
   // back in 3D: the engine renders again (it was paused out of view; a resize marks the view to be drawn)
   const wasFlat = useRef(flat);
   useEffect(() => {
@@ -1135,7 +1179,8 @@ export function Studio() {
   // first-visit coach marks: once the UI is in, never over an open picker / editor / the thank-you
   const coachOn = Boolean(!flat && overlays && coach !== "done" && !dimEdit && !gapOpen && !surface && !summaryOpen && !thanks && !(editorOpen && !desktop));
   const canDemo = Boolean(!flat && selSlot && moduleDef(selSlot.zone, selSlot.type)?.demo !== false);
-  const dockH = viewDockHeight(!desktop, view === "nacrt");
+  // the view switch's second row: the walls of "Nacrt", the camera presets in 3D
+  const dockH = viewDockHeight(!desktop, view === "nacrt" || (view === "3d" && !failed && (desktop || cameraOpen)));
 
   return (
     <div ref={rootRef} className="fixed inset-0 overflow-hidden bg-ink text-fg">
@@ -1164,6 +1209,13 @@ export function Studio() {
           walls={nacrtWalls}
           onNacrt={setNacrtPick}
           layout={cfg.layout}
+          camera={camera}
+          onCamera={changeCamera}
+          cameraShown={!failed}
+          cameraOpen={cameraOpen}
+          onCameraOpen={setCameraOpen}
+          ceiling={Boolean(cfg.room?.ceiling)}
+          onCeiling={toggleCeiling}
           docked={!desktop}
           shown={uiShown}
           reduce={reduce}
@@ -1214,7 +1266,9 @@ export function Studio() {
         {/* how to orbit (this visit, once the coach marks are done) */}
         <div
           aria-hidden="true"
-          className={`pointer-events-none absolute z-10 flex gap-2 ${desktop ? "bottom-6 left-8 items-end" : "inset-x-0 top-[120px] flex-col items-center"}`}
+          className={`pointer-events-none absolute z-10 flex gap-2 ${desktop ? "bottom-6 left-8 items-end" : "inset-x-0 flex-col items-center"}`}
+          // phone: under the view switch (its camera row included)
+          style={desktop ? undefined : { top: `calc(var(--studio-inset-top, 56px) + ${dockH + 10}px)` }}
         >
           <AnimatePresence>
             {uiShown && !failed && !flat && !selSlot && !hintsGone && !toast && !dimEdit && coach === "done" && (

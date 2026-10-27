@@ -8,7 +8,7 @@
  * Run-local x (cm, left → right facing the wall), y = height above the floor. Pure: no DOM, no three.js.
  */
 
-import { DIM, backsplashOfCfg, wallsFor, type IslandPlan, type KitchenPlan, type PlanPiece, type PlanSlot } from "../plan";
+import { DIM, backsplashOfCfg, openingOf, tallSplitOf, wallsFor, type HeightPlan, type IslandPlan, type KitchenPlan, type PlanPiece, type PlanSlot } from "../plan";
 import type { WallId } from "../types";
 import { WALL_T, cornerAcross, elementLabels, faceCtx, isSpacer, runOf, runTitle, slotTypeName } from "./common";
 import { UPPER_FACE, carcassTop, gripGap, lipOf, slotFace, upperRowTop } from "./face";
@@ -34,8 +34,8 @@ import {
   type Tag,
 } from "./model";
 
-/** the plinth is set back this far behind the fronts (engine D.plinthRecess) */
-const PLINTH_RECESS = 6;
+/** the plinth is set back this far behind the fronts (engine dims.ts recessOf: KitchenConfig.plinth, else 6 cm) */
+const recessOf = (h: HeightPlan): number => h.plinthRecess ?? 6;
 
 const move = (dx: number) => rotMove(0, dx, 0);
 
@@ -60,7 +60,8 @@ function placeSlot(plan: KitchenPlan, s: PlanSlot, labels: Map<string, string>, 
 /** fillers and end panels of a run (engine kitchen.ts fillPiece heights) */
 function placePiece(plan: KitchenPlan, p: PlanPiece, prims: Prim[]): Box {
   const h = plan.heights;
-  const handles = plan.cfg.handles;
+  // (a zone that opens its own way — KitchenConfig.zoneHandles — as the engine dresses its fillers)
+  const handles = openingOf(plan.cfg, undefined, p.run === "isl" ? "island" : p.zone);
   const top = carcassTop(h);
   const st = (extra: Partial<Style> = {}): Style => ({ layer: "fronta", weight: "medium", ref: `${p.kind}:${p.run}:${p.zone}:${p.x}`, ...extra });
   const x0 = p.x;
@@ -104,8 +105,8 @@ function runReturn(plan: KitchenPlan, xw: number, dir: 1 | -1, parts: { base: bo
     const f = DIM.baseFace;
     P([
       [0, 0],
-      [f - PLINTH_RECESS, 0],
-      [f - PLINTH_RECESS, h.plinth],
+      [f - recessOf(h), 0],
+      [f - recessOf(h), h.plinth],
       [f, h.plinth],
       [f, top],
       [0, top],
@@ -178,8 +179,8 @@ function islandReturn(plan: KitchenPlan, I: IslandPlan, zx: (z: number) => numbe
         (
           [
             [I.outer, 0],
-            [f - PLINTH_RECESS, 0],
-            [f - PLINTH_RECESS, h.plinth],
+            [f - recessOf(h), 0],
+            [f - recessOf(h), h.plinth],
             [f, h.plinth],
             [f, top],
             [I.outer, top],
@@ -367,7 +368,9 @@ export function wallElevation(plan: KitchenPlan, wall: WallId): Drawing | null {
   const right = (t: number) => ({ ref: Math.max(L, geo.x1), dir: 1 as const, tier: t });
   const hs = [0, h.plinth, top, h.worktop, C];
   if (hasUpper) hs.push(h.upperBottom, h.upperTop, ...(h.topRow ? [h.topRow.to] : []));
-  if (hasTall) hs.push(h.tallTop, ...(h.tallSplit !== null ? [h.tallSplit] : []));
+  // (the split line only where a tall unit is split: one in one piece up to the ceiling has none — tallSplitOf)
+  const split = plan.slots.some((s) => s.run === wall && s.zone === "tall" && tallSplitOf(plan.cfg, h, s.opt) !== null);
+  if (hasTall) hs.push(h.tallTop, ...(h.tallSplit !== null && split ? [h.tallSplit] : []));
   if (h.cornice && (hasUpper || hasTall)) hs.push(h.cornice.from);
   dims.push(...chain("y", hs, (v) => [L, v], right(0), `${id}:visine`));
   dims.push({ axis: "y", a: [L, 0], b: [L, C], place: right(1), chain: `${id}:strop` });

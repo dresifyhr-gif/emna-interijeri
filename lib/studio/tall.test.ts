@@ -363,7 +363,8 @@ describe('replace with a tall unit (the owner: "da se maknu odmah i gornji i don
     const up = p0.slots.find((s) => s.run === "b" && s.zone === "upper" && s.type === "vrata" && s.x < 250)!;
     const r = changeType(c, up.id, "hladnjak-sbs", "tall");
     assert.ok(r.ok, r.warning ?? "");
-    assert.match(r.warning ?? "", /^Gornji i donji element zamijenjeni visokim elementom\. Kuhinja na zidu B duža je za 47 cm\./);
+    // (the niche alone has no cover panels — its own side panels close it: the run grows by 43 cm, not 47)
+    assert.match(r.warning ?? "", /^Gornji i donji element zamijenjeni visokim elementom\. Kuhinja na zidu B duža je za 43 cm\./);
     assert.doesNotMatch(r.warning ?? "", /uži|sada je \d+ cm umjesto/);
     assert.equal(r.uppersGone, 1, "only the wall unit that was replaced (the niche moved along with its cabinet)");
     const p1 = planKitchen(r.cfg);
@@ -371,7 +372,7 @@ describe('replace with a tall unit (the owner: "da se maknu odmah i gornji i don
     assert.deepEqual(baseRow(p1, "b"), ["ladice45", "hladnjak-sbs^96", "ploca80", "ladice60"]);
     const hob = (p: KitchenPlan) => p.slots.find((s) => s.type === "ploca")!.x;
     assert.ok(Math.abs(hob(p1) - hob(p0)) <= 3, "the hob stays (the filler strip at the corner gave its 3 cm)");
-    assert.equal(kitchenLen(r.cfg, "b"), 347);
+    assert.equal(kitchenLen(r.cfg, "b"), 343);
     assert.equal(slotOf(r)?.type, "hladnjak-sbs");
     invariants(p1, "owner sbs");
     assert.deepEqual(decodeConfig(encodeConfig(r.cfg)), r.cfg);

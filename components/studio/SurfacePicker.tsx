@@ -14,11 +14,10 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { catalog } from "@/lib/studio/catalog";
 import { roomFinishes, setRoomFinish, type EditResult } from "@/lib/studio/edit";
-import { wallsFor } from "@/lib/studio/plan";
 import type { KitchenConfig, SurfaceHit, WallId } from "@/lib/studio/types";
 import { RadioGrid } from "./controls";
 import { CheckIcon, CloseIcon } from "./icons";
-import { WALL_HINT, clamp } from "./meta";
+import { WALL_HINT, clamp, roomWallIds } from "./meta";
 import { areaOf, type Insets } from "./overlay";
 import s from "./studio.module.css";
 
@@ -112,7 +111,8 @@ export function SurfacePicker({
   const uid = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const { hit } = target;
-  const walls = wallsFor(cfg.layout);
+  // (the bare room walls too — an L kitchen in a closed room: its third wall is painted like the others)
+  const walls = roomWallIds(cfg);
   const wall: WallId | null = hit.surface === "wall" && hit.wall ? hit.wall : null;
   const f = roomFinishes(cfg);
   const value = wall ? f.walls[wall] : f.floor;

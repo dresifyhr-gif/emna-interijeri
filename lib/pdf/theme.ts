@@ -1,12 +1,13 @@
 /**
  * The PDF's look: A4 landscape pages in millimetres, the site's palette (tailwind.config.ts: ink, paper, accent) and its
- * two typefaces (Inter for text, Space Grotesk for display — fonts/data.ts), plus the small text helpers every page uses.
+ * two typefaces (Inter for text, Inter Tight for titles — the site's own pair, fonts/data.ts), plus the small text helpers
+ * every page uses.
  *
  * Pure jsPDF calls, no DOM: works in the browser and in Node (the tests render whole documents).
  */
 
 import { GState, type jsPDF } from "jspdf";
-import { GROTESK_500, GROTESK_700, INTER_400, INTER_500, INTER_600 } from "./fonts/data";
+import { INTER_400, INTER_500, INTER_600, INTER_TIGHT_500, INTER_TIGHT_700 } from "./fonts/data";
 
 /** A4 landscape (mm) and the margins of every content page */
 export const PAGE = {
@@ -59,16 +60,16 @@ export const F = {
   sans: "Inter",
   /** Inter 500 ("normal") — eyebrows, labels */
   medium: "InterMedium",
-  /** Space Grotesk: "normal" = 500, "bold" = 700 */
-  display: "SpaceGrotesk",
+  /** Inter Tight (the site's headings): "normal" = 500, "bold" = 700 */
+  display: "InterTight",
 } as const;
 
 const FONT_FILES: [file: string, data: string, family: string, style: "normal" | "bold"][] = [
   ["Inter-Regular.ttf", INTER_400, F.sans, "normal"],
   ["Inter-SemiBold.ttf", INTER_600, F.sans, "bold"],
   ["Inter-Medium.ttf", INTER_500, F.medium, "normal"],
-  ["SpaceGrotesk-Medium.ttf", GROTESK_500, F.display, "normal"],
-  ["SpaceGrotesk-Bold.ttf", GROTESK_700, F.display, "bold"],
+  ["InterTight-Medium.ttf", INTER_TIGHT_500, F.display, "normal"],
+  ["InterTight-Bold.ttf", INTER_TIGHT_700, F.display, "bold"],
 ];
 
 /** the document's fonts (Unicode TrueType: č ć đ š ž …) — once per jsPDF instance */

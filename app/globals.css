@@ -35,6 +35,22 @@
     background-color: #faf8f5;
     color: #1a1a18;
   }
+  /*
+   * The page behind the page, per route group: what shows when a page is over-scrolled (the rubber band on macOS / iOS,
+   * pull-to-refresh) and under the last section. The public site is light, so its html / body are light too — no dark
+   * strip above the header or below a light page. Everything else (the 3D studio, the quote page, the admin) keeps the
+   * dark ink of `html` above. A site page that opens on a dark section (the homepage's hero) keeps a dark canvas, the
+   * hero's charcoal — above the hero as below the dark footer. Without :has (older browsers) the site keeps the dark
+   * canvas, as before.
+   */
+  html:has(body .site) {
+    background-color: #faf8f5;
+    color-scheme: light;
+  }
+  html:has(body .site main > [data-tone="dark"]:first-child) {
+    background-color: #141416;
+    color-scheme: dark;
+  }
   .site :focus-visible {
     outline-color: #1a1a18;
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { DimLabelTarget, KitchenConfig, ModuleInfo, Mood, ScreenRect, StudioEngineApi, SurfaceHit } from "@/lib/studio/types";
+import type { DimLabelTarget, KitchenConfig, ModuleInfo, Mood, ScreenRect, StudioEngineApi, SurfaceHit, ViewPreset } from "@/lib/studio/types";
 
 export type EngineStatus = "loading" | "ready" | "failed";
 
@@ -9,7 +9,9 @@ export type EngineStatus = "loading" | "ready" | "failed";
  * Mounts the vanilla three.js studio engine into `containerRef` (client only, dynamic import so three.js
  * ships only with /studio), keeps it in sync with React state and disposes it on unmount.
  *
- * - `config` / `mood` changes are pushed with setConfig / setMood (the engine diffs and animates).
+ * - `config` / `mood` changes are pushed with setConfig / setMood (the engine diffs and animates); `camera` (the 3D
+ *   camera preset — "3D studio", "Iz prostorije", "Frontalno", "Odozgo") with setView, right after the engine is created
+ *   too (it keeps the preset through its intro and every rebuild).
  * - The engine constructor throws when WebGL isn't available → status "failed"; the UI keeps working without 3D.
  * - `onDimLabel` makes every dimension label in 3D clickable — the room's walls and the kitchen runs / island (the
  *   length editor); `onSurfaceClick` makes the room's walls and floor clickable (their finish).
@@ -25,10 +27,12 @@ export function useStudioEngine(
     onSelect,
     onDimLabel,
     onSurfaceClick,
+    camera = "studio",
     start = true,
   }: {
     config: KitchenConfig;
     mood: Mood;
+    camera?: ViewPreset;
     onSelect: (m: ModuleInfo | null) => void;
     onDimLabel?: (target: DimLabelTarget, rect: ScreenRect) => void;
     onSurfaceClick?: (hit: SurfaceHit) => void;
@@ -37,10 +41,10 @@ export function useStudioEngine(
 ) {
   const apiRef = useRef<StudioEngineApi | null>(null);
   const [status, setStatus] = useState<EngineStatus>("loading");
-  const latest = useRef({ config, mood, onSelect, onDimLabel, onSurfaceClick });
+  const latest = useRef({ config, mood, camera, onSelect, onDimLabel, onSurfaceClick });
 
   useEffect(() => {
-    latest.current = { config, mood, onSelect, onDimLabel, onSurfaceClick };
+    latest.current = { config, mood, camera, onSelect, onDimLabel, onSurfaceClick };
   });
 
   useEffect(() => {
@@ -68,6 +72,7 @@ export function useStudioEngine(
           // anything that changed while the module was loading
           api.setConfig(latest.current.config);
           api.setMood(latest.current.mood);
+          if (latest.current.camera !== "studio") api.setView?.(latest.current.camera);
         } catch (err) {
           console.warn("[studio] 3D prikaz nije dostupan:", err);
           api = null;
@@ -94,6 +99,14 @@ export function useStudioEngine(
   useEffect(() => {
     apiRef.current?.setMood(mood);
   }, [mood]);
+
+  // (the first preset goes in right after the engine is created, above; a change after that, here)
+  const sentCamera = useRef(camera);
+  useEffect(() => {
+    if (sentCamera.current === camera) return;
+    sentCamera.current = camera;
+    apiRef.current?.setView?.(camera);
+  }, [camera]);
 
   return { apiRef, status };
 }

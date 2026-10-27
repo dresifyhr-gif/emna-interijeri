@@ -41,7 +41,22 @@
  *                         finish, which names the kind ("bs-staklo-crno", "bs-hex-bijele")
  *     rl                  walls with a hanging rail with hooks (KitchenConfig.rails): "rl-ab"
  *
- *   heights `h` also take d<top-row depth> (HeightSpec.topDepth): "sd45"
+ *   heights `h` also take d<top-row depth> (HeightSpec.topDepth): "sd45", then g<gap to the wall units> r<top-row height>
+ *   and j (tall units in one piece up to the ceiling): "sp85g50r40j"
+ *
+ *   the "photo" round (all optional, only what differs from the defaults):
+ *     fr fh               the side-by-side fridge's finish / handles (FinishSpec.fridge, fridgeHandle): "fr-tamni-inox",
+ *                         "fh-udubljena"
+ *     lz                  LED zones switched off (KitchenConfig.ledZones), u0 / p0 / i0 (under, plinth, inner): "lz-p0i0"
+ *     ob ou ot oi         opening style of the base / upper / tall / island zone (KitchenConfig.zoneHandles), the
+ *                         OPEN_CODE digit: "ou-4"
+ *     gl                  the Gola channel between the drawers (KitchenConfig.gola.between): "gl-m"
+ *     dl                  the kitchen's drawer split (KitchenConfig.drawerLayout), catalog.drawerLayouts code: "dl-3"
+ *     pr                  the plinth's recess in cm (KitchenConfig.plinth.recess): "pr-3"
+ *     zb                  bare room walls without a kitchen (KitchenConfig.room.bare): "zb-c"
+ *     zc                  the ceiling (room.ceiling) and its light (room.lamp): 1 ceiling, 2 ceiling + light, 3 light: "zc-2"
+ *   and element options J0 / J1 (one piece up to the ceiling), V1 (a door under the oven), A1 / A2 (oven low / at eye
+ *   level), K<drawer split code>, P<hob width cm>, B1 / B2 (sink bowl left / right): "omT60V1A2", "l60K3"
  *
  *   An entry of any list may carry its own options (CabinetSpec.opt) right after its width, as capital letter + number
  *   tokens (never T, which starts a tall unit): O<opening 0–5> G<glass 0–4> F<frame 0–4> E0/E1 (glass LED) S0/S1 (glass
@@ -57,7 +72,7 @@
  * lengths are clamped, broken entries are dropped. It also accepts a base64url JSON KitchenConfig.
  */
 
-import { backsplashDef, moduleByCode, moduleDef, type ModuleZone } from "./catalog";
+import { backsplashDef, catalog, drawerLayoutDef, moduleByCode, moduleDef, type ModuleZone } from "./catalog";
 import { RUN_ENDS, defaultAnchor, sanitizeConfig } from "./plan";
 import {
   DEFAULT_CONFIG,
@@ -160,14 +175,25 @@ function decodeExtent(w: WallId, s: string): Record<string, unknown> | null {
   return out;
 }
 
-const FINISH_KEYS: [string, "handleColor" | "sink" | "tap" | "appliances" | "plinth" | "led"][] = [
+const FINISH_KEYS: [string, "handleColor" | "sink" | "tap" | "appliances" | "plinth" | "led" | "fridge" | "fridgeHandle"][] = [
   ["hc", "handleColor"],
   ["si", "sink"],
   ["ta", "tap"],
   ["ap", "appliances"],
   ["pl", "plinth"],
   ["le", "led"],
+  ["fr", "fridge"],
+  ["fh", "fridgeHandle"],
 ];
+/** zone opening styles (KitchenConfig.zoneHandles) */
+const ZONE_OPEN_KEYS: [string, FrontZone][] = [
+  ["ob", "base"],
+  ["ou", "upper"],
+  ["ot", "tall"],
+  ["oi", "island"],
+];
+const drawerCode = (id: string | undefined): number | undefined => drawerLayoutDef(id)?.code;
+const drawerByCode = (v: string): string | undefined => catalog.drawerLayouts.find((d) => String(d.code) === v)?.id;
 
 /** codes of the options (share links: KitchenConfig.hood / glass and CabinetSpec.opt) — append only, never reuse */
 const OPEN_CODE: Record<HandleStyle, number> = { bez: 0, letvica: 1, gumb: 2, utor: 3, push: 4, luft: 5 };
@@ -191,6 +217,13 @@ function encodeOpts(o: ElementOpts | undefined): string {
   if (o.hood) out += `H${HOOD_CODE[o.hood]}`;
   if (o.rows !== undefined) out += `N${Math.round(o.rows)}`;
   if (o.led === false) out += "L0";
+  if (o.onePiece !== undefined) out += `J${o.onePiece ? 1 : 0}`;
+  if (o.below === "vrata") out += "V1";
+  if (o.ovenAt) out += `A${o.ovenAt === "nisko" ? 1 : 2}`;
+  const dc = drawerCode(o.drawers);
+  if (dc !== undefined) out += `K${dc}`;
+  if (o.hob !== undefined) out += `P${Math.round(o.hob)}`;
+  if (o.bowl) out += `B${o.bowl === "left" ? 1 : 2}`;
   return out;
 }
 
@@ -208,6 +241,12 @@ function decodeOpts(s: string): Record<string, unknown> | null {
     else if (k === "H") out.hood = byCode(HOOD_CODE, v);
     else if (k === "N" && v) out.rows = Number(v);
     else if (k === "L" && v === "0") out.led = false;
+    else if (k === "J" && v) out.onePiece = v === "1";
+    else if (k === "V" && v === "1") out.below = "vrata";
+    else if (k === "A" && v) out.ovenAt = v === "1" ? "nisko" : v === "2" ? "oci" : undefined;
+    else if (k === "K" && v) out.drawers = drawerByCode(v);
+    else if (k === "P" && v) out.hob = Number(v);
+    else if (k === "B" && v) out.bowl = v === "1" ? "left" : v === "2" ? "right" : undefined;
   }
   if (Object.keys(glass).length) out.glass = glass;
   return Object.keys(out).length ? out : null;
@@ -356,6 +395,21 @@ export function encodeConfig(input: KitchenConfig): string {
     if (SAFE_ID.test(v)) parts.push(`bs-${v}`);
   }
   if (c.rails?.length) parts.push(`rl-${c.rails.join("")}`);
+  // ---- the "photo" round
+  if (c.ledZones) {
+    const lz = (["under", "plinth", "inner"] as const).filter((k) => c.ledZones?.[k] === false).map((k) => `${k[0]}0`).join("");
+    if (lz) parts.push(`lz-${lz}`);
+  }
+  for (const [k, z] of ZONE_OPEN_KEYS) {
+    const h = c.zoneHandles?.[z];
+    if (h) parts.push(`${k}-${OPEN_CODE[h]}`);
+  }
+  if (c.gola?.between) parts.push("gl-m");
+  const dl = drawerCode(c.drawerLayout);
+  if (dl !== undefined) parts.push(`dl-${dl}`);
+  if (c.plinth?.recess !== undefined) parts.push(`pr-${Math.round(c.plinth.recess)}`);
+  if (c.room?.bare?.length) parts.push(`zb-${c.room.bare.join("")}`);
+  if (c.room?.ceiling || c.room?.lamp) parts.push(`zc-${c.room.ceiling ? (c.room.lamp ? 2 : 1) : 3}`);
   if (c.islandSpec) {
     const o = encodeIsland(c.islandSpec);
     if (o) parts.push(`o-${o}`);
@@ -440,11 +494,14 @@ function encodeHeights(h: HeightSpec): string {
   }
   if (h.worktop !== undefined) out += `p${Math.round(h.worktop)}`;
   if (h.topDepth !== undefined) out += `d${Math.round(h.topDepth)}`;
+  if (h.gap !== undefined) out += `g${Math.round(h.gap)}`;
+  if (h.topRow !== undefined) out += `r${Math.round(h.topRow)}`;
+  if (h.onePiece) out += "j";
   return out;
 }
 
 function decodeHeights(s: string): HeightSpec | null {
-  const m = /^([nsc])(?:u(\d{2,3}))?(?:t(\d{3}))?(?:p(\d{2,3}))?(?:d(\d{2}))?$/.exec(s);
+  const m = /^([nsc])(?:u(\d{2,3}))?(?:t(\d{3}))?(?:p(\d{2,3}))?(?:d(\d{2}))?(?:g(\d{2}))?(?:r(\d{1,2}))?(j)?$/.exec(s);
   if (!m) return null;
   const mode = (Object.keys(HEIGHT_MODE) as HeightSpec["mode"][]).find((k) => HEIGHT_MODE[k] === m[1]) ?? "standard";
   const out: HeightSpec = { mode };
@@ -452,6 +509,9 @@ function decodeHeights(s: string): HeightSpec | null {
   if (m[3]) out.tallTop = Number(m[3]);
   if (m[4]) out.worktop = Number(m[4]);
   if (m[5]) out.topDepth = Number(m[5]);
+  if (m[6]) out.gap = Number(m[6]);
+  if (m[7]) out.topRow = Number(m[7]);
+  if (m[8]) out.onePiece = true;
   return out;
 }
 
@@ -533,6 +593,7 @@ export function decodeConfig(s: string): KitchenConfig | null {
     const extents: Record<string, unknown> = {};
     const tallRuns: Record<string, CabinetSpec[]> = {};
     const roomWalls: Record<string, string> = {};
+    const zoneHandles: Partial<Record<FrontZone, HandleStyle>> = {};
     for (const field of p.slice(13)) {
       const k = field.indexOf("-");
       if (k <= 0) continue;
@@ -594,6 +655,45 @@ export function decodeConfig(s: string): KitchenConfig | null {
         cfg.rails = [...val].filter((w) => WALL_IDS.includes(w as WallId));
         continue;
       }
+      // ---- the "photo" round
+      if (key === "lz") {
+        const t = tokens(val);
+        const lz: Record<string, boolean> = {};
+        for (const [k, v] of t ?? []) {
+          const zone = k === "u" ? "under" : k === "p" ? "plinth" : k === "i" ? "inner" : null;
+          if (zone && v === "0") lz[zone] = false;
+        }
+        if (Object.keys(lz).length) cfg.ledZones = lz;
+        continue;
+      }
+      const zo = ZONE_OPEN_KEYS.find(([x]) => x === key);
+      if (zo) {
+        const h = byCode(OPEN_CODE, val);
+        if (h) zoneHandles[zo[1]] = h;
+        continue;
+      }
+      if (key === "gl") {
+        if (val === "m") cfg.gola = { between: true };
+        continue;
+      }
+      if (key === "dl") {
+        const id = drawerByCode(val);
+        if (id) cfg.drawerLayout = id;
+        continue;
+      }
+      if (key === "pr") {
+        if (/^\d{1,2}$/.test(val)) cfg.plinth = { recess: Number(val) };
+        continue;
+      }
+      if (key === "zb") {
+        (room as Record<string, unknown>).bare = [...val].filter((w) => WALL_IDS.includes(w as WallId));
+        continue;
+      }
+      if (key === "zc") {
+        if (val === "1" || val === "2") (room as Record<string, unknown>).ceiling = true;
+        if (val === "2" || val === "3") (room as Record<string, unknown>).lamp = true;
+        continue;
+      }
       if (!SAFE_ID.test(val)) continue;
       if (key === "bs") {
         const kinds = ["ploca", "pola", "bez", "staklo", "plocice"];
@@ -636,6 +736,7 @@ export function decodeConfig(s: string): KitchenConfig | null {
     if (Object.keys(room).length) cfg.room = room;
     if (Object.keys(extents).length) cfg.extents = extents;
     if (Object.keys(tallRuns).length) cfg.tallRuns = tallRuns;
+    if (Object.keys(zoneHandles).length) cfg.zoneHandles = zoneHandles;
     return sanitizeConfig(cfg);
   }
 

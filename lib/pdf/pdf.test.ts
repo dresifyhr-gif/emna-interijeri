@@ -305,7 +305,7 @@ describe("documents", () => {
       assert.equal(new TextDecoder().decode(bytes.slice(0, 5)), "%PDF-");
       const raw = new TextDecoder("latin1").decode(bytes);
       // the site's fonts as embedded Unicode (CID) fonts, no standard font (those have no č ć đ š ž)
-      assert.ok(raw.includes("/BaseFont /Inter") && raw.includes("/BaseFont /SpaceGrotesk"), "the site's fonts are embedded");
+      assert.ok(raw.includes("/BaseFont /Inter") && raw.includes("/BaseFont /InterTight"), "the site's fonts are embedded");
       assert.ok(raw.includes("/Subtype /CIDFontType2"), "Unicode fonts");
       assert.ok(!/\/BaseFont \/(Helvetica|Times|Courier)/.test(raw), "a standard font crept in");
       assert.ok(raw.includes(`/URI (${URL_})`), "the studio link is clickable");

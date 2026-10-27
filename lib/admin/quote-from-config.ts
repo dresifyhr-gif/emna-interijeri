@@ -48,10 +48,12 @@ import {
   hasTopBox,
   isPeninsula,
   kitchenRange,
+  ledZoneOn,
   parseRunEnd,
   planKitchen,
   sanitizeConfig,
   tallListEnd,
+  tallSplitOf,
   topDepthOf,
   worktopThickness,
   type PlanSlot,
@@ -67,6 +69,7 @@ import {
   heightScale,
   hoodsCost,
   islandCost,
+  optionsCost,
   railMetres,
   slotHandle,
   topDepthFactor,
@@ -185,7 +188,7 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   const handle = handleDef(c.handles) ?? catalog.handles[0];
   if (!front || !top || !handle) throw new Error("catalogue is empty");
   if (!Array.isArray(plan.slots) || !Array.isArray(plan.runs) || !Array.isArray(plan.pieces)) throw new Error("unexpected plan shape");
-  for (const v of [b.cabinets, b.worktop, b.backsplash, b.handles, b.mechanisms, b.finishes ?? 0, b.led, b.install, b.island, b.glass ?? 0, b.hoods ?? 0, b.rails ?? 0, b.total]) {
+  for (const v of [b.cabinets, b.worktop, b.backsplash, b.handles, b.mechanisms, b.finishes ?? 0, b.led, b.install, b.island, b.glass ?? 0, b.hoods ?? 0, b.rails ?? 0, b.options ?? 0, b.total]) {
     if (!finite(v) || v < 0) throw new Error("unexpected breakdown");
   }
 
@@ -261,7 +264,8 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
   const ic = islandCost(plan);
   // "do stropa": the top cabinets (nadgradni ormarići) on the wall units and above a split tall column, as price.ts counts them
   const topUpper = hs.top > 0 ? cabinetsOnly.filter((s) => s.zone === "upper" && hasTopBox(s.type)) : [];
-  const topTall = hp.tallSplit !== null ? cabinetsOnly.filter((s) => s.zone === "tall") : [];
+  // (tall units in one piece up to the ceiling have no top box: HeightSpec.onePiece / opt.onePiece — their own line below)
+  const topTall = hp.tallSplit !== null ? cabinetsOnly.filter((s) => s.zone === "tall" && tallSplitOf(c, hp, s.opt) !== null) : [];
   if (topUpper.length + topTall.length > 0) {
     const fu = frontOf("upper");
     const u = topUpper.length ? `${topUpper.length} kom iznad gornjih` : "";
@@ -406,6 +410,12 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     const qty = round2(railMetres(plan));
     if (!(qty > 0)) throw new Error("rails without metres");
     lines.push({ description: "Reling s kukama", details: "na zidnoj oblozi ispod gornjih elemenata, s kukama", qty, unit: "m", grossUnit: b.rails / qty });
+  }
+
+  /* ---------------- the "photo" round's options (b.options): one-piece tall units, the Gola channel between drawers, extra drawers */
+  for (const o of optionsCost(plan)) {
+    if (!(o.qty > 0) || !(o.each > 0)) continue;
+    lines.push({ description: o.label, details: o.details, qty: round2(o.qty), unit: o.unit, grossUnit: o.each });
   }
 
   /* ---------------- worktop (walls by the metre, island slab as one piece) */
@@ -597,12 +607,15 @@ function planLines(cfg: KitchenConfig): { lines: DraftLine[]; totalGross: number
     const fixed = Math.min(b.led, catalog.extras.ledFixed);
     const strip = b.led - fixed;
     if (strip > 0.5) {
+      // the zones that are lit (KitchenConfig.ledZones; every older link: all three)
+      const zones = [ledZoneOn(c, "under") ? "ispod gornjih elemenata" : null, ledZoneOn(c, "plinth") ? "u postolju" : null, ledZoneOn(c, "inner") ? "u nišama i vitrinama" : null].filter(Boolean);
+      const where = zones.length === 3 ? "ispod gornjih elemenata, u postolju i nišama" : zones.join(", ");
       lines.push({
         description: "LED rasvjeta – traka",
-        details: "ispod gornjih elemenata, u postolju i nišama",
+        details: where,
         qty: stripM,
         unit: "m",
-        grossUnit: rate(strip, stripM, catalog.extras.ledPerMeter),
+        grossUnit: rate(strip, stripM, c.ledZones ? null : catalog.extras.ledPerMeter),
       });
     }
     if (fixed > 0.5) {

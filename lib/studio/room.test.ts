@@ -215,10 +215,12 @@ describe("tall columns anywhere (tallAt / tallRuns)", () => {
     const b = run(p, "b");
     // the column stands right beside the cabinets: no bare floor or worktop over nothing between them
     const firstCabinet = Math.min(...p.slots.filter((s) => s.run === "b" && s.zone === "base").map((s) => s.x));
-    assert.equal(sbs.x + sbs.width + DIM.panel, firstCabinet);
+    // (a column that is just the niche has no cover panels: the niche's own side panels close it — footprint exactly 96)
+    assert.equal(sbs.x + sbs.width, firstCabinet);
     assert.deepEqual(b.free, []);
     assert.equal(b.worktop!.from, firstCabinet);
-    assert.deepEqual(b.kitchen, { from: firstCabinet - SBS.niche - 2 * DIM.panel, to: 450 }, "the kitchen ends at the column, the rest is bare wall");
+    assert.deepEqual(b.kitchen, { from: firstCabinet - SBS.niche, to: 450 }, "the kitchen ends at the column, the rest is bare wall");
+    assert.equal(p.pieces.filter((x) => x.run === "b" && x.zone === "tall").length, 0, "no cover panels beside the niche");
     // the main column stays on A
     assert.ok(p.slots.some((s) => s.list?.id === "tall" && s.run === "a"));
     assert.deepEqual(roundTrip(r.cfg), r.cfg);
@@ -510,7 +512,8 @@ describe("engine (headless scene graph)", () => {
     const m = K.modules.get("tall-1")!;
     assert.equal(m.slot.type, "hladnjak-sbs");
     const panels = meshBoxes(m.body, (me) => matName(me).startsWith("front("));
-    const doors = meshBoxes(m.fronts, (me) => matName(me) === "appliance");
+    // (the side-by-side wears its own material — FinishSpec.fridge; absent, it looks like the appliance fronts)
+    const doors = meshBoxes(m.fronts, (me) => matName(me) === "fridge");
     const handles = meshBoxes(m.fronts, (me) => matName(me) === "brushed");
     assert.ok(Math.abs(panels.max.z - BASE_FACE) < 0.002, `panels ${panels.max.z}`);
     assert.ok(doors.max.z > BASE_FACE + 0.06, `doors ${doors.max.z}`);

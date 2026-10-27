@@ -14,10 +14,11 @@
  */
 
 import * as THREE from "three";
-import { SBS, cornerFoot, glassFrameDef, moduleDef } from "../catalog";
+import { SBS, SBS_GRIP, cornerFoot, glassFrameDef, moduleDef } from "../catalog";
+import { drawerStack, hobWidthOf, ovenColumn, sinkBowl } from "../fronts";
 import { hasTopBox, type PlanSlot } from "../plan";
-import type { FrontZone, GlassSpec, HandleStyle, HoodKind } from "../types";
-import { BASE_FACE, D, TOP_Y, UPPER_FACE, gripGapOf, lipOf, type EngineHeights } from "./dims";
+import type { ElementOpts, FridgeHandle, FrontZone, GlassSpec, HandleStyle, HoodKind } from "../types";
+import { BASE_FACE, D, TOP_Y, UPPER_FACE, gripGapOf, lipOf, recessOf, type EngineHeights } from "./dims";
 import { boxes, disposeGeometries, mesh, roundedPanel, type BoxSpec, type GeoCache } from "./geo";
 import type { Mat, Materials } from "./materials";
 
@@ -105,6 +106,19 @@ export interface BuildCtx {
   top?: Mat;
   /** this element's own options: floating shelves' boards / LED, a lit unit's LED */
   opt?: { rows: number; led: boolean };
+  /**
+   * the element's own options as stored (CabinetSpec.opt / PlanSlot.opt) — the oven column's variant, the sink bowl's
+   * place, the hob's width (lib/studio/fronts.ts reads them); absent = every older element
+   */
+  el?: ElementOpts;
+  /** drawer units: the split, top → bottom (fronts.ts drawerRatios — KitchenConfig.drawerLayout / opt.drawers); absent = the type's own */
+  drawers?: number[] | null;
+  /** a Gola channel between the drawers (KitchenConfig.gola.between with handleless fronts) */
+  golaMid?: boolean;
+  /** the side-by-side fridge's handles (FinishSpec.fridgeHandle); absent = long bars */
+  fridgeHandle?: FridgeHandle;
+  /** a side-by-side niche alone in its column (plan.ts sbsAlone): the bridge cabinet right above the appliance */
+  sbsAlone?: boolean;
 }
 
 const T = D.board;
@@ -231,8 +245,26 @@ class Mod {
   }
 
   plinth(): void {
-    const me = this.body(boxes([[0.001, 0, 0.03, this.w - 0.001, D.plinth - 0.002, BASE_FACE - D.plinthRecess]], [this.ox, 0, 0]), this.ctx.plinth);
+    const me = this.body(boxes([[0.001, 0, 0.03, this.w - 0.001, D.plinth - 0.002, BASE_FACE - recessOf(this.ctx.h)]], [this.ox, 0, 0]), this.ctx.plinth);
     this.m.plinths.push(me);
+  }
+
+  /**
+   * a drawer unit's drawers (fronts.ts drawerStack: the split top → bottom, and with ctx.golaMid the Gola channel
+   * between them — each lower drawer's front a channel lower, its grip the channel above it)
+   */
+  drawerUnit(y0: number, y1: number, ratios: number[], fz: number, depth: number, fixedTop = false): void {
+    const mid = Boolean(this.ctx.golaMid);
+    if (!mid) {
+      this.drawers(y0, y1, ratios, fz, depth, fixedTop);
+      return;
+    }
+    const st = drawerStack(y0 * 100, y1 * 100, ratios, true);
+    st.fronts.forEach(([a, b], i) => this.drawer(0, this.w, a / 100, b / 100, fz, depth, i * 0.12, fixedTop && i === 0));
+    for (const [a, b] of st.channels) {
+      const me = mesh(boxes([[0, a / 100 + 0.001, D.carcass - 0.03, this.w, b / 100 - 0.001, D.carcass + 0.001]]), this.mats.gola, false, true);
+      this.m.fronts.add(me);
+    }
   }
 
   /** invisible pick volume of an empty-space slot */
@@ -556,8 +588,10 @@ class Mod {
     holder.userData.delay = delay;
     const fw = w - 2 * G;
     const fh = y1 - y0 - 2 * G;
-    const win = mesh(boxes([[-fw / 2 + 0.05, -fh / 2 + 0.05, FT / 2 - 0.001, fw / 2 - 0.05, fh / 2 - 0.09, FT / 2 + 0.0015]]), this.mats.blackGlass, false, true);
+    // the window: smoked glass, a shade lighter than the door (the dark cavity behind it shows), and a steel foot trim
+    const win = mesh(boxes([[-fw / 2 + 0.05, -fh / 2 + 0.06, FT / 2 - 0.001, fw / 2 - 0.05, fh / 2 - 0.09, FT / 2 + 0.0015]]), this.mats.ovenWindow, false, true);
     panel.add(win);
+    panel.add(mesh(boxes([[-fw / 2, -fh / 2, FT / 2 - 0.001, fw / 2, -fh / 2 + 0.03, FT / 2 + 0.001]]), this.mats.brushed, false, true));
     this.bar(panel, "h", fw - 0.14, 0, fh / 2 - 0.03, this.mats.brushed);
   }
 
@@ -566,7 +600,13 @@ class Mod {
     const w = this.w;
     const sh = this.holder("fixed", w / 2, (y0 + y1) / 2, fz, 0, 0);
     const sp = this.panel(sh, w - 2 * G, y1 - y0 - 2 * G, 0, 0, w / 2, (y0 + y1) / 2, fz, this.mats.appliance);
-    sp.add(mesh(boxes([[-0.06, -0.008, FT / 2, 0.06, 0.008, FT / 2 + 0.001]]), this.mats.display, false, false));
+    // three steel knobs left of the middle, a small display on the right, a steel line under the strip
+    const k = 0.014;
+    const knobs: BoxSpec[] = [-0.14, -0.08, -0.02].map((x): BoxSpec => [x - k, -k, FT / 2, x + k, k, FT / 2 + 0.018]);
+    sp.add(mesh(boxes(knobs), this.mats.brushed, false, true));
+    sp.add(mesh(boxes([[0.07, -0.008, FT / 2, 0.15, 0.008, FT / 2 + 0.001]]), this.mats.display, false, false));
+    const hh = (y1 - y0) / 2 - G;
+    sp.add(mesh(boxes([[-(w / 2 - G), -hh, FT / 2 - 0.001, w / 2 - G, -hh + 0.006, FT / 2 + 0.001]]), this.mats.brushed, false, true));
   }
 
   /** built-in microwave between y0 and y1: cavity, side-hinged glass door, control column on the right */
@@ -587,7 +627,7 @@ class Mod {
     const fh = y1 - y0 - 2 * G;
     const h = this.holder("door", G, (y0 + y1) / 2, fz, -1.5, delay);
     const p = this.panel(h, dw, fh, dw / 2, 0, dw / 2, (y0 + y1) / 2, fz, mats.appliance);
-    p.add(mesh(boxes([[-dw / 2 + 0.04, -fh / 2 + 0.04, FT / 2 - 0.001, dw / 2 - 0.04, fh / 2 - 0.04, FT / 2 + 0.0015]]), mats.blackGlass, false, true));
+    p.add(mesh(boxes([[-dw / 2 + 0.04, -fh / 2 + 0.04, FT / 2 - 0.001, dw / 2 - 0.04, fh / 2 - 0.04, FT / 2 + 0.0015]]), mats.ovenWindow, false, true));
   }
 
   // ---------------------------------------------------- props
@@ -719,9 +759,11 @@ function buildBase(b: Mod, includeBody: boolean): void {
     }
 
     if (type === "sudoper") {
-      const wide = w >= 0.99;
-      const bw = Math.min(w - 0.14, wide ? 0.86 : 0.7);
-      const xc = w / 2;
+      // the bowl centred (every older sink) or at one side of its cabinet (ElementOpts.bowl): fronts.ts sinkBowl
+      const sb = sinkBowl(w * 100, ctx.el);
+      const wide = sb.wide;
+      const bw = (sb.x1 - sb.x0) / 100;
+      const xc = (sb.x0 + sb.x1) / 200;
       const z0 = 0.12;
       const z1 = 0.52;
       const depth = 0.2;
@@ -757,7 +799,8 @@ function buildBase(b: Mod, includeBody: boolean): void {
     }
 
     if (type === "ploca" || type === "ploca-pecnica") {
-      const hw = Math.min(w >= 0.99 ? 0.88 : w >= 0.8 ? 0.78 : 0.58, w - 0.04);
+      // the hob as the cabinet takes it, or of its own width (ElementOpts.hob: a 60 cm hob in a 90 cm cabinet)
+      const hw = hobWidthOf(w * 100, ctx.el) / 100;
       const hob = mesh(new THREE.BoxGeometry(hw, 0.006, 0.51), mats.hob);
       hob.position.set(w / 2, workY(ctx) + 0.003, 0.33);
       m.extras.add(hob);
@@ -791,14 +834,15 @@ function buildBase(b: Mod, includeBody: boolean): void {
   }
 
   switch (type) {
+    // (the split: KitchenConfig.drawerLayout / opt.drawers, else the type's own — fronts.ts drawerRatios)
     case "ladice":
-      b.drawers(yb, yt, [0.22, 0.39, 0.39], fz, 0.47);
+      b.drawerUnit(yb, yt, ctx.drawers ?? [0.22, 0.39, 0.39], fz, 0.47);
       break;
     case "ladice2":
-      b.drawers(yb, yt, [0.5, 0.5], fz, 0.47);
+      b.drawerUnit(yb, yt, ctx.drawers ?? [0.5, 0.5], fz, 0.47);
       break;
     case "ladice4":
-      b.drawers(yb, yt, [0.19, 0.27, 0.27, 0.27], fz, 0.47);
+      b.drawerUnit(yb, yt, ctx.drawers ?? [0.19, 0.27, 0.27, 0.27], fz, 0.47);
       break;
     case "ladice-unutarnja": {
       const H = yt - yb;
@@ -821,7 +865,7 @@ function buildBase(b: Mod, includeBody: boolean): void {
       break;
     }
     case "ploca":
-      b.drawers(yb, yt, [0.22, 0.39, 0.39], fz, 0.47, true);
+      b.drawerUnit(yb, yt, ctx.drawers ?? [0.22, 0.39, 0.39], fz, 0.47, true);
       break;
     case "ploca-pecnica":
     case "pecnica-donja": {
@@ -1030,7 +1074,7 @@ function buildShapedCorner(b: Mod, zone: "base" | "upper", includeBody: boolean)
   if (includeBody) {
     if (base) {
       // plinth under both legs, set back like every plinth
-      const r = D.plinthRecess;
+      const r = recessOf(ctx.h);
       const pl = b.body(
         boxes([bx(0.001, 0, 0.03, w - 0.001, D.plinth - 0.002, BASE_FACE - r), bx(0.03, 0, BASE_FACE - r, BASE_FACE - r, D.plinth - 0.002, across - 0.001)], [b.ox, 0, 0]),
         ctx.plinth,
@@ -1657,7 +1701,8 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
   const y0 = D.plinth;
   const Hc = y1 - y0;
   const fridgeLine = y1 - Math.max(0.2, Hc - Math.min(0.72, Hc * 0.34) - 1.02);
-  const bridge0 = Math.min(Math.max(aTop + cmm(SBS.topGap), fridgeLine), y1 - 0.12);
+  // (alone in its column there is no such line: right above the appliance)
+  const bridge0 = Math.min(ctx.sbsAlone ? aTop + cmm(SBS.topGap) : Math.max(aTop + cmm(SBS.topGap), fridgeLine), y1 - 0.12);
   const split = ax0 + aw * 0.44;
   const fz = BASE_FZ;
 
@@ -1668,7 +1713,8 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
       [w - P, f0, 0, w - 0.001, y1, pd],
     ]);
     // the appliance: body (its front ~1 cm proud of the panels), feet and a dark ventilation grille at the bottom
-    b.body(boxes([[ax0, f0 + 0.012, zBody0, ax1, aTop, zBody]]), mats.appliance);
+    // (the fridge in its own finish: FinishSpec.fridge — absent, the material wears the appliance finish)
+    b.body(boxes([[ax0, f0 + 0.012, zBody0, ax1, aTop, zBody]]), mats.fridge);
     b.body(boxes([[ax0 + 0.02, f0, zBody - 0.02, ax1 - 0.02, f0 + 0.012, zBody + 0.002]]), mats.trim);
     // interior (seen with the doors open): white liner, a divider, glass shelves on the fridge side,
     // baskets on the freezer side, and a cool light strip at the top of each compartment
@@ -1711,7 +1757,7 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
     const px = hinge === "left" ? x0 : x1;
     const h = b.holder("door", px, dy0 + doorH / 2, zDoor, hinge === "left" ? -1.45 : 1.45, delay);
     const lx = hinge === "left" ? fw / 2 : -fw / 2;
-    const door = mesh(boxes([[-fw / 2, -doorH / 2, -doorT, fw / 2, doorH / 2, 0]]), mats.appliance);
+    const door = mesh(boxes([[-fw / 2, -doorH / 2, -doorT, fw / 2, doorH / 2, 0]]), mats.fridge);
     door.position.set(lx, 0, 0);
     h.add(door);
     // inner door bins (swing with the door; closed, they sit inside the body)
@@ -1724,21 +1770,42 @@ function buildSbs(b: Mod, includeBody: boolean, y1: number): void {
     const bm = mesh(boxes(bins), mats.liner);
     bm.position.set(lx, 0, 0);
     h.add(bm);
-    // vertical bar handle on the free edge, standing off the door
+    // vertical bar handle on the free edge, standing off the door — or a recessed grip cut into that edge
+    // (FinishSpec.fridgeHandle "udubljena": nothing stands out)
     const free = hinge === "left" ? fw / 2 - 0.03 : -fw / 2 + 0.03;
     const L = Math.min(1.1, doorH * 0.62);
     const hd = cmm(SBS.handleDepth);
-    const bar = mesh(
-      boxes([
-        [free - 0.009, -L / 2, hd - 0.014, free + 0.009, L / 2, hd],
-        [free - 0.006, -L / 2 + 0.03, 0, free + 0.006, -L / 2 + 0.045, hd - 0.014],
-        [free - 0.006, L / 2 - 0.045, 0, free + 0.006, L / 2 - 0.03, hd - 0.014],
-      ]),
-      mats.brushed,
-    );
-    bar.position.set(lx, 0.05, 0);
-    h.add(bar);
-    if (dispenser) {
+    if (ctx.fridgeHandle === "udubljena") {
+      // (a hand's-length pocket at hand height, as recessed side-by-side doors have: SBS_GRIP)
+      const edge = hinge === "left" ? fw / 2 : -fw / 2;
+      const gx0 = hinge === "left" ? edge - 0.024 : edge;
+      const gl = cmm(SBS_GRIP.length);
+      const groove = mesh(boxes([[gx0, -gl / 2, -0.014, gx0 + 0.024, gl / 2, 0.0006]]), mats.trim, false, true);
+      groove.position.set(lx, cmm(SBS_GRIP.centre) - (dy0 - f0) - doorH / 2, 0);
+      h.add(groove);
+    } else {
+      const bar = mesh(
+        boxes([
+          [free - 0.009, -L / 2, hd - 0.014, free + 0.009, L / 2, hd],
+          [free - 0.006, -L / 2 + 0.03, 0, free + 0.006, -L / 2 + 0.045, hd - 0.014],
+          [free - 0.006, L / 2 - 0.045, 0, free + 0.006, L / 2 - 0.03, hd - 0.014],
+        ]),
+        mats.brushed,
+      );
+      bar.position.set(lx, 0.05, 0);
+      h.add(bar);
+    }
+    if (dispenser && ctx.fridgeHandle === "udubljena") {
+      // flat doors with recessed grips: a slim touch display in the freezer door at eye level, no dispenser
+      const dx = lx + (hinge === "left" ? fw * 0.1 : -fw * 0.1);
+      const pnl = mesh(boxes([[-0.026, -0.105, 0.0005, 0.026, 0.105, 0.003]]), mats.blackGlass, false, true);
+      const dyc = cmm(SBS_GRIP.display) - (dy0 - f0) - doorH / 2;
+      pnl.position.set(dx, dyc, 0);
+      h.add(pnl);
+      const scr = mesh(boxes([[-0.012, 0.06, 0.003, 0.012, 0.085, 0.0035]]), mats.display, false, false);
+      scr.position.set(dx, dyc, 0);
+      h.add(scr);
+    } else if (dispenser) {
       // water / ice dispenser in the freezer door
       const dx = lx + (hinge === "left" ? fw * 0.05 : -fw * 0.05);
       const disp = mesh(boxes([[-0.075, -0.15, 0.0005, 0.075, 0.13, 0.003]]), mats.blackGlass, false, true);
@@ -1798,30 +1865,30 @@ function buildTall(b: Mod, includeBody: boolean): void {
   const top = Math.max(0.2, H - freezer - 1.02);
   const fridge = H - freezer - top;
 
-  const drawerH = Math.min(0.29, H * 0.14);
-  const ovenH = 0.595;
-  const strip = 0.09;
-  const ovenY0 = y0 + 2 * drawerH;
-  const ovenY1 = Math.min(y1 - 0.2, ovenY0 + ovenH);
-  // oven + microwave column
-  const microH = 0.38;
-  const microY0 = ovenY1;
-  const microY1 = Math.min(y1 - 0.12, microY0 + microH);
+  // oven columns: drawers / a door under the oven, the oven low / standard / at eye level, the microwave above
+  // (lib/studio/fronts.ts ovenColumn, cm — the 2D drawings use the same numbers; absent options = every older column)
+  const isOven = type === "pecnica" || type === "pecnica-mikro";
+  const workLocal = ctx.h ? ctx.h.workY - ctx.h.lift : TOP_Y + D.worktopT;
+  const oc = isOven ? ovenColumn(y0 * 100, y1 * 100, workLocal * 100, type === "pecnica-mikro", ctx.el) : null;
+  const ovenY0 = oc ? oc.oven[0] / 100 : 0;
+  const ovenY1 = oc ? oc.strip[1] / 100 : 0;
+  const microY1 = oc?.micro ? oc.micro[1] / 100 : ovenY1;
   const washerH = 0.85;
 
   if (includeBody) {
     b.plinth();
+    const below = oc?.door ? [y0 + (ovenY0 - y0) * 0.5] : [];
     const shelves =
       type === "pecnica"
-        ? [ovenY1 + (y1 - ovenY1) * 0.5]
+        ? [...below, ovenY1 + (y1 - ovenY1) * 0.5]
         : type === "ormar"
           ? [0.2, 0.4, 0.6, 0.8].map((f) => y0 + H * f)
           : type === "metle"
             ? [y1 - 0.36]
             : type === "perilica-rublja"
               ? [y0 + washerH + 0.02, y0 + washerH + (H - washerH) * 0.5]
-              : type === "pecnica-mikro" && microY1 < y1 - 0.15
-                ? [microY1 + 0.002]
+              : type === "pecnica-mikro"
+                ? [...below, ...(microY1 < y1 - 0.15 ? [microY1 + 0.002] : [])]
                 : [];
     b.carcass(carcassBoxes(w, y0, H, D.carcass, { shelves }));
     if (type === "hladnjak") {
@@ -1850,7 +1917,7 @@ function buildTall(b: Mod, includeBody: boolean): void {
         mats.trim,
       );
     }
-    if (type === "pecnica" || type === "pecnica-mikro") b.ovenCavity(ovenY0, ovenY1 - strip);
+    if (oc) b.ovenCavity(oc.oven[0] / 100, oc.oven[1] / 100);
     if (type === "perilica-rublja") {
       // the washing machine behind the lower door: white body, steel porthole ring, dark glass
       const mx0 = T + 0.012;
@@ -1888,21 +1955,15 @@ function buildTall(b: Mod, includeBody: boolean): void {
       b.door(0, w, y0 + freezer + fridge, y1, fz, hinge, "bottom", 0.2);
       break;
     }
-    case "pecnica": {
-      b.drawer(0, w, y0 + drawerH, y0 + 2 * drawerH, fz, 0.47, 0.18);
-      b.drawer(0, w, y0, y0 + drawerH, fz, 0.47, 0.28);
-      b.controlStrip(ovenY1 - strip, ovenY1, fz);
-      b.ovenDoor(ovenY0, ovenY1 - strip, fz);
-      if (y1 - ovenY1 > 0.15) b.door(0, w, ovenY1, y1, fz, hinge, "bottom", 0.1);
-      break;
-    }
+    case "pecnica":
     case "pecnica-mikro": {
-      b.drawer(0, w, y0 + drawerH, y0 + 2 * drawerH, fz, 0.47, 0.18);
-      b.drawer(0, w, y0, y0 + drawerH, fz, 0.47, 0.28);
-      b.controlStrip(ovenY1 - strip, ovenY1, fz);
-      b.ovenDoor(ovenY0, ovenY1 - strip, fz);
-      b.microwave(microY0, microY1, fz, 0.12, D.carcass, includeBody);
-      if (y1 - microY1 > 0.12) b.door(0, w, microY1, y1, fz, hinge, "bottom", 0.22);
+      if (!oc) break;
+      oc.drawers.forEach(([a, c], i) => b.drawer(0, w, a / 100, c / 100, fz, 0.47, 0.18 + i * 0.1));
+      if (oc.door) b.door(0, w, oc.door[0] / 100, oc.door[1] / 100, fz, hinge, "top", 0.18);
+      b.controlStrip(oc.strip[0] / 100, oc.strip[1] / 100, fz);
+      b.ovenDoor(oc.oven[0] / 100, oc.oven[1] / 100, fz);
+      if (oc.micro) b.microwave(oc.micro[0] / 100, oc.micro[1] / 100, fz, 0.12, D.carcass, includeBody);
+      if (oc.above) b.door(0, w, oc.above[0] / 100, oc.above[1] / 100, fz, hinge, "bottom", oc.micro ? 0.22 : 0.1);
       break;
     }
     case "smocnica": {
@@ -2023,7 +2084,7 @@ export function createModule(ctx: BuildCtx, slot: PlanSlot): ModuleRT {
   build(ctx, m, true);
   if (lift > 0.001 && !m.ghost && !isSbs(slot.type)) {
     // the plinth below the standard 10 cm one
-    const skirt = mesh(boxes([[0.001, -lift, 0.03, slot.width / 100 - 0.001, 0.0005, BASE_FACE - D.plinthRecess]], [slot.x / 100, 0, 0]), ctx.plinth);
+    const skirt = mesh(boxes([[0.001, -lift, 0.03, slot.width / 100 - 0.001, 0.0005, BASE_FACE - recessOf(ctx.h)]], [slot.x / 100, 0, 0]), ctx.plinth);
     m.body.add(skirt);
     m.plinths.push(skirt);
     collectPickables(m);

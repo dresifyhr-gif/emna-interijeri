@@ -11,13 +11,16 @@
 
 import * as THREE from "three";
 import { hoodFinishDef, moduleDef } from "../catalog";
+import { drawerRatios, golaBetween } from "../fronts";
 import {
   DIM,
   backsplashOfCfg,
   glassOf,
   hoodKindOf,
   openingOf,
+  sbsAlone,
   shelvesOf,
+  tallSplitOf,
   topDepthOf,
   type IslandPlan,
   type KitchenPlan,
@@ -28,7 +31,7 @@ import {
   type WallHoodPlan,
 } from "../plan";
 import type { FrontZone, HandleStyle, WallId } from "../types";
-import { BASE_FACE, D, UPPER_FACE, cm, gripGapOf, heightsOf, lipOf } from "./dims";
+import { BASE_FACE, D, UPPER_FACE, cm, gripGapOf, heightsOf, lipOf, recessOf } from "./dims";
 import { boxes, disposeGeometries, mesh, type BoxSpec, type GeoCache } from "./geo";
 import { dimLine, type DimLabel } from "./labels";
 import type { LedLight, WindowLight } from "./lights";
@@ -148,7 +151,7 @@ export const pieceZone = (p: PlanPiece): FrontZone => (p.run === "isl" ? "island
 /** the plinth material of a zone for a plinth finish */
 export function plinthMat(env: Pick<KitchenEnv, "mats" | "fronts" | "plinth">, zone: FrontZone): THREE.Material {
   if (env.plinth === "fronta") return env.mats.front(env.fronts[zone === "upper" ? "base" : zone]);
-  if (env.plinth === "inox") return env.mats.plinthSteel;
+  if (env.plinth === "inox" || env.plinth === "alu") return env.mats.plinthSteel;
   return env.mats.plinth;
 }
 
@@ -171,8 +174,13 @@ export function moduleCtx(env: ModuleEnv, plan: KitchenPlan, run: RunRT | undefi
   const centre = run ? run.center : 0;
   const mid = cm(slot.x + slot.width / 2);
   const fid = env.fronts[slot.zone];
-  const h = heightsOf(plan);
+  const h0 = heightsOf(plan);
   const c = plan.cfg;
+  // a tall unit in one piece up to the ceiling (HeightSpec.onePiece / opt.onePiece): no split, no top box
+  const split = slot.zone === "tall" ? tallSplitOf(c, plan.heights, slot.opt) : null;
+  const h = slot.zone === "tall" && split === null && h0.tallSplit !== null ? { ...h0, tallSplit: null } : h0;
+  // the element's own opening style (opt.open) or its zone's (KitchenConfig.zoneHandles), else the kitchen's as the scene shows it
+  const handles = slot.opt?.open || c.zoneHandles?.[slot.zone] ? openingOf(c, slot.opt, slot.zone) : env.handles;
   const def = moduleDef(slot.zone, slot.type);
   // what the element has of its own (CabinetSpec.opt) over the kitchen's settings — plan.ts resolves it, PlanSlot.look keys it
   const extra: Partial<BuildCtx> = {};
@@ -181,6 +189,18 @@ export function moduleCtx(env: ModuleEnv, plan: KitchenPlan, run: RunRT | undefi
   if (def?.feature === "hob") extra.hood = hoodKindOf(c, slot.opt);
   if (def?.worktopMaterial) extra.top = mats.top(env.topId ?? c.top);
   if (def?.rows || def?.lit) extra.opt = shelvesOf(slot.opt);
+  // the "photo" round: the element's own options as stored (oven column, sink bowl, hob width), the drawer split and the
+  // Gola channel between drawers, the side-by-side fridge's handles — each only where it applies
+  if (slot.opt) extra.el = slot.opt;
+  if (slot.zone !== "upper" && slot.zone !== "tall") {
+    const r = drawerRatios(c, slot.type, slot.opt);
+    if (r) {
+      extra.drawers = r;
+      if (golaBetween(c, handles)) extra.golaMid = true;
+    }
+  }
+  if (slot.zone === "tall" && c.finish?.fridgeHandle) extra.fridgeHandle = c.finish.fridgeHandle;
+  if (sbsAlone(plan.slots, slot)) extra.sbsAlone = true;
   return {
     ...extra,
     mats,
@@ -188,8 +208,7 @@ export function moduleCtx(env: ModuleEnv, plan: KitchenPlan, run: RunRT | undefi
     front: mats.front(fid),
     carcass: mats.carcass(fid),
     plinth: plinthMat(env, slot.zone),
-    // the element's own opening style (opt.open), else the kitchen's as the scene shows it
-    handles: slot.opt?.open ? openingOf(c, slot.opt) : env.handles,
+    handles,
     ub: h.ub,
     // tall units: the top of the unit itself, module-local (the module stands h.lift higher; a top box above
     // h.tallSplit and the cornice are drawn by modules.ts buildHeightExtras)
@@ -474,6 +493,33 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     K.walls.push({ id: r.wall, group: wg, mesh: wall });
     tl.add(wg, "growY", wi * 0.1 * s, 1.1 * k);
   });
+  // room walls without a kitchen (KitchenConfig.room.bare): plain walls in the frame a kitchen run on them would have
+  // (B: from the entrance to the corner with A, C: from the corner with A to the entrance) — no run, no "+"
+  const bareGroups: { wall: WallId; group: THREE.Group; length: number }[] = [];
+  (plan.bareWalls ?? []).forEach((bw, i) => {
+    const len = cm(bw.length);
+    const g = new THREE.Group();
+    if (bw.wall === "b") {
+      g.position.set(0, 0, len);
+      g.rotation.y = Math.PI / 2;
+    } else {
+      g.position.set(A, 0, 0);
+      g.rotation.y = -Math.PI / 2;
+    }
+    root.add(g);
+    const T = D.wallT;
+    const x0 = bw.wall === "b" ? -D.wallExtend : 0;
+    const x1 = bw.wall === "b" ? len : len + D.wallExtend;
+    const wg = new THREE.Group();
+    const wall = mesh(boxes([[x0, 0, -T, x1, ceil, 0]]), env.wallMat ? env.wallMat(bw.wall) : mats.wall, true, true);
+    wall.userData.surface = { surface: "wall", wall: bw.wall };
+    wg.add(wall);
+    g.add(wg);
+    K.walls.push({ id: bw.wall, group: wg, mesh: wall });
+    wallExt.push({ run: bw.wall, x0, x1 });
+    bareGroups.push({ wall: bw.wall, group: g, length: len });
+    tl.add(wg, "growY", (plan.runs.length + i) * 0.1 * s, 1.1 * k);
+  });
 
   // ---- modules
   const tBase0 = 0.55 * s;
@@ -667,7 +713,7 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     // plinth LED
     const lg = new THREE.Group();
     lg.position.x = cm(I.body.from) + 0.02;
-    const z = BASE_FACE - D.plinthRecess;
+    const z = BASE_FACE - recessOf(H);
     const ledLen = cm(I.body.to - I.body.from) - 0.04;
     const strip = mesh(boxes([[0, 0.004, z + 0.001, ledLen, 0.009, z + 0.007]]), ledMat, false, false);
     lg.add(strip);
@@ -740,6 +786,12 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
       K.labels.push({ ...d, wall: r.wall, kind: "room" });
       labelAt(d, 0.1);
     }
+    // a bare room wall's length (the room's depth): a room label like the others
+    for (const bw of bareGroups) {
+      const d = dimLine(doc, bw.group, 0, bw.length, labelY, 0.42, bw.wall.toUpperCase(), Math.round(bw.length * 100), mats.dim);
+      K.labels.push({ ...d, wall: bw.wall, kind: "room" });
+      labelAt(d, 0.1);
+    }
     if (plan.island && islandGroup) {
       const I = plan.island;
       const L = cm(I.length);
@@ -805,11 +857,13 @@ export function buildKitchen(env: KitchenEnv, plan: KitchenPlan): KitchenRT {
     const run = K.runs.get(r.wall)!;
     for (const x of [0, run.length]) for (const y of [0, frameTop]) for (const z of [0, BASE_FACE + 0.3]) frame.expandByPoint(run.group.localToWorld(pt.set(x, y, z)));
   }
+  for (const bw of bareGroups) for (const x of [0, bw.length]) for (const y of [0, frameTop]) frame.expandByPoint(bw.group.localToWorld(pt.set(x, y, 0)));
   K.frame = frame;
   const roomBox = box.clone();
   for (const w of wallExt) {
-    const run = K.runs.get(w.run)!;
-    for (const x of [w.x0, w.x1]) for (const y of [0, ceil]) roomBox.expandByPoint(run.group.localToWorld(pt.set(x, y, 0)));
+    const obj = K.runs.get(w.run)?.group ?? bareGroups.find((b) => b.wall === w.run)?.group;
+    if (!obj) continue;
+    for (const x of [w.x0, w.x1]) for (const y of [0, ceil]) roomBox.expandByPoint(obj.localToWorld(pt.set(x, y, 0)));
   }
   K.room = roomBox;
 
@@ -964,7 +1018,7 @@ function plinthLedGroup(K: KitchenRT, r: RunPlan, mats: Materials): THREE.Group 
   const g0 = ranges[0][0];
   const g = new THREE.Group();
   g.position.x = g0;
-  const z = BASE_FACE - D.plinthRecess;
+  const z = BASE_FACE - recessOf(heightsOf(K.plan));
   for (const [x0, x1] of ranges) {
     const strip = mesh(boxes([[x0 - g0, 0.004, z + 0.001, x1 - g0, 0.009, z + 0.007]]), mats.led, false, false);
     g.add(strip);
@@ -1070,10 +1124,15 @@ export function syncRunSurfaces(K: KitchenRT, mats: Materials, plan: KitchenPlan
   return changed;
 }
 
+/** where the strip under the wall units sits (m from the wall, run frame): at the back, in front of the backsplash */
+const LED_UNDER_Z = 0.02;
+
 /** area lights wanted by the LED strips, most important first (world space) */
-export function ledLights(K: KitchenRT, max: number): LedLight[] {
+export function ledLights(K: KitchenRT, max: number, lit: (kind: LedZone["kind"]) => boolean = () => true): LedLight[] {
   const out: LedLight[] = [];
   const pick = (kind: LedZone["kind"], power: number, dir: THREE.Vector3) => {
+    // (a zone switched off — KitchenConfig.ledZones — gets no area light)
+    if (!lit(kind)) return;
     const zones = K.leds.filter((z) => z.kind === kind && z.mesh.parent).sort((a, b) => b.length - a.length);
     for (const z of zones) {
       if (out.length >= max) return;
@@ -1087,7 +1146,8 @@ export function ledLights(K: KitchenRT, max: number): LedLight[] {
       out.push({ center: wc, dir: wd, width: z.length, height: kind === "inner" ? 0.03 : 0.04, power });
     }
   };
-  pick("under", 1, new THREE.Vector3(0, -1, 0));
+  // (tilted a little towards the wall: the backsplash right under the wall units glows, as in a photo)
+  pick("under", 1, new THREE.Vector3(0, -1, -0.3));
   pick("inner", 0.45, new THREE.Vector3(0, -1, 0));
   pick("plinth", 0.55, new THREE.Vector3(0, -1, 0.35));
   return out;
@@ -1104,7 +1164,8 @@ export function underLeds(K: KitchenRT, r: RunPlan, ub: number, mats: Materials)
     if (x1 - x0 < 0.15) continue;
     const g = new THREE.Group();
     g.position.x = x0;
-    const strip = mesh(boxes([[0, ub - 0.006, 0.262, x1 - x0, ub - 0.0012, 0.276]]), mats.led, false, false);
+    // (at the back, against the backsplash: it washes the wall and the worktop below with light, as fitted kitchens do)
+    const strip = mesh(boxes([[0, ub - 0.006, LED_UNDER_Z, x1 - x0, ub - 0.0012, LED_UNDER_Z + 0.014]]), mats.led, false, false);
     g.add(strip);
     run.group.add(g);
     K.leds.push({ mesh: strip, length: x1 - x0, kind: "under" });
@@ -1140,10 +1201,13 @@ function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPl
   const up = H.cornice ? H.cornice.y1 : ut;
   const tallUp = H.cornice ? H.cornice.y1 : H.tallTop;
   const TOP_Y = H.topY;
-  const gola = env.handles === "bez";
+  // (a zone that opens its own way — KitchenConfig.zoneHandles — dresses its fillers so too)
+  const zh = plan.cfg.zoneHandles?.[pieceZone(p)];
+  const handles = zh ?? env.handles;
+  const gola = handles === "bez";
   // the Gola lip / the finger gap ("luft") below the wall units, the channel / gap under the worktop
-  const lip = lipOf(env.handles);
-  const gripGap = gripGapOf(env.handles);
+  const lip = lipOf(handles);
+  const gripGap = gripGapOf(handles);
   // a "do stropa" top row deeper / shallower than the wall units (HeightSpec.topDepth): its stretch of a piece steps out
   const rowFace = H.topRow && Math.abs(H.topDepth - 0.35) > 1e-6 ? UPPER_FACE + (H.topDepth - 0.35) : null;
   const cx = cm(p.x + p.width / 2);
@@ -1175,7 +1239,7 @@ function fillPiece(g: THREE.Group, p: PlanPiece, env: ModuleEnv, plan: KitchenPl
   } else {
     fm.push([x0 + 0.0015, H.plinth + 0.0015, D.carcass + D.frontOff, x1 - 0.0015, TOP_Y - gripGap - 0.0015, BASE_FACE]);
     cs.push([x0 + 0.001, H.plinth, 0.004, x1 - 0.001, TOP_Y, D.carcass]);
-    const pm = mesh(boxes([[x0 + 0.001, 0, 0.03, x1 - 0.001, H.plinth - 0.002, BASE_FACE - D.plinthRecess]], uv), plinthMat(env, zone));
+    const pm = mesh(boxes([[x0 + 0.001, 0, 0.03, x1 - 0.001, H.plinth - 0.002, BASE_FACE - recessOf(H)]], uv), plinthMat(env, zone));
     pm.userData.fz = zone;
     g.add(pm);
     plinth.push(pm);
@@ -1344,7 +1408,7 @@ function buildIslandExtras(K: KitchenRT, env: KitchenEnv, I: IslandPlan): Island
     K.carcassPieces.push(cm1);
     K.islandParts.carcass.push(cm1);
     g.add(cm1, asFront(mesh(boxes(doors), front)));
-    const pl = mesh(boxes([[cm(r.from) + 0.001, 0, -bd + D.plinthRecess, cm(r.to) - 0.001, H.plinth - 0.002, -0.03]]), plinthMat(env, "island"));
+    const pl = mesh(boxes([[cm(r.from) + 0.001, 0, -bd + recessOf(H), cm(r.to) - 0.001, H.plinth - 0.002, -0.03]]), plinthMat(env, "island"));
     pl.userData.fz = "island";
     K.plinthPieces.push(pl);
     K.islandParts.plinth.push(pl);

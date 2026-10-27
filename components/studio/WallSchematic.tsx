@@ -2,8 +2,9 @@
  * Live top view of the room, to scale: the room's walls A / B / C (thick lines, the window as a gap), the kitchen run on
  * each wall where it actually stands (RunPlan.kitchen — it need not take the whole wall), its tall columns, bare floor
  * an edited run leaves free (dashed), and the island or peninsula with its seats and bar, placed through
- * IslandPlan.frame. The part being edited glows in the accent colour: a wall (`a`), the kitchen on it (`k-a`), the
- * window, the island, the ceiling (nothing to draw from above).
+ * IslandPlan.frame. Room walls without a kitchen (KitchenPlan.bareWalls — an L kitchen in a closed room) are drawn as
+ * walls with their length, nothing in front of them. The part being edited glows in the accent colour: a wall (`a`), the
+ * kitchen on it (`k-a`), the window, the island, the ceiling (nothing to draw from above).
  */
 import { DIM, type IslandPlan, type IslandRect, type KitchenPlan } from "@/lib/studio/plan";
 import type { WallId } from "@/lib/studio/types";
@@ -32,7 +33,10 @@ const rectPts = (I: IslandPlan, r: IslandRect): Pt[] => [
 ];
 
 export function WallSchematic({ plan, focus, className = "" }: { plan: KitchenPlan; focus: SchematicFocus; className?: string }) {
-  const { cfg, walls } = plan;
+  const { cfg } = plan;
+  const bareWalls = (plan.bareWalls ?? []).map((x) => x.wall);
+  /** every wall of the room: the kitchen's and the bare ones, A → C */
+  const walls = (["a", "b", "c"] as WallId[]).filter((w) => plan.walls.includes(w) || bareWalls.includes(w));
   const a = cfg.walls.a;
   const b = walls.includes("b") ? cfg.walls.b : 0;
   const c = walls.includes("c") ? cfg.walls.c : 0;
@@ -87,8 +91,10 @@ export function WallSchematic({ plan, focus, className = "" }: { plan: KitchenPl
   const labelAt = (wall: WallId): { p: Pt; side: "center" | "right" | "left" } => {
     const len = cfg.walls[wall];
     if (wall === "a") return { p: P(local("a", len / 2, -13 / scale)), side: "center" };
-    if (wall === "b") return { p: P(local("b", len * 0.62, DIM.baseDepth + 9 / scale)), side: "right" };
-    return { p: P(local("c", len * 0.62, DIM.baseDepth + 9 / scale)), side: "left" };
+    // (a bare wall has nothing in front of it: the label right beside the wall)
+    const d = bareWalls.includes(wall) ? 11 / scale : DIM.baseDepth + 9 / scale;
+    if (wall === "b") return { p: P(local("b", len * 0.62, d)), side: "right" };
+    return { p: P(local("c", len * 0.62, d)), side: "left" };
   };
 
   const hot = (k: SchematicFocus) => focus === k;
@@ -108,6 +114,7 @@ export function WallSchematic({ plan, focus, className = "" }: { plan: KitchenPl
         .map((w) => {
           const r = plan.runs.find((x) => x.wall === w);
           const k = r ? Math.round(r.kitchen.to - r.kitchen.from) : cfg.walls[w];
+          if (bareWalls.includes(w)) return `zid ${w.toUpperCase()} ${cfg.walls[w]} cm, bez kuhinje`;
           return `zid ${w.toUpperCase()} ${cfg.walls[w]} cm${k < cfg.walls[w] ? `, kuhinja na njemu ${k} cm` : ""}`;
         })
         .join("; ")}${win ? `; prozor na zidu ${win.wall.toUpperCase()}` : ""}${isl ? `; ${isl.kind === "poluotok" ? "poluotok" : "otok"} ${cfg.island} cm` : ""}`}

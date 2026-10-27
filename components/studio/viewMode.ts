@@ -2,15 +2,16 @@
 
 /**
  * The studio's view — "3D" (the engine), "Tlocrt" (the floor plan) or "Nacrt" (a wall's elevation, the island's working
- * side) — remembered for this visit (sessionStorage; in memory only when storage is blocked), and the hub the 2D view
- * tells the overlays through.
+ * side) — and in 3D where the camera stands ("3D studio", "Iz prostorije", "Frontalno", "Odozgo": StudioEngineApi.setView),
+ * remembered for this visit (sessionStorage; in memory only when storage is blocked), the view switch's rows, and the hub
+ * the 2D view tells the overlays through.
  *
  * The overlays over the kitchen (element toolbar, "+" markers, the selection leader) read where things are on screen from
  * a ViewSource: the 3D engine's api, or in 2D the ViewHub that PlanView publishes its ViewInfo to — the same shape, so the
  * toolbar and the "+" work on the drawing exactly as they do in 3D.
  */
 import { useSyncExternalStore } from "react";
-import type { ViewInfo, WallId } from "@/lib/studio/types";
+import type { ViewInfo, ViewPreset, WallId } from "@/lib/studio/types";
 import type { ViewSource } from "./overlay";
 
 export type StudioView = "3d" | "tlocrt" | "nacrt";
@@ -52,6 +53,15 @@ function sessionValue<T extends string>(key: string, parse: (raw: string | null)
   return { read, set, useValue };
 }
 
+/** the view switch's rows (px): the gap under the top bar, one row, the gap between rows (ViewSwitch) */
+export const VIEW_DOCK = { desktop: { top: 12, row: 42, gap: 8 }, docked: { top: 8, row: 50, gap: 6 } } as const;
+
+/** px the view switch takes under the top bar; `second` = its second row shows (the camera presets in 3D, the walls of "Nacrt") */
+export function viewDockHeight(docked: boolean, second: boolean): number {
+  const g = docked ? VIEW_DOCK.docked : VIEW_DOCK.desktop;
+  return g.top + g.row + (second ? g.gap + g.row : 0);
+}
+
 const view = sessionValue<StudioView>("emna-studio-view", (raw) => (raw === "tlocrt" || raw === "nacrt" ? raw : "3d"), "3d");
 export const setStudioView = view.set;
 /** the remembered view, read straight away (client only — not for rendering: the server renders "3d") */
@@ -61,6 +71,16 @@ export const useStudioView = view.useValue;
 const nacrt = sessionValue<NacrtPick>("emna-studio-nacrt", (raw) => (raw === "b" || raw === "c" || raw === "isl" ? raw : "a"), "a");
 export const setNacrtPick = nacrt.set;
 export const useNacrtPick = nacrt.useValue;
+
+/**
+ * where the 3D camera stands (StudioEngineApi.setView): "studio" orbits the kitchen as always, "prostorija" stands in the
+ * room's entrance at eye level, "frontalno" looks straight at wall A, "odozgo" from above — remembered for the visit
+ */
+export const parseCameraPreset = (raw: string | null): ViewPreset =>
+  raw === "prostorija" || raw === "frontalno" || raw === "odozgo" ? raw : "studio";
+const camera = sessionValue<ViewPreset>("emna-studio-camera", parseCameraPreset, "studio");
+export const setCameraPreset = camera.set;
+export const useCameraPreset = camera.useValue;
 
 /**
  * The drawings (lib/studio/drawings) — loaded with the first 2D view, or a moment earlier when the pointer / focus reaches

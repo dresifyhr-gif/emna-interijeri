@@ -88,7 +88,12 @@ export interface EngineHeights {
   /** "do stropa": front-coloured cornice strip from the cabinets' line up to the ceiling (m); null = none */
   cornice: { y0: number; y1: number } | null;
   ceiling: number;
+  /** how far the plinth stands back from the base fronts (m, KitchenConfig.plinth; 0.06 for every older link) */
+  plinthRecess: number;
 }
+
+/** the plinth's recess behind the base fronts (m): the plan's (EngineHeights.plinthRecess), else the standard 6 cm */
+export const recessOf = (h: Pick<EngineHeights, "plinthRecess"> | undefined): number => h?.plinthRecess ?? D.plinthRecess;
 
 export function heightsOf(plan: KitchenPlan): EngineHeights {
   const h = plan.heights;
@@ -109,5 +114,6 @@ export function heightsOf(plan: KitchenPlan): EngineHeights {
     tallSplit: h.tallSplit === null ? null : cm(h.tallSplit),
     cornice: h.cornice ? { y0: cm(h.cornice.from), y1: cm(h.cornice.to) } : null,
     ceiling: cm(plan.ceiling),
+    plinthRecess: h.plinthRecess === undefined ? D.plinthRecess : cm(h.plinthRecess),
   };
 }

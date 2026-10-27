@@ -33,6 +33,7 @@ import {
   contactShadowTexture,
   herringboneTexture,
   hexRepeat,
+  haloTexture,
   hexTexture,
   hobTexture,
   marbleTexture,
@@ -66,6 +67,8 @@ export interface FinishLook {
   tap: FinishRender;
   sink: FinishRender;
   appliance: FinishRender;
+  /** the side-by-side fridge (FinishSpec.fridge; absent = the appliance finish, every older link) */
+  fridge: FinishRender;
   /** "fronta" = the plinth wears the base front (a material swap, see Engine) */
   plinth: string;
   plinthLook: FinishRender;
@@ -82,6 +85,7 @@ export function finishLook(handles: HandleStyle, f: FinishSpec | undefined): Fin
     tap: (finishDef("taps", f?.tap ?? FINISH_DEFAULTS.tap) ?? catalog.finishes.taps[0]).render,
     sink: (finishDef("sinks", f?.sink ?? FINISH_DEFAULTS.sink) ?? catalog.finishes.sinks[0]).render,
     appliance: (finishDef("appliances", f?.appliances ?? FINISH_DEFAULTS.appliances) ?? catalog.finishes.appliances[0]).render,
+    fridge: (finishDef("fridges", f?.fridge) ?? finishDef("appliances", f?.appliances ?? FINISH_DEFAULTS.appliances) ?? catalog.finishes.appliances[0]).render,
     plinth: pl,
     plinthLook: (finishDef("plinths", pl) ?? catalog.finishes.plinths[0]).render,
     led: (finishDef("leds", f?.led ?? FINISH_DEFAULTS.led) ?? catalog.finishes.leds[0]).color,
@@ -130,6 +134,8 @@ export class Materials {
   readonly blackGlass: THREE.MeshPhysicalMaterial;
   /** oven / microwave door frames and control strips (finish: crno staklo / inox) */
   readonly appliance: THREE.MeshPhysicalMaterial;
+  /** the side-by-side fridge's body and doors (FinishSpec.fridge — its own finish, independent of the oven fronts) */
+  readonly fridge: THREE.MeshPhysicalMaterial;
   readonly hob: THREE.MeshPhysicalMaterial;
   readonly black: THREE.MeshStandardMaterial;
   readonly wall: THREE.MeshStandardMaterial;
@@ -139,6 +145,16 @@ export class Materials {
   readonly ledProfile: THREE.MeshStandardMaterial;
   readonly windowGlass: THREE.MeshPhysicalMaterial;
   readonly windowFrame: THREE.MeshStandardMaterial;
+  /** the room's ceiling (KitchenConfig.room.ceiling) — seen from inside only */
+  readonly ceiling: THREE.MeshStandardMaterial;
+  /** the ceiling itself: the ceiling material plus the glow of the lit lamp around it (emissive halo, Lights.apply) */
+  readonly ceilingLit: THREE.MeshStandardMaterial;
+  /** the round ceiling light's glowing ring (KitchenConfig.room.lamp) — bright enough to bloom */
+  readonly lampGlow: THREE.MeshBasicMaterial;
+  /** the window of an oven / microwave door: smoked glass, a shade lighter than the black glass around it */
+  readonly ovenWindow: THREE.MeshPhysicalMaterial;
+  /** the ceiling light's diffuser inside the ring (a pale grey, translucent-looking disc) */
+  readonly lampShade: THREE.MeshStandardMaterial;
   readonly sill: THREE.MeshStandardMaterial;
   readonly liner: THREE.MeshStandardMaterial;
   readonly glassShelf: THREE.MeshPhysicalMaterial;
@@ -176,7 +192,9 @@ export class Materials {
     this.brushed = std({ color: "#b4b2ad", roughness: 0.34, metalness: 1 });
     this.basin = std({ color: "#8d8d8d", roughness: 0.34, metalness: 1 });
     this.blackGlass = new THREE.MeshPhysicalMaterial({ color: "#0a0a0b", roughness: 0.06, clearcoat: 1, metalness: 0.2 });
+    this.ovenWindow = new THREE.MeshPhysicalMaterial({ color: "#2c2c2e", roughness: 0.08, clearcoat: 1, metalness: 0.1 });
     this.appliance = new THREE.MeshPhysicalMaterial({ color: "#0a0a0b", roughness: 0.06, clearcoat: 1, metalness: 0.2 });
+    this.fridge = new THREE.MeshPhysicalMaterial({ color: "#0a0a0b", roughness: 0.06, clearcoat: 1, metalness: 0.2 });
     const hobMap = hobTexture(opts);
     this.textures.push(hobMap);
     this.hob = new THREE.MeshPhysicalMaterial({ map: hobMap, roughness: 0.08, clearcoat: 1 });
@@ -197,6 +215,12 @@ export class Materials {
       depthWrite: false,
     });
     this.windowFrame = std({ color: "#1b1b1d", roughness: 0.4, metalness: 0.6 });
+    this.ceiling = std({ color: "#ebe8e2", roughness: 0.95 });
+    const halo = haloTexture(opts);
+    this.textures.push(halo);
+    this.ceilingLit = std({ color: "#ebe8e2", roughness: 0.95, emissive: new THREE.Color("#fff4e6"), emissiveMap: halo, emissiveIntensity: 0 });
+    this.lampGlow = new THREE.MeshBasicMaterial({ color: new THREE.Color("#fff3e3").multiplyScalar(3.2), toneMapped: false });
+    this.lampShade = std({ color: "#9d9893", roughness: 0.5, emissive: new THREE.Color("#fff4e8"), emissiveIntensity: 0.08 });
     this.sill = std({ color: "#d8d4cc", roughness: 0.3 });
     this.liner = std({ color: "#e9ecef", roughness: 0.4, emissive: new THREE.Color("#f2f6ff"), emissiveIntensity: 0.06 });
     this.glassShelf = new THREE.MeshPhysicalMaterial({ color: "#cfe0e0", roughness: 0.05, transparent: true, opacity: 0.35, depthWrite: false });
@@ -295,7 +319,7 @@ export class Materials {
         const opts = { ...this.tex, size: Math.min(1024, this.tex.size) };
         const t =
           r.kind === "planks"
-            ? plankTexture(key, r.tones, opts)
+            ? plankTexture(key, r.tones, opts, r.boards)
             : r.kind === "tiles"
               ? tileTexture(key, r.tones, r.grout ?? "#888888", opts, r.grid)
               : r.kind === "herringbone"
@@ -516,7 +540,9 @@ export class Materials {
       [this.tap, look.tap],
       [this.sink, look.sink],
       [this.appliance, look.appliance],
-      [this.plinthSteel, look.plinth === "inox" ? look.plinthLook : { color: "#a9a9a7", roughness: 0.3, metalness: 1 }],
+      [this.fridge, look.fridge],
+      // (the aluminium plinth is the same metal plinth material in its own look)
+      [this.plinthSteel, look.plinth === "inox" || look.plinth === "alu" ? look.plinthLook : { color: "#a9a9a7", roughness: 0.3, metalness: 1 }],
     ];
   }
 

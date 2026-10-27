@@ -37,11 +37,12 @@ import {
   type StudioEngineApi,
   type StudioEngineOptions,
   type ViewInfo,
+  type ViewPreset,
   type ViewSnapshot,
   type WallId,
 } from "../types";
-import { applyViewOffset, fitBox, fitPoints, snapshotRegion, viewDir, type Framing, type Region } from "./camera";
-import { BASE_FACE, UPPER_FACE, WORK_Y } from "./dims";
+import { LAMP, applyViewOffset, canvasFov, fitBox, fitPoints, lampSpot, roomLens, roomViewPose, snapshotRegion, viewDir, type Framing, type Region } from "./camera";
+import { BASE_FACE, D, UPPER_FACE, WORK_Y } from "./dims";
 import {
   buildKitchen,
   disposeKitchen,
@@ -232,6 +233,18 @@ class Engine {
    */
   private camGoal: { az: number; el: number; end: number } | null = null;
   private ledK = 1;
+  /** studio: the camera preset (setView) — "studio" orbits the kitchen as always */
+  private viewPreset: ViewPreset = "studio";
+  /** setCeiling's override of KitchenConfig.room.ceiling / lamp (null = follow the config) */
+  private ceilingOver: { on: boolean; light: boolean } | null = null;
+  /** the ceiling and its light (in the kitchen's root; rebuilt with it) */
+  private ceilingGroup: THREE.Group | null = null;
+  /** world position of the ceiling light (room.lamp / setCeiling), null without one — it lights the room at night */
+  private lampPos: THREE.Vector3 | null = null;
+  /** how far the orbit centre may wander from the kitchen's centre (afterBuild; a preset may need more) */
+  private targetRadius = 1;
+  /** the room view's lens across the picture (degrees; camera.ts roomViewPose: wider in a small room) */
+  private roomAcross = 71;
 
   // showcase
   private progress: number | null = null;
@@ -519,6 +532,9 @@ class Engine {
       highlight: (id) => this.highlightById(id),
       subscribe: (fn) => this.subscribe(fn),
       viewInfo: () => (this.kitchen && !this.disposed ? this.computeView() : null),
+      setView: (p) => this.setView(p),
+      getView: () => this.viewPreset,
+      setCeiling: (on, light) => this.setCeiling(on, light),
       resize: () => this.resize(),
       dispose: () => this.dispose(),
     };
@@ -577,7 +593,7 @@ class Engine {
     if (this.mode === "studio") {
       if (instant) {
         K.timeline.finish();
-        this.lights.cur = { ...MOODS[this.mood] };
+        this.lights.cur = { ...this.moodValues(this.mood) };
       } else {
         K.timeline.apply(0);
         this.play = { t: 0, delay: 0.35, speed: 1 };
@@ -679,9 +695,12 @@ class Engine {
   /** lights, LEDs, raycast targets for a freshly built kitchen */
   private afterBuild(K: KitchenRT): void {
     this.wireLabels(K);
+    this.syncDims(K);
+    this.ceilingGroup = null;
+    this.syncCeiling(K);
     this.lights.aim(K.box);
     this.lights.setWindow(K.windowLight);
-    this.lights.setLeds(ledLights(K, this.lights.pool.length));
+    this.lights.setLeds(ledLights(K, this.lights.pool.length, this.ledLit));
     this.refreshLedVisibility();
     this.refreshRayTargets();
     const fb = this.mode === "studio" ? K.frame : K.box;
@@ -689,19 +708,21 @@ class Engine {
     const r = fb.getSize(new THREE.Vector3()).length() / 2;
     if (this.controls) {
       this.controls.cursor.copy(c);
-      this.controls.maxTargetRadius = Math.max(1, r * 0.7);
+      this.targetRadius = Math.max(1, r * 0.7);
+      this.controls.maxTargetRadius = this.targetRadius;
     }
   }
 
   private refreshRayTargets(): void {
     const K = this.kitchen;
-    const skip = new Set<THREE.Material>([this.mats.shadow, this.mats.windowGlass, this.mats.doorGlass, this.mats.glassShelf, this.mats.dim]);
+    // (the ceiling and its light are never picked: a click inside the room goes through to the kitchen)
+    const skip = new Set<THREE.Material>([this.mats.shadow, this.mats.windowGlass, this.mats.doorGlass, this.mats.glassShelf, this.mats.dim, this.mats.ceiling, this.mats.ceilingLit, this.mats.lampGlow, this.mats.lampShade]);
     const list: THREE.Object3D[] = [];
     K?.root.traverse((o) => {
       const me = o as THREE.Mesh;
       const mat = me.material as THREE.Material;
       // (every door glass: catalog.glass kinds carry userData.glass)
-      if (me.isMesh && !skip.has(mat) && !mat.userData?.glass) list.push(me);
+      if (me.isMesh && !skip.has(mat) && !mat.userData?.glass && !me.userData.noPick) list.push(me);
     });
     this.rayTargets = list;
   }
@@ -710,8 +731,11 @@ class Engine {
     const K = this.kitchen;
     if (!K) return;
     const on = this.ledK > 0.001;
-    for (const z of K.leds) z.mesh.visible = on;
+    for (const z of K.leds) z.mesh.visible = on && this.ledLit(z.kind);
   }
+
+  /** an LED zone the config has not switched off (KitchenConfig.ledZones: under / plinth / inner) */
+  private ledLit = (kind: "under" | "plinth" | "inner"): boolean => this.cfg.ledZones?.[kind] !== false;
 
   private makePresets(): { front: string; top: string }[] {
     return showcasePresets(this.cfg);
@@ -1096,6 +1120,8 @@ class Engine {
       } else K.timeline.apply(Math.max(0, t));
       moved = render = true;
     }
+    // the room view keeps the dimension lines hidden (the assembly timeline shows them as it plays)
+    if (K && this.viewPreset === "prostorija" && K.labels.some((l) => l.group.visible)) this.syncDims(K);
 
     if (this.mode === "showcase" && K) {
       const st = this.updateShowcase(dt, K);
@@ -1127,6 +1153,15 @@ class Engine {
         const vis = p.sub(cam).negate().dot(n) > -0.05;
         if (w.group.visible !== vis) {
           w.group.visible = vis;
+          moved = true;
+        }
+      }
+      // the ceiling and its light only from inside the room (below the ceiling): from the studio's view above they go
+      const cg = this.ceilingGroup;
+      if (cg) {
+        const vis = cam.y < K.plan.ceiling / 100 - 0.01;
+        if (cg.visible !== vis) {
+          cg.visible = vis;
           moved = true;
         }
       }
@@ -1234,7 +1269,7 @@ class Engine {
   private tweenMood(m: Mood, dur: number, delay = 0): void {
     this.tweens.cancel("mood");
     const from = { ...this.lights.cur };
-    const to = MOODS[m];
+    const to = this.moodValues(m);
     const bg0 = this.bg.clone();
     const bg1 = untonemapped(this.mode === "showcase" ? BG.showcase : m === "night" ? BG.night : BG.day);
     this.tweens.add(
@@ -1254,8 +1289,31 @@ class Engine {
   setMood(m: Mood): void {
     if (this.disposed || (m !== "day" && m !== "night")) return;
     this.mood = m;
+    this.syncLamp(false);
     if (this.booting) return;
     this.tweenMood(m, this.reduced ? 0.01 : 1.4);
+    this.dirty = true;
+  }
+
+  /** what a mood's lights are: at night with the ceiling light on, the lamp lights the room (MOODS.lamp) */
+  private moodValues(m: Mood) {
+    return m === "night" && this.lights.lampLit ? MOODS.lamp : MOODS[m];
+  }
+
+  /**
+   * studio, night, the room's ceiling light on (KitchenConfig.room.lamp / setCeiling): the key spot and the fill move
+   * to the lamp (Lights.setLamp); otherwise they stand where the studio puts them. `tween`: glide the lights to the
+   * new mood values when that changed (a lamp switched on / off at night).
+   */
+  private syncLamp(tween: boolean): void {
+    const at = this.mode === "studio" && this.mood === "night" ? this.lampPos : null;
+    const was = this.lights.lampLit;
+    // the white kitchen run on one side wall throws the lamp's light back across the room onto the bare wall opposite
+    const runs = this.kitchen?.plan.runs ?? [];
+    const b = runs.some((r) => r.wall === "b");
+    const c = runs.some((r) => r.wall === "c");
+    this.lights.setLamp(at, b !== c ? new THREE.Vector3(b ? 1 : -1, 0, 0) : null, (this.kitchen?.plan.cfg.walls.a ?? 240) / 200);
+    if (tween && was !== this.lights.lampLit && !this.booting) this.tweenMood(this.mood, this.reduced ? 0.01 : 0.9);
     this.dirty = true;
   }
 
@@ -1276,6 +1334,12 @@ class Engine {
     }
 
     if (cfg.led !== prev.led) this.tweenLed(cfg.led);
+    // LED zones switched on / off one by one (KitchenConfig.ledZones): their strips and area lights
+    if (JSON.stringify(cfg.ledZones ?? {}) !== JSON.stringify(prev.ledZones ?? {}) && this.kitchen) {
+      this.lights.setLeds(ledLights(this.kitchen, this.lights.pool.length, this.ledLit));
+      this.refreshLedVisibility();
+      this.dirty = true;
+    }
 
     if (geometryKey(prev) !== geometryKey(cfg) || (this.rebuildTimer && this.mode === "studio")) {
       this.updateLabelText(cfg);
@@ -1299,7 +1363,8 @@ class Engine {
       this.rebuild();
       return;
     }
-    const handlesChanged = cfg.handles !== this.applied.handles;
+    // (a zone's own opening style changed — KitchenConfig.zoneHandles: its fillers re-dress with the rest)
+    const handlesChanged = cfg.handles !== this.applied.handles || JSON.stringify(cfg.zoneHandles ?? {}) !== JSON.stringify(prev.zoneHandles ?? {});
     if ((handlesChanged || composed) && this.play) {
       K.timeline.finish();
       this.play = null;
@@ -1315,6 +1380,218 @@ class Engine {
       K.plan = plan;
     }
     this.syncMaterials(handlesChanged, fresh);
+    // the ceiling and its light (KitchenConfig.room.ceiling / lamp) — a config that changes them ends setCeiling's override
+    if (Boolean(cfg.room?.ceiling) !== Boolean(prev.room?.ceiling) || Boolean(cfg.room?.lamp) !== Boolean(prev.room?.lamp)) this.ceilingOver = null;
+    this.syncCeiling(K);
+    this.dirty = true;
+  }
+
+  // ================================================================ views (setView) and the ceiling
+
+  /** the studio's lens (every preset but the room view, whose lens applyLens sets: a phone camera's) */
+  private fovFor(aspect: number): number {
+    return aspect < 1 ? 40 : 30;
+  }
+
+  /**
+   * the camera's lens and projection centre for the current preset: the studio's (fovFor, the framing region's centre)
+   * — or, in the room view, a phone camera's (camera.ts roomLens) over the part of the canvas the UI leaves free, its
+   * centre the picture's centre, like a photo taken in the room
+   */
+  private applyLens(): void {
+    const cam = this.camera;
+    const { w, h } = this.size;
+    cam.aspect = w / h;
+    if (this.viewPreset === "prostorija" && this.mode === "studio") {
+      const r = this.freeRegion();
+      const aw = (r.x1 - r.x0) * w;
+      const ah = (r.y1 - r.y0) * h;
+      cam.fov = canvasFov(roomLens(aw / ah, this.roomAcross), h, ah);
+      applyViewOffset(cam, w, h, r);
+      return;
+    }
+    cam.fov = this.fovFor(w / h);
+    applyViewOffset(cam, w, h, this.region);
+  }
+
+  /** the part of the canvas the UI leaves free (the --studio-inset-* properties), without the framing margins */
+  private freeRegion(): Region {
+    const { w, h } = this.size;
+    const cs = this.win.getComputedStyle(this.container);
+    const px = (n: string) => {
+      const v = parseFloat(cs.getPropertyValue(n));
+      return Number.isFinite(v) ? Math.max(0, v) : 0;
+    };
+    const x0 = Math.min(0.6, px("--studio-inset-left") / w);
+    const x1 = Math.max(x0 + 0.3, 1 - px("--studio-inset-right") / w);
+    const y0 = Math.min(0.6, px("--studio-inset-top") / h);
+    const y1 = Math.max(y0 + 0.3, 1 - px("--studio-inset-bottom") / h);
+    return { x0, x1, y0, y1 };
+  }
+
+  /** how deep the room is (m): its side walls (kitchen runs and bare walls), else room for the island, else 4 m */
+  private roomDepth(K: KitchenRT): number {
+    const P = K.plan;
+    let d = 0;
+    for (const r of P.runs) if (r.wall !== "a") d = Math.max(d, r.length);
+    for (const b of P.bareWalls ?? []) d = Math.max(d, b.length);
+    if (P.island) d = Math.max(d, (P.island.kind === "otok" ? P.island.backZ + 60 : P.island.length) + 150);
+    return (d || 400) / 100;
+  }
+
+  setView(p: ViewPreset): void {
+    if (this.disposed || this.mode !== "studio") return;
+    if (p !== "studio" && p !== "prostorija" && p !== "frontalno" && p !== "odozgo") return;
+    this.viewPreset = p;
+    if (this.booting || !this.kitchen) return;
+    this.applyView(!this.reduced);
+  }
+
+  /**
+   * put the camera where the preset says (studio: the layout's own framing, as at the start): the room view stands in
+   * the entrance at eye level with a phone camera's lens, like a photo of the finished kitchen (camera.ts roomViewPose,
+   * roomLens) and hides the dimension lines; frontal = straight at wall A; from above = nearly top-down
+   */
+  private applyView(animate: boolean): void {
+    const K = this.kitchen;
+    const c = this.controls;
+    if (!K || !c) return;
+    const p = this.viewPreset;
+    const v = this.view();
+    this.applyLens();
+    c.minPolarAngle = p === "odozgo" ? 0.02 : 0.45;
+    // (eye level looks a little down at the kitchen: the camera is below the orbit's usual lowest angle)
+    c.maxPolarAngle = p === "prostorija" ? Math.PI / 2 + 0.15 : 1.5;
+    c.minAzimuthAngle = p === "studio" ? v.limit[0] : -Infinity;
+    c.maxAzimuthAngle = p === "studio" ? v.limit[1] : Infinity;
+    let pos: THREE.Vector3;
+    let target: THREE.Vector3;
+    if (p === "prostorija") {
+      const P = K.plan;
+      // (the cabinets' own extent: K.box runs along whole walls)
+      const b = new THREE.Box3().setFromPoints(K.boxPoints);
+      const pose = roomViewPose({
+        a: P.cfg.walls.a / 100,
+        depth: this.roomDepth(K),
+        left: P.runs.some((r) => r.wall === "b"),
+        right: P.runs.some((r) => r.wall === "c"),
+        ceiling: P.ceiling / 100,
+        footprint: b.isEmpty() ? undefined : { minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z },
+      });
+      pos = pose.position;
+      target = pose.target;
+      if (pose.across !== this.roomAcross) {
+        this.roomAcross = pose.across;
+        this.applyLens();
+      }
+      c.minDistance = Math.min(1.8, pos.distanceTo(target));
+    } else {
+      c.minDistance = 1.8;
+      const [az, el] = p === "frontalno" ? [0, 0.06] : p === "odozgo" ? [0, 1.45] : [v.az, v.el];
+      const f = this.fitAt(az, el);
+      if (!f) return;
+      this.fitD = f.distance;
+      pos = f.position;
+      target = f.target;
+    }
+    // (the preset's own pose: a later resize may put the camera back on it, until the user moves it)
+    this.userMoved = false;
+    c.maxDistance = Math.max(c.maxDistance, pos.distanceTo(target) * 1.8);
+    // the orbit centre must be allowed where the preset puts it (OrbitControls' cursor / maxTargetRadius)
+    c.maxTargetRadius = Math.max(this.targetRadius, c.cursor.distanceTo(target) + 0.01);
+    this.camGoal = null;
+    if (!animate) {
+      this.tweens.cancel("camera");
+      this.camera.position.copy(pos);
+      c.target.copy(target);
+      c.update();
+    } else this.tweenCamera(pos, target, 1.1);
+    this.syncDims();
+    this.dirty = true;
+  }
+
+  /** the dimension lines and their labels are the studio's: the room view shows the room as a photo would */
+  private syncDims(K: KitchenRT | null = this.kitchen): void {
+    if (!K) return;
+    const show = this.viewPreset !== "prostorija";
+    for (const l of K.labels) l.group.visible = show;
+  }
+
+  setCeiling(on: boolean, light?: boolean): void {
+    if (this.disposed) return;
+    const cur = this.ceilingOver ?? { on: Boolean(this.cfg.room?.ceiling), light: Boolean(this.cfg.room?.lamp) };
+    this.ceilingOver = { on: Boolean(on), light: light === undefined ? cur.light : Boolean(light) };
+    if (this.kitchen) this.syncCeiling(this.kitchen);
+  }
+
+  /**
+   * the room's ceiling (a plane facing down: seen from inside the room, invisible from the studio's view above) and a
+   * simple round ceiling light in the middle of the room (a glowing ring under a white housing) — as the config
+   * (room.ceiling / lamp) or setCeiling says. Rebuilt when the room changes; it never casts a shadow.
+   */
+  private syncCeiling(K: KitchenRT): void {
+    const want = this.ceilingOver ?? { on: Boolean(this.cfg.room?.ceiling), light: Boolean(this.cfg.room?.lamp) };
+    const A = K.plan.cfg.walls.a / 100;
+    const depth = this.roomDepth(K);
+    const ceil = K.plan.ceiling / 100;
+    const lamp = lampSpot(A, depth);
+    this.lampPos = want.light ? new THREE.Vector3(lamp.x - A / 2, ceil - LAMP.drop, lamp.z) : null;
+    this.syncLamp(true);
+    const key = JSON.stringify([want.on, want.light, A, depth, ceil]);
+    const g0 = this.ceilingGroup;
+    if (g0 && g0.parent === K.root && g0.userData.key === key) return;
+    if (g0) {
+      g0.parent?.remove(g0);
+      disposeGeometries(g0);
+      this.ceilingGroup = null;
+    }
+    if (!want.on && !want.light) {
+      this.dirty = true;
+      return;
+    }
+    const g = new THREE.Group();
+    g.userData.key = key;
+    if (want.on) {
+      // (past the entrance as far as the side walls run on: a room view standing in the doorway still has a ceiling)
+      const W = A + 0.24;
+      const Dp = depth + 0.06 + D.wallExtend;
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(W, Dp), this.mats.ceilingLit);
+      // the lamp's glow (an emissive halo LAMP.halo m across, lit at night: MOODS.lamp) centred on the lamp
+      const halo = this.mats.ceilingLit.emissiveMap;
+      if (halo) {
+        halo.repeat.set(W / LAMP.halo, Dp / LAMP.halo);
+        halo.offset.set(0.5 - ((lamp.x + 0.12) / W) * halo.repeat.x, 0.5 - ((lamp.z + 0.06) / Dp) * halo.repeat.y);
+      }
+      plane.rotation.x = Math.PI / 2;
+      plane.position.set(A / 2, ceil, Dp / 2 - 0.06);
+      plane.castShadow = false;
+      plane.receiveShadow = false;
+      g.add(plane);
+    }
+    if (want.light) {
+      // a round ceiling light over the kitchen's working area (in view from the entrance, as in a photo): a small canopy
+      // on the ceiling, a short stem, and a glowing ring (LAMP) with a pale diffuser in the middle, hanging under it
+      const { x, z } = lamp;
+      const y = ceil - LAMP.drop;
+      const canopy = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.02, 32), this.mats.ceiling);
+      canopy.position.set(x, ceil - 0.01, z);
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, LAMP.drop - 0.02, 12), this.mats.ceiling);
+      stem.position.set(x, ceil - 0.02 - (LAMP.drop - 0.02) / 2, z);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry((LAMP.outer + LAMP.inner) / 2, (LAMP.outer - LAMP.inner) / 2, 14, 72), this.mats.lampGlow);
+      ring.rotation.x = Math.PI / 2;
+      ring.scale.z = LAMP.height / (LAMP.outer - LAMP.inner);
+      ring.position.set(x, y, z);
+      const diffuser = new THREE.Mesh(new THREE.CylinderGeometry(LAMP.inner + 0.005, LAMP.inner + 0.005, 0.012, 48), this.mats.lampShade);
+      diffuser.position.set(x, y + 0.004, z);
+      for (const me of [canopy, stem, ring, diffuser]) {
+        me.castShadow = false;
+        me.receiveShadow = false;
+        me.userData.noPick = true;
+        g.add(me);
+      }
+    }
+    K.root.add(g);
+    this.ceilingGroup = g;
     this.dirty = true;
   }
 
@@ -1423,6 +1700,12 @@ class Engine {
     const steel = look.appliance.metalness > 0.5;
     this.mats.appliance.clearcoat = steel ? 0.06 : 1;
     this.mats.appliance.clearcoatRoughness = steel ? 0.4 : 0;
+    // the side-by-side fridge in its own finish: a satin film on steel, gloss on black / white enamel
+    // (no finish of its own: exactly the appliance fronts' coat, as every older fridge)
+    const own = look.fridge !== look.appliance;
+    const fsteel = look.fridge.metalness > 0.5;
+    this.mats.fridge.clearcoat = fsteel ? 0.06 : own ? 0.6 : 1;
+    this.mats.fridge.clearcoatRoughness = fsteel ? 0.4 : own ? 0.15 : 0;
   }
 
   /** plinth finish changed: every plinth mesh takes its new material */
@@ -1580,7 +1863,9 @@ class Engine {
         K.timeline.apply(0);
         this.play = { t: 0, delay: 0.3, speed: Math.max(1, K.timeline.end / 1.15) };
       }
-      this.frameCamera(false);
+      // (a camera preset other than the orbit stays: the room view frames the new room)
+      if (this.viewPreset !== "studio") this.applyView(true);
+      else this.frameCamera(false);
     } else {
       this.lastApplied = -1;
       this.frameCamera(false);
@@ -1770,7 +2055,7 @@ class Engine {
     this.tweens.add(0.01, instant ? 0 : 1.05, () => {}, {
       done: () => {
         if (this.disposed || this.kitchen !== K) return;
-        this.lights.setLeds(ledLights(K, this.lights.pool.length));
+        this.lights.setLeds(ledLights(K, this.lights.pool.length, this.ledLit));
         this.refreshLedVisibility();
         this.refreshRayTargets();
         const cur = this.selectedId ? K.modules.get(this.selectedId) : undefined;
@@ -2847,7 +3132,6 @@ class Engine {
     this.size = { w, h };
     const cam = this.camera;
     cam.aspect = w / h;
-    cam.fov = w / h < 1 ? 40 : 30;
     if (this.mode === "showcase") {
       // the hero's pixel budget depends on the canvas size: re-derive the tiers, keep the governor's level
       this.tiers = showcaseQuality(this.win.devicePixelRatio || 1, w, h, this.mobile);
@@ -2859,9 +3143,13 @@ class Engine {
     }
     this.labels?.setSize(w, h);
     this.region = this.computeRegion();
-    applyViewOffset(cam, w, h, this.region);
+    this.applyLens();
     if (this.kitchen && !this.booting) {
       if (this.mode === "showcase") this.frameCamera(false);
+      // a preset's pose for the new size — unless the user has orbited away from it since (a phone's sheet folding)
+      else if (this.viewPreset !== "studio") {
+        if (!this.userMoved) this.applyView(false);
+      }
       else if (!this.userMoved && !this.tweens.has("camera")) this.frameCamera(true);
       // a tween under way (the intro, a reframe): it lands on the framing for the new size, not the one it started for
       else if (!this.userMoved && this.camGoal) this.retargetCamera();

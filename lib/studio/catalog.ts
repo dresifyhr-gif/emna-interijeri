@@ -17,7 +17,7 @@
  * Must stay free of three.js and DOM access (it is also imported server-side).
  */
 
-import type { BacksplashKind, GlassFrame, GlassType, HandleStyle, HoodFinish, HoodKind, IslandHoodStyle } from "./types";
+import type { BacksplashKind, DrawerLayout, FridgeHandle, GlassFrame, GlassType, HandleStyle, HoodFinish, HoodKind, IslandHoodStyle } from "./types";
 
 /**
  * false until the owner has confirmed every rate in this file (see the TODO above).
@@ -44,8 +44,9 @@ export interface MaterialRender {
   tile?: number;
   /** texture detail: wood grain lines, stone specks, marble veins (multiplier, default 1) */
   density?: number;
-  /** marble: "bold" = a few wide, high-contrast veins (Calacatta), default fine veining */
-  veins?: "fine" | "bold";
+  /** marble: "bold" = a few wide, high-contrast veins (Calacatta), "diagonal" = long parallel veins with a bright core
+   * (Port Laurent), default fine veining */
+  veins?: "fine" | "bold" | "diagonal";
   /** carcass (cabinet body) colour that goes with this front */
   carcass?: string;
 }
@@ -213,8 +214,10 @@ export interface RoomFloorDef {
     tile?: number;
     /** tiles: grout colour */
     grout?: string;
-    /** tiles: columns × rows of tiles in one repeat (absent = 2 × 2 square tiles) */
+    /** tiles: columns × rows of tiles in one repeat (absent = 2 × 2 square tiles); planks: boards side by side in one
+     * repeat (absent = 6) */
     grid?: [number, number];
+    boards?: number;
   };
 }
 
@@ -370,6 +373,16 @@ export interface ModuleTypeDef {
   worktopMaterial?: boolean;
 }
 
+/** a drawer split (KitchenConfig.drawerLayout / ElementOpts.drawers) */
+export interface DrawerLayoutDef {
+  id: DrawerLayout;
+  name: string;
+  /** share-link code (a digit) — append only, never reuse */
+  code: number;
+  /** front heights top → bottom, shares of the drawer stack (sum 1) */
+  ratios: number[];
+}
+
 export interface CatalogExtras {
   /** LED strip under wall units, plinth and inside niches — per metre of upper run */
   ledPerMeter: number;
@@ -413,6 +426,17 @@ export interface CatalogExtras {
   topDepthShare: number;
   /** hanging rail with hooks on the backsplash (KitchenConfig.rails): EUR per metre of rail, hooks and fitting included */
   railPerMeter: number;
+  /** a tall unit / side-by-side bridge in one piece up to the ceiling (HeightSpec.onePiece, ElementOpts.onePiece): taller doors, extra hinges, a straightened board — EUR per element */
+  tallOnePiece: number;
+  /** the Gola channel between the drawers of a drawer unit (KitchenConfig.gola.between): EUR per metre of channel */
+  golaMidPerMeter: number;
+  /** a drawer split with more drawers than the type has (ElementOpts.drawers / KitchenConfig.drawerLayout): EUR per extra drawer (runners + box) */
+  drawerExtra: number;
+  /**
+   * LED zones (KitchenConfig.ledZones): the share of the LED strip price each zone takes (under the wall units, in the
+   * plinth, inside niches) — they add up to 1, so all zones on = what the LED always cost
+   */
+  ledZoneShare: { under: number; plinth: number; inner: number };
 }
 
 export interface Catalog {
@@ -429,7 +453,13 @@ export interface Catalog {
     /** "fronta" = in the colour of the base fronts */
     plinths: FinishDef[];
     leds: LedDef[];
+    /** the side-by-side fridge (FinishSpec.fridge); absent = the appliance finish */
+    fridges: FinishDef[];
   };
+  /** the drawer splits of drawer units (KitchenConfig.drawerLayout / ElementOpts.drawers), top → bottom */
+  drawerLayouts: DrawerLayoutDef[];
+  /** the side-by-side fridge's handles (FinishSpec.fridgeHandle) */
+  fridgeHandles: { id: FridgeHandle; name: string; note: string }[];
   room: { walls: RoomWallDef[]; floors: RoomFloorDef[] };
   modules: ModuleTypeDef[];
   moduleGroups: { id: ModuleGroup; name: string }[];
@@ -541,6 +571,12 @@ export const SBS = {
 } as const;
 
 /**
+ * A side-by-side with recessed grips (FinishSpec.fridgeHandle "udubljena", flat doors — the owner's photo): a hand's-length
+ * pocket in each door's inner edge and a slim touch display in the freezer door instead of a dispenser (cm from the floor)
+ */
+export const SBS_GRIP = { length: 54, centre: 98, display: 140 } as const;
+
+/**
  * Corner units: how far they reach along wall A (`along` = the corner slot's width) and along the neighbouring wall
  * (`across`: where the neighbour's run stops), cm — what Croatian carpenters build (TODO(vlasnik): potvrditi):
  *
@@ -587,6 +623,8 @@ export const catalog: Catalog = {
     mat("pijesak", "Pijesak mat", "#c6b394", true, 950, { swatch: "#cab89b" }),
     mat("siva-svijetla", "Svijetlosiva mat", "#bab9b4", true, 930, { swatch: "#bfbeb9" }),
     mat("siva-tamna", "Tamnosiva mat", "#57585a", false, 950, { swatch: "#5b5c5f" }),
+    // the "photo" round: the graphite grey of the owner's photo kitchen — between antracit and tamnosiva (TODO(vlasnik): cijena)
+    mat("grafit", "Grafit mat", "#45464a", false, 950, { swatch: "#494a4e" }),
     mat("crna", "Crna mat", "#141415", false, 980, {
       swatch: "#18181a",
       render: { kind: "solid", color: "#141415", roughness: 0.6, carcass: DARK_CARCASS },
@@ -770,6 +808,41 @@ export const catalog: Catalog = {
         tile: 2.2,
       },
     },
+    // ---- the "photo" round (TODO(vlasnik): cijene po metru su procjena): black marble with gold veins, gold Calacatta
+    {
+      id: "nero-zlatni",
+      name: "Nero zlatni (Port Laurent)",
+      family: "mramor",
+      swatch: "linear-gradient(130deg,#131211 0 34%,#c9a45f 35.5%,#131211 37.5% 62%,#8c7550 63%,#131211 64.5% 80%,#d8c08a 81%,#131211 82%)",
+      pricePerMeter: 720,
+      render: {
+        kind: "marble",
+        color: "#201a15",
+        roughness: 0.2,
+        clearcoat: 0.6,
+        clearcoatRoughness: 0.1,
+        tones: ["#201a15", "#c8a35e", "#6e5a3c"],
+        tile: 2.4,
+        veins: "diagonal",
+      },
+    },
+    {
+      id: "calacatta-zlatni",
+      name: "Calacatta zlatni",
+      family: "mramor",
+      swatch: "linear-gradient(125deg,#f5f1ea 0 30%,#b8955a 32%,#d9c39a 34%,#f5f1ea 38% 70%,#c7ab78 72.5%,#f5f1ea 75%)",
+      pricePerMeter: 740,
+      render: {
+        kind: "marble",
+        color: "#f1ece4",
+        roughness: 0.14,
+        clearcoat: 0.65,
+        clearcoatRoughness: 0.08,
+        tones: ["#f1ece4", "#a8864f", "#d2bb8d"],
+        tile: 2.8,
+        veins: "bold",
+      },
+    },
     {
       id: "crni",
       name: "Crni kamen",
@@ -818,6 +891,15 @@ export const catalog: Catalog = {
       swatch: speckSwatch("#a9a8a4", "#8a8985"),
       pricePerMeter: 500,
       render: { kind: "stone", color: "#a6a5a1", roughness: 0.24, clearcoat: 0.4, clearcoatRoughness: 0.14, tones: ["#a6a5a1", "#8b8a86", "#c4c3bf"], tile: 0.8, density: 0.55 },
+    },
+    // TODO(vlasnik): procjena
+    {
+      id: "kvarc-grafit",
+      name: "Grafitni kvarc",
+      family: "kvarc",
+      swatch: speckSwatch("#4a4a4b", "#68686a"),
+      pricePerMeter: 520,
+      render: { kind: "stone", color: "#474748", roughness: 0.25, clearcoat: 0.4, clearcoatRoughness: 0.14, tones: ["#474748", "#3a3a3b", "#6c6c6e"], tile: 0.8, density: 0.6 },
     },
     {
       id: "beton",
@@ -943,6 +1025,23 @@ export const catalog: Catalog = {
         priceAdd: 18,
         render: { color: "#b8955a", roughness: 0.3, metalness: 1 },
       },
+      // TODO(vlasnik): doplate za bijeli i eloksirani aluminijski profil su procjena
+      {
+        id: "bijela",
+        name: "Bijela mat",
+        golaName: "Bijeli profil",
+        swatch: "linear-gradient(135deg,#ffffff,#dcd8d0)",
+        priceAdd: 8,
+        render: { color: "#e6e3dc", roughness: 0.55, metalness: 0 },
+      },
+      {
+        id: "alu",
+        name: "Aluminij (eloksirani)",
+        golaName: "Eloksirani aluminijski profil",
+        swatch: metalSwatch("#d4d5d6", "#9fa1a3", "#bcbec0"),
+        priceAdd: 0,
+        render: { color: "#a6a8aa", roughness: 0.5, metalness: 0.9 },
+      },
     ],
     sinks: [
       { id: "inox", name: "Inox", swatch: metalSwatch("#dcdcda", "#9e9e9c", "#c2c2c0"), priceAdd: 0, render: { color: "#8d8d8d", roughness: 0.34, metalness: 1 } },
@@ -962,6 +1061,15 @@ export const catalog: Catalog = {
       { id: "crna", name: "Crno postolje", swatch: "#121213", priceAdd: 0, render: { color: "#0e0e0f", roughness: 0.7, metalness: 0 } },
       { id: "fronta", name: "U boji donjih fronti", swatch: "linear-gradient(135deg,#6f6a62,#3b3833)", priceAdd: 15, render: { color: "#0e0e0f", roughness: 0.7, metalness: 0 } },
       { id: "inox", name: "Inox", swatch: metalSwatch("#dcdcda", "#9e9e9c", "#c2c2c0"), priceAdd: 38, render: { color: "#a9a9a7", roughness: 0.3, metalness: 1 } },
+      // TODO(vlasnik): procjena
+      { id: "alu", name: "Aluminijsko postolje", swatch: metalSwatch("#d4d5d6", "#9fa1a3", "#bcbec0"), priceAdd: 28, render: { color: "#a3a5a7", roughness: 0.42, metalness: 0.9 } },
+    ],
+    // the side-by-side fridge (FinishSpec.fridge): an appliance, not priced (priceAdd 0) — its finish only
+    fridges: [
+      { id: "inox", name: "Inox", swatch: metalSwatch("#e2e2e0", "#9c9c9a", "#c8c8c6"), priceAdd: 0, render: { color: "#b5b5b3", roughness: 0.32, metalness: 1 } },
+      { id: "tamni-inox", name: "Tamni inox (grafit)", swatch: metalSwatch("#86827c", "#4f4c48", "#6c6964"), priceAdd: 0, render: { color: "#827e78", roughness: 0.4, metalness: 0.45 } },
+      { id: "crni", name: "Crni", swatch: "linear-gradient(135deg,#2a2a2d,#0b0b0c)", priceAdd: 0, render: { color: "#121213", roughness: 0.3, metalness: 0.35 } },
+      { id: "bijeli", name: "Bijeli", swatch: "linear-gradient(135deg,#ffffff,#dcd8d0)", priceAdd: 0, render: { color: "#e8e6e1", roughness: 0.35, metalness: 0 } },
     ],
     leds: [
       { id: "toplo", name: "Toplo bijelo", swatch: "radial-gradient(circle,#ffe2b8,#ffc57e)", priceAdd: 0, color: "#ffd29a" },
@@ -1094,6 +1202,38 @@ export const catalog: Catalog = {
         name: "Mikrocement",
         swatch: "radial-gradient(circle at 30% 40%,#b9b4ab,#9f9a90 70%)",
         render: { kind: "concrete", color: "#a9a49b", roughness: 0.62, tones: ["#aaa59c", "#9a958c", "#bab5ac"], tile: 3.6 },
+      },
+      // ---- the "photo" round: laminate / parquet tones, large grey tiles, light micro-cement
+      {
+        id: "laminat-sivi-hrast",
+        name: "Laminat sivi hrast",
+        swatch: "repeating-linear-gradient(90deg,#c9c5bf 0 18px,#aeaaa3 18px 19px,#d6d2cc 19px 37px,#aeaaa3 37px 38px)",
+        // (laminate boards ~20 × 120 cm, a greige with a hint of pink, as in the owner's photo)
+        render: { kind: "planks", color: "#c3bab3", roughness: 0.6, tones: ["#c3bab3", "#9f958d", "#d8d0ca"], tile: 2.4, boards: 12 },
+      },
+      {
+        id: "hrast-bijeli",
+        name: "Bijeli hrast",
+        swatch: "repeating-linear-gradient(90deg,#ddd2c0 0 18px,#c3b6a1 18px 19px,#e7dece 19px 37px,#c3b6a1 37px 38px)",
+        render: { kind: "planks", color: "#dbd0be", roughness: 0.58, tones: ["#d9cebb", "#b7a990", "#eae2d4"], tile: 2.4 },
+      },
+      {
+        id: "orah-tamni",
+        name: "Tamni orah",
+        swatch: "repeating-linear-gradient(90deg,#4a3527 0 18px,#33241a 18px 19px,#5a4231 19px 37px,#33241a 37px 38px)",
+        render: { kind: "planks", color: "#493426", roughness: 0.5, tones: ["#4a3527", "#2a1d14", "#654a37"], tile: 2.4 },
+      },
+      {
+        id: "plocice-sive-60x120",
+        name: "Sive pločice 60 × 120",
+        swatch: "linear-gradient(90deg,transparent 48%,#8f8e8b 49% 51%,transparent 52%) 0 0/30px 15px,linear-gradient(0deg,transparent 47%,#8f8e8b 48% 52%,transparent 53%) 0 0/30px 15px,#a9a8a4",
+        render: { kind: "tiles", color: "#a5a4a0", roughness: 0.32, tones: ["#a6a5a1", "#9b9a96", "#b1b0ac"], tile: 2.4, grout: "#8a8986", grid: [2, 4] },
+      },
+      {
+        id: "mikrocement-svijetli",
+        name: "Mikrocement svijetli",
+        swatch: "radial-gradient(circle at 30% 40%,#dcd8d0,#c6c1b8 70%)",
+        render: { kind: "concrete", color: "#d2cdc4", roughness: 0.6, tones: ["#d3cec5", "#c5c0b6", "#e0dcd4"], tile: 3.6 },
       },
     ],
   },
@@ -2129,6 +2269,20 @@ export const catalog: Catalog = {
     },
   ],
 
+  drawerLayouts: [
+    { id: "1+2", name: "Plitka + dvije duboke", code: 1, ratios: [0.22, 0.39, 0.39] },
+    { id: "jednake3", name: "Tri jednake ladice", code: 2, ratios: [1 / 3, 1 / 3, 1 / 3] },
+    { id: "msv", name: "Mala, srednja i velika", code: 3, ratios: [0.2, 0.28, 0.52] },
+    { id: "duboke2", name: "Dvije duboke ladice", code: 4, ratios: [0.5, 0.5] },
+    { id: "4", name: "Četiri ladice", code: 5, ratios: [0.19, 0.27, 0.27, 0.27] },
+    { id: "2+1", name: "Dvije plitke + duboka", code: 6, ratios: [0.25, 0.25, 0.5] },
+  ],
+
+  fridgeHandles: [
+    { id: "letvica", name: "Duge ručke", note: "Duge okomite ručke na vratima hladnjaka." },
+    { id: "udubljena", name: "Udubljene ručke", note: "Hvat urezan u rub vrata — ništa ne strši." },
+  ],
+
   worktopThickness: [
     { value: 1.2, name: "1,2 cm", note: "Tanka kompaktna ploča — vidi se tamna jezgra na rubu.", priceFactor: 0.95 },
     { value: 2, name: "2 cm", note: "Tanka kamena ploča, moderan lagan rub.", priceFactor: 0.85 },
@@ -2158,6 +2312,11 @@ export const catalog: Catalog = {
     shelfBoardPerMeter: 55,
     topDepthShare: 0.4,
     railPerMeter: 110,
+    // TODO(vlasnik): procjene — visoki element u jednom komadu, Gola kanal između ladica, dodatna ladica, udio LED zona
+    tallOnePiece: 90,
+    golaMidPerMeter: 38,
+    drawerExtra: 45,
+    ledZoneShare: { under: 0.5, plinth: 0.3, inner: 0.2 },
   },
 };
 
@@ -2173,6 +2332,11 @@ export const FINISH_DEFAULTS = {
   wall: "studio",
   floor: "studio",
 } as const;
+
+/** a drawer split by id (catalog.drawerLayouts) */
+export function drawerLayoutDef(id: string | undefined): DrawerLayoutDef | undefined {
+  return catalog.drawerLayouts.find((d) => d.id === id);
+}
 
 /** handle colour when the config does not set one: the Gola profile is black, every other grip inox */
 export function defaultHandleColor(style: HandleStyle): string {

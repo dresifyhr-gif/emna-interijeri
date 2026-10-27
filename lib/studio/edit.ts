@@ -139,7 +139,23 @@ import {
   type Range,
   type TallListId,
 } from "./plan";
-import { DIM, UPPER_HEIGHTS, WORKTOP_HEIGHTS, planHeights, type HeightPlan } from "./plan";
+import {
+  DIM,
+  PLINTH_RECESSES,
+  PLINTH_RECESS_DEFAULT,
+  TALL_DOOR_MAX,
+  TOP_ROWS,
+  UPPER_GAPS,
+  UPPER_HEIGHTS,
+  WORKTOP_HEIGHTS,
+  columnPanel,
+  onePieceOf,
+  planHeights,
+  plinthRecessOf,
+  tallSplitOf,
+  type HeightPlan,
+} from "./plan";
+import { DRAWER_TYPES, HOB_WIDTHS, drawerLayoutOf, hobWidthOf, sinkBowl } from "./fronts";
 import {
   BAR_DEPTHS,
   BAR_HEIGHTS,
@@ -159,6 +175,11 @@ import {
 } from "./plan";
 import type {
   BacksplashKind,
+  DrawerLayout,
+  FridgeHandle,
+  FrontZone,
+  LedZones,
+  OvenAt,
   BarSpec,
   BaseRunId,
   CabinetSpec,
@@ -523,14 +544,28 @@ function footOf(list: CabinetSpec[], share: { left: boolean; right: boolean } = 
     while (j >= 0 && j < list.length && isFillerEntry(list[j])) j += d;
     return list[j];
   };
+  /** the tall entries of the column entry i stands in (filler strips between them stand in it too) */
+  const column = (i: number): CabinetSpec[] => {
+    const col: CabinetSpec[] = [];
+    for (const d of [-1, 1] as const) {
+      for (let j = d < 0 ? i : i + 1; j >= 0 && j < list.length; j += d) {
+        if (isFillerEntry(list[j])) continue;
+        if (!list[j].tall) break;
+        col.push(list[j]);
+      }
+    }
+    return col;
+  };
   let n = 0;
   list.forEach((e, i) => {
     n += e.width;
     if (!e.tall) return;
     const prev = beyond(i, -1);
     const next = beyond(i, 1);
-    if (!prev?.tall) n += !prev && share.left ? 0 : DIM.panel;
-    if (!next?.tall) n += !next && share.right ? 0 : DIM.panel;
+    // (a column of side-by-side niches only: no cover panels — plan.ts columnPanel)
+    const P = !prev?.tall || !next?.tall ? columnPanel(column(i)) : DIM.panel;
+    if (!prev?.tall) n += !prev && share.left ? 0 : P;
+    if (!next?.tall) n += !next && share.right ? 0 : P;
   });
   return n;
 }
@@ -1797,9 +1832,10 @@ function insertOptionsIn(ctx: Ctx, after: boolean, tallCap?: number, want?: "tal
   const reach = endGapFor(ctx, t.id, t.at, list.length) ? Infinity : Math.max(room, room + (inRun ? Math.max(give, rowGive) : give)) + grow;
   // a tall unit standing in the run needs its cover panels too, unless it joins a column beside it
   const joins = Boolean(list[t.at - 1]?.tall || list[t.at]?.tall);
-  const foot = (w: number) => (inRun && !joins ? w + 2 * DIM.panel : w);
+  // (a side-by-side niche alone needs none: its own side panels — plan.ts columnPanel)
+  const foot = (w: number, type: string) => (inRun && !joins ? w + 2 * columnPanel([{ type }]) : w);
   return pool.map((d) => {
-    const fitting = d.widths.filter((w) => foot(w) <= reach + 0.5 && (d.hood ? works(d.id, w) : fitsWidth(w)));
+    const fitting = d.widths.filter((w) => foot(w, d.id) <= reach + 0.5 && (d.hood ? works(d.id, w) : fitsWidth(w)));
     const width = widthsNew(d).find((w) => fitting.includes(w)) ?? null;
     return choice(d, width, false, fitting);
   });
@@ -1814,7 +1850,8 @@ export function wallLimits(input: KitchenConfig, wall: DimTarget): { min: number
   const cfg = sanitizeConfig(input);
   const lim = limitsFor(cfg.layout);
   if (wall === "isl") return hasIsland(cfg.layout) ? { min: lim.island[0], max: islandMax(cfg.layout, cfg.walls.a) } : null;
-  if (!wallsFor(cfg.layout).includes(wall)) return null;
+  // (a bare room wall — KitchenConfig.room.bare — has a length too: the room's depth)
+  if (!wallsFor(cfg.layout).includes(wall) && !cfg.room?.bare?.includes(wall)) return null;
   return { min: lim[wall][0], max: lim[wall][1] };
 }
 
@@ -1841,7 +1878,7 @@ function wallChange(input: KitchenConfig, wall: DimTarget, cm: number, keepKitch
   if (!Number.isFinite(want)) return { cfg, ok: false, warning: "Upišite duljinu u centimetrima.", slotId: null, value: cur, ...lim };
   const value = Math.round(Math.min(lim.max, Math.max(lim.min, want)));
   let raw: KitchenConfig = wall === "isl" ? { ...cfg, island: value } : { ...cfg, walls: { ...cfg.walls, [wall]: value } };
-  if (keepKitchen && wall !== "isl") {
+  if (keepKitchen && wall !== "isl" && wallsFor(cfg.layout).includes(wall)) {
     // the kitchen keeps its length at its anchor end (shortened only by a wall shorter than it)
     const L = cfg.walls[wall];
     const k = kitchenRange(cfg, wall);
@@ -1905,6 +1942,18 @@ export interface HeightChoices {
    * TOP_DEPTHS, `shown` = the kitchen has that row now (an element may have its own: setElementOptions { depth })
    */
   topDepth: { value: number; options: number[]; shown: boolean };
+  /** worktop → wall units (HeightSpec.gap; setHeights(cfg, { gap })), cm: UPPER_GAPS, the one drawn now */
+  gap: { value: number; options: number[] };
+  /**
+   * "do stropa": the second row's height (HeightSpec.topRow; setHeights(cfg, { topRow })), cm — TOP_ROWS (0 = one row up to
+   * the ceiling); `value` null = the planner's split; `shown` = the kitchen goes up to the ceiling
+   */
+  topRow: { value: number | null; drawn: number; options: number[]; shown: boolean };
+  /**
+   * tall units (and the side-by-side bridge) in one piece up to the ceiling (HeightSpec.onePiece; setHeights(cfg,
+   * { onePiece })): `shown` = the kitchen splits its tall units now, `fits` = one piece stays within TALL_DOOR_MAX
+   */
+  onePiece: { value: boolean; shown: boolean; fits: boolean; max: number };
   /** what the kitchen has now */
   current: HeightPlan;
 }
@@ -1947,6 +1996,13 @@ export function setHeights(input: KitchenConfig, patch: Partial<HeightSpec> | nu
     if (tt !== undefined && tt < DIM.tallTopMin) notes.push(`Visoki stup ide najmanje do ${DIM.tallTopMin} cm.`);
     const td = patch.topDepth;
     if (td !== undefined && !asNums(TOP_DEPTHS).includes(Math.round(td))) notes.push(`Nadgradni ormarići dolaze u dubinama od ${TOP_DEPTHS.join(", ")} cm.`);
+    const g = patch.gap;
+    if (g !== undefined && !asNums(UPPER_GAPS).includes(Math.round(g))) notes.push(`Razmak od radne ploče do gornjih elemenata može biti ${UPPER_GAPS.join(", ")} cm.`);
+    const tr = patch.topRow;
+    if (tr !== undefined && !asNums(TOP_ROWS).includes(Math.round(tr))) notes.push(`Nadgradni ormarići mogu biti visoki ${TOP_ROWS.filter((x) => x > 0).join(", ")} cm (ili bez njih).`);
+    // undefined in the patch = back to the planner's choice
+    for (const k of ["gap", "topRow", "onePiece"] as const) if (k in patch && patch[k] === undefined) delete next[k];
+    if (next.onePiece === false) delete next.onePiece;
   }
   const cfg = sanitizeConfig({ ...cfg0, heights: next });
   const plan = planKitchen(cfg);
@@ -1984,6 +2040,19 @@ export function heightChoices(input: KitchenConfig): HeightChoices {
     doStropa,
     current,
     topDepth: { value: current.topDepth, options: [...TOP_DEPTHS], shown: Boolean(current.topRow) },
+    gap: { value: Math.round(current.upperBottom - current.worktop), options: [...UPPER_GAPS] },
+    topRow: {
+      value: spec?.topRow ?? null,
+      drawn: current.topRow ? Math.round(current.topRow.to - current.topRow.from) : 0,
+      options: [...TOP_ROWS],
+      shown: current.mode === "do-stropa",
+    },
+    onePiece: {
+      value: Boolean(spec?.onePiece),
+      shown: current.mode !== "standard" && current.tallSplit !== null,
+      fits: current.tallTop - current.plinth <= TALL_DOOR_MAX,
+      max: TALL_DOOR_MAX,
+    },
   };
 }
 
@@ -2576,6 +2645,11 @@ function cornerNotes(cfg: KitchenConfig, want: Partial<Record<WallId, Range>>): 
  */
 export function setKitchenExtent(input: KitchenConfig, wall: WallId, patch: Partial<KitchenExtent> | null): ExtentResult {
   const cfg0 = sanitizeConfig(input);
+  // a kitchen 0 cm long: no kitchen on that wall (the room's wall stays, bare) — setWallKitchen
+  if (patch?.length !== undefined && Number(patch.length) <= 0 && wall !== "a" && wallsFor(cfg0.layout).includes(wall)) {
+    const r = setWallKitchen(cfg0, wall, false);
+    return { ...r, info: null, notes: r.warning ? [r.warning] : [] };
+  }
   if (!wallsFor(cfg0.layout).includes(wall)) return { ...fail(cfg0, `Ovaj oblik kuhinje nema zid ${wall.toUpperCase()}.`), info: null, notes: [] };
   const plan0 = planKitchen(cfg0);
   const L = cfg0.walls[wall];
@@ -2959,7 +3033,8 @@ function insertGapIn(cfg: KitchenConfig, plan: KitchenPlan, gap: PlanGap, type: 
     // a new column at this end stands right beside the cabinets (never with bare floor between them): the kitchen run
     // then ends at the column's outer side — bare floor beyond it is bare wall outside the kitchen; without bare floor
     // the run grows into the wall beyond it
-    const Z = w + 2 * DIM.panel;
+    // (a side-by-side niche alone has no cover panels: its own side panels close it — plan.ts columnPanel)
+    const Z = w + 2 * columnPanel([{ type }]);
     const k = kitchenRange(cfg, wall);
     const fr = plan.runs.find((r) => r.wall === wall)?.free.find((f) => f.side === side);
     const target: Range =
@@ -3574,6 +3649,19 @@ export interface ElementOptionsInfo {
   rows: { value: number; options: number[] } | null;
   /** lit open units (floating shelves, open niches): LED */
   led: { value: boolean } | null;
+  /**
+   * tall units (and the side-by-side bridge): one piece up to the ceiling ({ onePiece }) — `shown` = the kitchen splits
+   * its tall units now (a "do stropa" kitchen), `fits` = within TALL_DOOR_MAX. Absent in older builds
+   */
+  onePiece?: { value: boolean; own: boolean; shown: boolean; fits: boolean } | null;
+  /** oven columns: { below: "vrata" } a door under the oven, { ovenAt } low / eye level, `micro` the microwave above (setOvenColumn) */
+  oven?: { below: "ladice" | "vrata"; at: OvenAt | "standard"; micro: boolean } | null;
+  /** drawer units: the drawer split ({ drawers }, catalog.drawerLayouts), and whether it is the element's own */
+  drawers?: { value: DrawerLayout; own: boolean; options: { id: DrawerLayout; name: string; ratios: number[] }[] } | null;
+  /** hobs: the hob's own width ({ hob }, HOB_WIDTHS up to the cabinet) and the width drawn now */
+  hob?: { value: number; own: boolean; options: number[] } | null;
+  /** sinks: the bowl's place in the cabinet ({ bowl }) */
+  bowl?: { value: "left" | "center" | "right"; options: ("left" | "center" | "right")[] } | null;
 }
 
 export function elementOptions(input: KitchenConfig, slotId: string): ElementOptionsInfo | null {
@@ -3607,6 +3695,32 @@ export function elementOptions(input: KitchenConfig, slotId: string): ElementOpt
         : null,
     rows: def.rows ? { value: shelvesOf(o).rows, options: [...SHELF_ROWS] } : null,
     led: lit ? { value: o?.led !== false } : null,
+    onePiece:
+      slot.zone === "tall" && !def.endUnit
+        ? {
+            value: onePieceOf(cfg, o),
+            own: o?.onePiece !== undefined,
+            shown: plan.heights.tallSplit !== null,
+            fits: plan.heights.tallTop - plan.heights.plinth <= TALL_DOOR_MAX,
+          }
+        : null,
+    oven:
+      slot.zone === "tall" && (slot.type === "pecnica" || slot.type === "pecnica-mikro")
+        ? { below: o?.below === "vrata" ? "vrata" : "ladice", at: o?.ovenAt ?? "standard", micro: slot.type === "pecnica-mikro" }
+        : null,
+    drawers:
+      slot.zone !== "upper" && slot.zone !== "tall" && DRAWER_TYPES[slot.type]
+        ? {
+            value: drawerLayoutOf(cfg, slot.type, o) ?? DRAWER_TYPES[slot.type],
+            own: o?.drawers !== undefined,
+            options: catalog.drawerLayouts.map((d) => ({ id: d.id, name: d.name, ratios: [...d.ratios] })),
+          }
+        : null,
+    hob:
+      slot.zone !== "upper" && (slot.type === "ploca" || slot.type === "ploca-pecnica")
+        ? { value: hobWidthOf(slot.width, o), own: o?.hob !== undefined, options: HOB_WIDTHS.filter((w) => w <= slot.width - 2) }
+        : null,
+    bowl: def.feature === "sink" ? { value: o?.bowl ?? "center", options: ["left", "center", "right"] } : null,
   };
 }
 
@@ -3785,4 +3899,331 @@ export function setWallShelves(input: KitchenConfig, wall: WallId, opts: { rows?
   if (!changed) return fail(cfg0, opts === null ? `Na zidu ${wall.toUpperCase()} nema visećih polica.` : `Na zidu ${wall.toUpperCase()} nema gornjih elemenata koje mogu zamijeniti police.`);
   const next = sanitizeConfig(withList(cfg, id, list));
   return { cfg: next, ok: true, warning: null, slotId: null };
+}
+
+// ---------------------------------------------------------------- the "photo" round — fridge, Gola, drawers, LED zones,
+// zone opening styles, plinth, oven columns, bare room walls, the ceiling
+
+/** the side-by-side fridge: its finish (FinishSpec.fridge, absent = the appliance finish) and handles, and what can be chosen */
+export function fridgeChoices(input: KitchenConfig): {
+  finish: string;
+  own: boolean;
+  finishes: { id: string; name: string; swatch: string; current: boolean }[];
+  handle: FridgeHandle;
+  handles: { id: FridgeHandle; name: string; note: string; current: boolean }[];
+  /** the kitchen has a side-by-side fridge (otherwise these settings show nowhere) */
+  shown: boolean;
+} {
+  const cfg = sanitizeConfig(input);
+  const plan = planKitchen(cfg);
+  const own = cfg.finish?.fridge;
+  const finish = own ?? (cfg.finish?.appliances === "inox" ? "inox" : "crni");
+  const handle = cfg.finish?.fridgeHandle ?? "letvica";
+  return {
+    finish,
+    own: Boolean(own),
+    finishes: catalog.finishes.fridges.map((f) => ({ id: f.id, name: f.name, swatch: f.swatch, current: f.id === finish })),
+    handle,
+    handles: catalog.fridgeHandles.map((h) => ({ ...h, current: h.id === handle })),
+    shown: plan.slots.some((s) => s.type === "hladnjak-sbs" || s.type === "hladnjak-sbs-vrata"),
+  };
+}
+
+/**
+ * The side-by-side fridge's finish (inox, tamni inox, crni, bijeli — independent of the oven / microwave fronts) and
+ * handles (long bars / recessed grips); null = back to the default (the appliance finish, bars). Refused for an unknown id.
+ *
+ *   setFridge(cfg, { finish: "tamni-inox", handle: "udubljena" })
+ */
+export function setFridge(input: KitchenConfig, patch: { finish?: string | null; handle?: FridgeHandle | null }): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  if (patch.finish && !catalog.finishes.fridges.some((f) => f.id === patch.finish)) return fail(cfg0, "Nepoznata boja hladnjaka.");
+  if (patch.handle && !catalog.fridgeHandles.some((h) => h.id === patch.handle)) return fail(cfg0, "Nepoznata ručka hladnjaka.");
+  const finish: Record<string, unknown> = { ...(cfg0.finish ?? {}) };
+  if (patch.finish !== undefined) {
+    if (patch.finish === null) delete finish.fridge;
+    else finish.fridge = patch.finish;
+  }
+  if (patch.handle !== undefined) {
+    if (patch.handle === null || patch.handle === "letvica") delete finish.fridgeHandle;
+    else finish.fridgeHandle = patch.handle;
+  }
+  return { cfg: sanitizeConfig({ ...cfg0, finish }), ok: true, warning: null, slotId: null };
+}
+
+/** the Gola profile (handles "bez"): its colour (FinishSpec.handleColor) and the channel between drawers, and the options */
+export function golaChoices(input: KitchenConfig): {
+  color: string;
+  colors: { id: string; name: string; swatch: string; current: boolean }[];
+  between: boolean;
+  /** the kitchen (or a zone of it) opens with the Gola profile */
+  shown: boolean;
+} {
+  const cfg = sanitizeConfig(input);
+  const color = cfg.finish?.handleColor ?? (cfg.handles === "bez" ? "crna" : "inox");
+  const zones = Object.values(cfg.zoneHandles ?? {});
+  return {
+    color,
+    colors: catalog.finishes.handleColors.map((h) => ({ id: h.id, name: h.golaName, swatch: h.swatch, current: h.id === color })),
+    between: Boolean(cfg.gola?.between),
+    shown: cfg.handles === "bez" || zones.includes("bez"),
+  };
+}
+
+/**
+ * The Gola profile: `color` (crna, inox, bijela, alu, mesing — FinishSpec.handleColor, null = the default black) and
+ * `between` (a horizontal Gola channel between the drawers of every handleless drawer unit). Refused for an unknown colour.
+ *
+ *   setGola(cfg, { color: "bijela", between: true })
+ */
+export function setGola(input: KitchenConfig, patch: { color?: string | null; between?: boolean }): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  if (patch.color && !catalog.finishes.handleColors.some((h) => h.id === patch.color)) return fail(cfg0, "Nepoznata boja profila.");
+  const finish: Record<string, unknown> = { ...(cfg0.finish ?? {}) };
+  if (patch.color !== undefined) {
+    if (patch.color === null) delete finish.handleColor;
+    else finish.handleColor = patch.color;
+  }
+  const gola = patch.between === undefined ? cfg0.gola : patch.between ? { between: true } : undefined;
+  return { cfg: sanitizeConfig({ ...cfg0, finish, gola }), ok: true, warning: null, slotId: null };
+}
+
+/**
+ * The drawer split of every drawer unit (KitchenConfig.drawerLayout: "jednake3", "msv" small + medium + large, "duboke2",
+ * "1+2", "4"); null = each type's own (every older link). One element: setElementOptions(cfg, slot, { drawers }).
+ */
+export function setDrawerLayout(input: KitchenConfig, layout: DrawerLayout | null): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  if (layout !== null && !catalog.drawerLayouts.some((d) => d.id === layout)) return fail(cfg0, "Nepoznata podjela ladica.");
+  return { cfg: sanitizeConfig({ ...cfg0, drawerLayout: layout ?? undefined }), ok: true, warning: null, slotId: null };
+}
+
+/** LED zones: on / off each (the kitchen's LED must be on for any of them to light) */
+export function ledZoneChoices(input: KitchenConfig): { led: boolean; zones: { id: keyof LedZones; name: string; on: boolean }[] } {
+  const cfg = sanitizeConfig(input);
+  const names: Record<keyof LedZones, string> = { under: "Ispod gornjih elemenata", plinth: "U postolju", inner: "U nišama i vitrinama" };
+  return { led: cfg.led, zones: (["under", "plinth", "inner"] as const).map((id) => ({ id, name: names[id], on: cfg.ledZones?.[id] !== false })) };
+}
+
+/**
+ * Switch LED zones one by one (KitchenConfig.ledZones): `patch` merges ({ plinth: false } = no LED in the plinth), null
+ * = every zone follows KitchenConfig.led again. Switching a zone on also turns the kitchen's LED on.
+ */
+export function setLedZones(input: KitchenConfig, patch: Partial<LedZones> | null): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  if (patch === null) return { cfg: sanitizeConfig({ ...cfg0, ledZones: undefined }), ok: true, warning: null, slotId: null };
+  const lz: Record<string, unknown> = { ...(cfg0.ledZones ?? {}) };
+  let on = false;
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === false) lz[k] = false;
+    else {
+      delete lz[k];
+      if (v === true) on = true;
+    }
+  }
+  return { cfg: sanitizeConfig({ ...cfg0, ledZones: lz, led: cfg0.led || on }), ok: true, warning: null, slotId: null };
+}
+
+/**
+ * How one zone's fronts open (KitchenConfig.zoneHandles: base Gola, wall units and the tall column push-to-open …);
+ * null = as the kitchen (KitchenConfig.handles). Elements with their own style (opt.open) keep it.
+ *
+ *   setZoneHandles(cfg, "upper", "push")
+ */
+export function setZoneHandles(input: KitchenConfig, zone: FrontZone, style: HandleStyle | null): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  if (style !== null && !catalog.handles.some((h) => h.id === style)) return fail(cfg0, "Nepoznat način otvaranja.");
+  const zh: Record<string, unknown> = { ...(cfg0.zoneHandles ?? {}) };
+  if (style === null) delete zh[zone];
+  else zh[zone] = style;
+  return { cfg: sanitizeConfig({ ...cfg0, zoneHandles: zh }), ok: true, warning: null, slotId: null };
+}
+
+/** each zone's opening style (its own, or the kitchen's) */
+export function zoneHandleChoices(input: KitchenConfig): { zone: FrontZone; value: HandleStyle; own: boolean }[] {
+  const cfg = sanitizeConfig(input);
+  return (["base", "upper", "tall", "island"] as const).map((zone) => ({ zone, value: openingOf(cfg, undefined, zone), own: Boolean(cfg.zoneHandles?.[zone]) }));
+}
+
+/** the plinth: its finish (catalog.finishes.plinths) and recess behind the fronts (PLINTH_RECESSES), and the options */
+export function plinthChoices(input: KitchenConfig): { finish: string; finishes: { id: string; name: string; swatch: string; current: boolean }[]; recess: number; recesses: number[] } {
+  const cfg = sanitizeConfig(input);
+  const finish = cfg.finish?.plinth ?? FINISH_DEFAULTS.plinth;
+  return {
+    finish,
+    finishes: catalog.finishes.plinths.map((p) => ({ id: p.id, name: p.name, swatch: p.swatch, current: p.id === finish })),
+    recess: plinthRecessOf(cfg),
+    recesses: [...PLINTH_RECESSES],
+  };
+}
+
+/**
+ * The plinth: `finish` (crna, fronta, inox, alu; null = black) and `recess` (cm behind the base fronts: 0 flush … 12;
+ * null = 6). Refused for an unknown finish.
+ */
+export function setPlinth(input: KitchenConfig, patch: { finish?: string | null; recess?: number | null }): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  if (patch.finish && !catalog.finishes.plinths.some((p) => p.id === patch.finish)) return fail(cfg0, "Nepoznato postolje.");
+  const finish: Record<string, unknown> = { ...(cfg0.finish ?? {}) };
+  if (patch.finish !== undefined) {
+    if (patch.finish === null) delete finish.plinth;
+    else finish.plinth = patch.finish;
+  }
+  let plinth = cfg0.plinth;
+  const notes: string[] = [];
+  if (patch.recess !== undefined) {
+    plinth = patch.recess === null ? undefined : { recess: patch.recess };
+    if (patch.recess !== null && !(PLINTH_RECESSES as readonly number[]).includes(Math.round(patch.recess))) {
+      notes.push(`Postolje može biti uvučeno ${PLINTH_RECESSES.join(", ")} cm (zadano ${PLINTH_RECESS_DEFAULT} cm).`);
+    }
+  }
+  return { cfg: sanitizeConfig({ ...cfg0, finish, plinth }), ok: true, warning: notes.length ? notes.join(" ") : null, slotId: null };
+}
+
+/**
+ * An oven column's variant (types "pecnica" / "pecnica-mikro"): `below` "vrata" (one door under the oven) / "ladice" (two
+ * drawers, every older column), `at` "nisko" / "oci" (eye level: the oven's bottom on the worktop line) / "standard",
+ * `micro` true / false (the microwave above the oven: the type becomes "pecnica-mikro" / "pecnica"). Refused for any
+ * other element.
+ *
+ *   setOvenColumn(cfg, "tall-0", { below: "vrata", at: "oci", micro: true })   // the photo's column
+ */
+export function setOvenColumn(input: KitchenConfig, slotId: string, patch: { below?: "ladice" | "vrata"; at?: OvenAt | "standard"; micro?: boolean }): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  const s0 = planKitchen(cfg0).slots.find((s) => s.id === slotId);
+  if (!s0 || s0.zone !== "tall" || (s0.type !== "pecnica" && s0.type !== "pecnica-mikro")) return fail(cfg0, "To nije visoki element s pećnicom.", slotId);
+  let cur: EditResult = { cfg: cfg0, ok: true, warning: null, slotId };
+  const want = patch.micro === undefined ? s0.type : patch.micro ? "pecnica-mikro" : "pecnica";
+  if (want !== s0.type) {
+    cur = changeType(cfg0, slotId, want, "tall");
+    if (!cur.ok || !cur.slotId) return cur;
+  }
+  const opt: Partial<ElementOpts> = {};
+  if (patch.below !== undefined) opt.below = patch.below === "vrata" ? "vrata" : undefined;
+  if (patch.at !== undefined) opt.ovenAt = patch.at === "standard" ? undefined : patch.at;
+  if (!Object.keys(opt).length) return cur;
+  const r = setElementOptions(cur.cfg, cur.slotId ?? slotId, opt);
+  return r.ok ? { ...r, warning: [cur.warning, r.warning].filter(Boolean).join(" ") || null } : r;
+}
+
+/** the room's walls: each with its length and whether the kitchen stands on it (a bare wall: KitchenConfig.room.bare) */
+export function roomWalls(input: KitchenConfig): { wall: WallId; length: number; kitchen: boolean; bare: boolean; canBare: boolean }[] {
+  const cfg = sanitizeConfig(input);
+  const used = wallsFor(cfg.layout);
+  const bare = cfg.room?.bare ?? [];
+  const pen = peninsulaSide(cfg);
+  return (["a", "b", "c"] as WallId[]).map((w) => ({
+    wall: w,
+    length: cfg.walls[w],
+    kitchen: used.includes(w),
+    bare: bare.includes(w),
+    // a bare wall goes where the layout has no kitchen run and no peninsula stands
+    canBare: w !== "a" && !used.includes(w) && !(pen === "right" && w === "c") && !(pen === "left" && w === "b"),
+  }));
+}
+
+/**
+ * A room wall without a kitchen (KitchenConfig.room.bare): an L kitchen in a closed room with a bare right wall =
+ * setBareWall(L, "c", true). `cm` sets the wall's length (the room's depth, KitchenConfig.walls.b / c). Refused for wall
+ * A, a wall the layout has a kitchen on (setWallKitchen takes the kitchen off it) and the side a peninsula stands on.
+ */
+export function setBareWall(input: KitchenConfig, wall: WallId, on: boolean, cm?: number): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  const w = roomWalls(cfg0).find((x) => x.wall === wall);
+  if (!w || (on && !w.canBare)) {
+    return fail(cfg0, wall === "a" ? "Na zidu A uvijek stoji kuhinja." : w?.kitchen ? `Na zidu ${wall.toUpperCase()} stoji kuhinja.` : `Uz poluotok ne može stajati zid ${wall.toUpperCase()}.`);
+  }
+  const bare = new Set(cfg0.room?.bare ?? []);
+  if (on) bare.add(wall);
+  else bare.delete(wall);
+  const room: RoomSpec = { ...(cfg0.room ?? {}), bare: [...bare] };
+  const walls = cm !== undefined && Number.isFinite(cm) ? { ...cfg0.walls, [wall]: Math.round(cm) } : cfg0.walls;
+  return { cfg: sanitizeConfig({ ...cfg0, walls, room }), ok: true, warning: null, slotId: null };
+}
+
+/**
+ * Put a kitchen on a room wall or take it off ("kitchen length 0"), keeping the room: the layout changes —
+ *   off  L / G wall B → ravna / poluotok + a bare wall B · U wall C → L + a bare wall C
+ *   on   ravna + bare B → L · L + bare C → U · poluotok (right) + bare B → G
+ * The kitchen on the other walls stays as it is (their lists, corners at A's other end); what stood on the wall goes.
+ * Not possible: wall A (always a kitchen), wall B of a U (A + C is no layout: take C off, or mirror the room) and a
+ * kitchen on wall C without one on B — refused with the reason.
+ */
+export function setWallKitchen(input: KitchenConfig, wall: WallId, on: boolean): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  const L = cfg0.layout;
+  const bare = new Set(cfg0.room?.bare ?? []);
+  const has = wallsFor(L).includes(wall);
+  if (wall === "a") return fail(cfg0, "Na zidu A uvijek stoji kuhinja.");
+  if (on === has) return { cfg: cfg0, ok: true, warning: null, slotId: null };
+  let layout: KitchenConfig["layout"] | null = null;
+  if (!on) {
+    if (wall === "b" && L === "L") layout = "ravna";
+    else if (wall === "b" && L === "G") layout = "poluotok";
+    else if (wall === "c" && L === "U") layout = "L";
+  } else {
+    if (wall === "b" && L === "ravna") layout = "L";
+    else if (wall === "c" && L === "L") layout = "U";
+    else if (wall === "b" && L === "poluotok" && peninsulaSide(cfg0) === "right") layout = "G";
+  }
+  if (!layout) {
+    return fail(
+      cfg0,
+      on
+        ? `Kuhinja na zidu ${wall.toUpperCase()} uz ovaj oblik ne ide — ${wall === "c" ? "prvo dodajte kuhinju na zid B (oblik L)" : "odaberite drugi oblik kuhinje"}.`
+        : `Bez kuhinje na zidu ${wall.toUpperCase()} ovaj oblik ne ide — ${wall === "b" && L === "U" ? "maknite kuhinju sa zida C (oblik L)" : "odaberite drugi oblik kuhinje"}.`,
+    );
+  }
+  const next: KitchenConfig = { ...cfg0, layout };
+  // what stood on the wall goes with its kitchen (lists, its end columns, its extent, the corner units at A's end there)
+  const strip = (w: WallId) => {
+    if (next.runs?.[w]) next.runs = Object.fromEntries(Object.entries(next.runs).filter(([k]) => k !== w));
+    if (next.upperRuns?.[w]) next.upperRuns = Object.fromEntries(Object.entries(next.upperRuns).filter(([k]) => k !== w));
+    if (next.tallRuns) next.tallRuns = Object.fromEntries(Object.entries(next.tallRuns).filter(([k]) => !k.startsWith(`${w}-`)));
+    if (next.extents?.[w]) next.extents = Object.fromEntries(Object.entries(next.extents).filter(([k]) => k !== w));
+    if (next.tallAt?.startsWith(`${w}-`)) delete next.tallAt;
+    const side = w === "b" ? "l" : "r";
+    if (next.corners) next.corners = Object.fromEntries(Object.entries(next.corners).filter(([k]) => !k.endsWith(`-${side}`)));
+  };
+  if (!on) {
+    strip(wall);
+    bare.add(wall);
+  } else bare.delete(wall);
+  next.room = { ...(cfg0.room ?? {}), bare: [...bare] };
+  const cfg = sanitizeConfig(next);
+  return {
+    cfg,
+    ok: true,
+    warning: on ? `Kuhinja sada stoji i na zidu ${wall.toUpperCase()}.` : `Na zidu ${wall.toUpperCase()} više nema kuhinje — zid prostorije ostaje.`,
+    slotId: null,
+  };
+}
+
+/** the room's ceiling in the 3D view (room.ceiling) and its round light (room.lamp) — the view only, not priced */
+export function setRoomCeiling(input: KitchenConfig, patch: { ceiling?: boolean; lamp?: boolean }): EditResult {
+  const cfg0 = sanitizeConfig(input);
+  const room: Record<string, unknown> = { ...(cfg0.room ?? {}) };
+  if (patch.ceiling !== undefined) room.ceiling = patch.ceiling || undefined;
+  if (patch.lamp !== undefined) room.lamp = patch.lamp || undefined;
+  return { cfg: sanitizeConfig({ ...cfg0, room }), ok: true, warning: null, slotId: null };
+}
+
+/** what a sink's bowl / a hob's glass looks like in its cabinet now (cm, element-local) — the 2D views draw it from this too */
+export function sinkAndHob(input: KitchenConfig, slotId: string): { bowl: { x0: number; x1: number } | null; hob: number | null } | null {
+  const cfg = sanitizeConfig(input);
+  const s = planKitchen(cfg).slots.find((x) => x.id === slotId);
+  if (!s) return null;
+  const def = moduleDef(s.zone === "island" ? "base" : s.zone, s.type);
+  return {
+    bowl: def?.feature === "sink" ? sinkBowl(s.width, s.opt) : null,
+    hob: s.type === "ploca" || s.type === "ploca-pecnica" ? hobWidthOf(s.width, s.opt) : null,
+  };
+}
+
+/** the split line of a tall element in the plan now (cm above the floor), null = one piece (the "do stropa" one-piece option) */
+export function tallSplitAt(input: KitchenConfig, slotId: string): number | null {
+  const cfg = sanitizeConfig(input);
+  const plan = planKitchen(cfg);
+  const s = plan.slots.find((x) => x.id === slotId);
+  return s && s.zone === "tall" ? tallSplitOf(cfg, plan.heights, s.opt) : null;
 }

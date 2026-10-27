@@ -4,10 +4,13 @@
  * `composition()` is the same element list as structured data (offers, admin).
  */
 
+import { DRAWER_TYPES, hobWidthOf } from "./fronts";
 import {
   FINISH_DEFAULTS,
   backsplashDef,
+  catalog,
   defaultHandleColor,
+  drawerLayoutDef,
   finishDef,
   frontDef,
   glassFrameDef,
@@ -30,8 +33,12 @@ import {
   isPeninsula,
   isTallList,
   kitchenRange,
+  ledZoneOn,
+  openingOf,
   parseRunEnd,
   planKitchen,
+  plinthRecessOf,
+  tallSplitOf,
   shelvesOf,
   tallListEnd,
   worktopThickness,
@@ -201,6 +208,13 @@ export function elementOptionsText(cfg: KitchenConfig, s: PlanSlot): string | nu
     parts.push(`${sh.rows} ${sh.rows === 1 ? "polica" : "police"}${sh.led ? " s LED-om" : ""}`);
   } else if (def.lit && o?.led === false) parts.push("bez LED-a");
   if (s.end) parts.push(`završetak ${s.end.side === "left" ? "lijevog" : "desnog"} kraja`);
+  // the "photo" round: one piece up to the ceiling, the oven column's variant, the drawer split, the hob's width, the bowl
+  if (s.zone === "tall" && o?.onePiece !== undefined) parts.push(o.onePiece ? "u jednom komadu do stropa" : "s nadgradnim ormarićem");
+  if (o?.ovenAt) parts.push(o.ovenAt === "oci" ? "pećnica u visini očiju" : "pećnica nisko");
+  if (o?.below === "vrata") parts.push("ispod pećnice vrata");
+  if (o?.drawers) parts.push(`ladice: ${(drawerLayoutDef(o.drawers)?.name ?? o.drawers).toLowerCase()}`);
+  if (o?.hob !== undefined) parts.push(`ploča za kuhanje ${hobWidthOf(s.width, o)} cm`);
+  if (o?.bowl) parts.push(`korito ${o.bowl === "left" ? "lijevo" : "desno"}`);
   return parts.length ? parts.join(", ") : null;
 }
 
@@ -310,15 +324,21 @@ export function summarize(cfg: KitchenConfig): string[] {
   for (const w of plan.walls) {
     lines.push(`Zid ${WALL_NAME[w]} (${WALL_HINT[w]}): ${c.walls[w]} cm${kitchenOnWall(plan, w)}`);
   }
+  // room walls without a kitchen (KitchenConfig.room.bare): the room's depth
+  for (const w of plan.bareWalls ?? []) lines.push(`Zid ${WALL_NAME[w.wall]} (${WALL_HINT[w.wall]}): ${w.length} cm, bez kuhinje`);
   lines.push(`Visina stropa: ${c.ceiling} cm`);
   // heights other than the standard ones (KitchenConfig.heights), as the plan fitted them under the ceiling (a top-row
   // depth alone is not a height: it has its own line below)
-  if (c.heights && (c.heights.mode !== "standard" || c.heights.worktop !== undefined || worktopThickness(c) !== 4)) {
+  if (c.heights && (c.heights.mode !== "standard" || c.heights.worktop !== undefined || c.heights.gap !== undefined || worktopThickness(c) !== 4)) {
     const H = plan.heights;
     const r = Math.round;
     const parts = [`radna ploča ${r(H.worktop)} cm`, `gornji elementi ${r(H.upperTop - H.upperBottom)} cm (${r(H.upperBottom)}–${r(H.upperTop)} cm od poda)`];
+    if (c.heights?.gap !== undefined) parts.push(`razmak radna ploča – gornji ${r(H.upperBottom - H.worktop)} cm`);
     if (H.topRow) parts.push(`nadgradni ormarići ${r(H.topRow.to - H.topRow.from)} cm (do ${r(H.topRow.to)} cm${c.heights?.topDepth !== undefined ? `, dubina ${c.heights.topDepth} cm` : ""})`);
-    if (plan.slots.some((s) => s.zone === "tall")) parts.push(`visoki stup do ${r(H.tallTop)} cm`);
+    if (plan.slots.some((s) => s.zone === "tall")) {
+      const one = H.tallSplit !== null && plan.slots.some((s) => s.zone === "tall" && tallSplitOf(c, H, s.opt) === null);
+      parts.push(`visoki stup do ${r(H.tallTop)} cm${one ? (plan.slots.every((s) => s.zone !== "tall" || tallSplitOf(c, H, s.opt) === null) ? ", u jednom komadu" : ", dijelom u jednom komadu") : ""}`);
+    }
     if (H.cornice) parts.push(`lajsna do stropa ${r(H.cornice.to - H.cornice.from)} cm`);
     const mode = H.mode === "do-stropa" ? "do stropa" : H.mode === "custom" ? "po mjeri" : "standardne";
     lines.push(`Visine: ${mode} — ${parts.join(", ")}`);
@@ -353,6 +373,14 @@ export function summarize(cfg: KitchenConfig): string[] {
   }
   const ownText = [...own].map(([id, n]) => `${(handleDef(id)?.name ?? id).toLowerCase()}: ${n} ${n === 1 ? "element" : n < 5 ? "elementa" : "elemenata"}`).join("; ");
   lines.push(`Ručke: ${handle?.name ?? c.handles}${colour}${ownText ? ` (osim: ${ownText})` : ""}`);
+  // zones that open their own way (KitchenConfig.zoneHandles) — only zones the kitchen has
+  const ZONE_WORD: Record<FrontZone, string> = { base: "donji elementi", upper: "gornji elementi", tall: "visoki stup", island: isPeninsula(c.layout) ? "poluotok" : "otok" };
+  const present = new Set(plan.slots.map((s) => s.zone));
+  const zoneOpen = (["base", "upper", "tall", "island"] as const).filter((z) => c.zoneHandles?.[z] && present.has(z)).map((z) => `${ZONE_WORD[z]}: ${(handleDef(openingOf(c, undefined, z))?.name ?? "").toLowerCase()}`);
+  if (zoneOpen.length) lines.push(`Otvaranje po zonama: ${zoneOpen.join("; ")}`);
+  if (c.gola?.between && (c.handles === "bez" || Object.values(c.zoneHandles ?? {}).includes("bez"))) lines.push("Profil Gola: i između ladica (svaka ladica ima svoj hvat)");
+  const drawerUnits = plan.slots.filter((s) => s.zone !== "upper" && s.zone !== "tall" && DRAWER_TYPES[s.type]);
+  if (c.drawerLayout && drawerUnits.length) lines.push(`Podjela ladica: ${(drawerLayoutDef(c.drawerLayout)?.name ?? c.drawerLayout).toLowerCase()}`);
 
   const topName = topDef(c.top)?.name ?? c.top;
   const thick = worktopThickness(c);
@@ -398,7 +426,16 @@ export function summarize(cfg: KitchenConfig): string[] {
   if (has((t) => ovens.includes(t))) {
     lines.push(`Fronte aparata (pećnica, mikrovalna): ${(finishDef("appliances", c.finish?.appliances ?? FINISH_DEFAULTS.appliances)?.name ?? "").toLowerCase()}`);
   }
-  if (c.finish?.plinth) lines.push(`Postolje: ${(finishDef("plinths", c.finish.plinth)?.name ?? c.finish.plinth).toLowerCase()}`);
+  if (c.finish?.plinth || c.plinth) {
+    const name = (finishDef("plinths", c.finish?.plinth ?? FINISH_DEFAULTS.plinth)?.name ?? "").toLowerCase();
+    lines.push(`Postolje: ${name}${c.plinth ? `, uvučeno ${plinthRecessOf(c)} cm` : ""}`);
+  }
+  // the side-by-side fridge: its own finish / handles (the appliance itself is not in the price)
+  if (has((t) => t === "hladnjak-sbs" || t === "hladnjak-sbs-vrata") && (c.finish?.fridge || c.finish?.fridgeHandle)) {
+    const f = c.finish?.fridge ? (finishDef("fridges", c.finish.fridge)?.name ?? c.finish.fridge) : (finishDef("appliances", c.finish?.appliances ?? FINISH_DEFAULTS.appliances)?.name ?? "");
+    const hnd = catalog.fridgeHandles.find((h) => h.id === (c.finish?.fridgeHandle ?? "letvica"))?.name ?? "";
+    lines.push(`Dvokrilni hladnjak: ${f.toLowerCase()}, ${hnd.toLowerCase()} (hladnjak nije uračunat u cijenu)`);
+  }
 
   const tallNames = (list: ListId) =>
     plan.slots.filter((s) => s.zone === "tall" && s.list?.id === list).map((s) => `${moduleDef("tall", s.type)?.name.toLowerCase() ?? s.type} ${Math.round(s.width)} cm`);
@@ -421,7 +458,10 @@ export function summarize(cfg: KitchenConfig): string[] {
   }
 
   const led = finishDef("leds", c.finish?.led ?? FINISH_DEFAULTS.led)?.name.toLowerCase();
-  lines.push(`LED rasvjeta: ${c.led ? `da (${led}, ispod gornjih elemenata, u postolju i nišama)` : "ne"}`);
+  const lit = [ledZoneOn(c, "under") ? "ispod gornjih elemenata" : null, ledZoneOn(c, "plinth") ? "u postolju" : null, ledZoneOn(c, "inner") ? "u nišama i vitrinama" : null].filter(Boolean);
+  lines.push(
+    `LED rasvjeta: ${c.led && lit.length ? `da (${led}, ${c.ledZones ? lit.join(", ") : "ispod gornjih elemenata, u postolju i nišama"})` : "ne"}`,
+  );
   lines.push(...islandSummary(plan));
 
   // every run, left → right (edited ones marked) — the owner quotes from this
@@ -431,11 +471,12 @@ export function summarize(cfg: KitchenConfig): string[] {
     lines.push(`${row.label}${row.edited ? " (uređeno)" : ""}: ${items}`);
   }
 
-  if (c.room?.wall || c.room?.floor || c.room?.walls) {
+  if (c.room?.wall || c.room?.floor || c.room?.walls || c.room?.ceiling) {
     const parts = [
       c.room.wall ? `zid ${roomWallDef(c.room.wall)?.name.toLowerCase()}` : null,
       ...plan.walls.map((w) => (c.room?.walls?.[w] ? `zid ${WALL_NAME[w]} ${roomWallDef(c.room.walls[w])?.name.toLowerCase()}` : null)),
       c.room.floor ? `pod ${roomFloorDef(c.room.floor)?.name.toLowerCase()}` : null,
+      c.room.ceiling ? `strop${c.room.lamp ? " sa stropnom svjetiljkom" : ""}` : null,
     ].filter(Boolean);
     if (parts.length) lines.push(`Prostor u prikazu (samo za dojam): ${parts.join(", ")}`);
   }
