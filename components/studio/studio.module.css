@@ -993,3 +993,100 @@
     transition: none;
   }
 }
+
+/* ---------------------------------------------------------------- 2D view (PlanView): the drawing on the studio's dark */
+
+.plan {
+  background: #131315;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+.plan:active {
+  cursor: grabbing;
+}
+/* the drawing's own text in the studio's clean sans (the SVG names Helvetica for print) */
+.planPaper text {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+/* what is behind the cut or only a symbol stays quieter than the cabinets */
+.planPaper [data-layer="iznad"],
+.planPaper [data-layer="otvaranje"],
+.planPaper [data-layer="prazno"] {
+  opacity: 0.55;
+}
+.planPaper [data-layer="sjedenje"],
+.planPaper [data-layer="presjek"] {
+  opacity: 0.75;
+}
+/* an element's hit area: invisible until pointed at, lit by the "Elementi" list (data-hl), accent when selected */
+.planHit {
+  fill: rgba(201, 185, 154, 0);
+  stroke: rgba(242, 239, 233, 0);
+  stroke-width: 1px;
+  pointer-events: all;
+  cursor: pointer;
+  outline: none;
+  transition:
+    fill 0.25s cubic-bezier(0.2, 0.8, 0.2, 1),
+    stroke 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (hover: hover) {
+  .planHit:hover {
+    fill: rgba(242, 239, 233, 0.07);
+    stroke: rgba(242, 239, 233, 0.4);
+  }
+}
+.planHit[data-hl] {
+  fill: rgba(242, 239, 233, 0.08);
+  stroke: rgba(242, 239, 233, 0.45);
+}
+.planHit[data-sel] {
+  fill: rgba(201, 185, 154, 0.16);
+}
+.planHit:focus-visible {
+  stroke: #c9b99a;
+  stroke-width: 2px;
+}
+.planSel {
+  fill: none;
+  stroke: #c9b99a;
+  stroke-width: 1.75px;
+  pointer-events: none;
+}
+/* the hovered element's name, over it (desktop) */
+.planTip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(17, 17, 19, 0.82);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-size: 11.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.planTip[data-on] {
+  opacity: 1;
+}
+.plan[data-docked] .planTip {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .planHit,
+  .planTip {
+    transition: none;
+  }
+}

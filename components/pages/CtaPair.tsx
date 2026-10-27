@@ -12,50 +12,52 @@ export type CtaItem = {
 };
 
 /**
- * Closing section on paper: a heading and two large link panels (usually 3D studio + upit).
- * The first panel is the primary one (inked).
+ * Closing section: a heading and two large link cards (usually 3D studio + upit).
+ * The first card is the primary one (graphite), the second a white card. `bg` alternates with the section before it.
  */
 export function CtaPair({
   eyebrow,
   title,
   items,
   id,
+  bg = "greige",
 }: {
   eyebrow: string;
   title: ReactNode;
   items: [CtaItem, CtaItem];
   id?: string;
+  bg?: "greige" | "canvas";
 }) {
   return (
-    <section id={id} className="bg-paper py-24 text-ink lg:py-36">
+    <section id={id} className={`py-24 lg:py-32 ${bg === "canvas" ? "bg-canvas" : "bg-greige"}`}>
       <div className="shell">
-        <SectionHead eyebrow={eyebrow} title={title} tone="paper" />
-        <div className="mt-14 grid gap-4 lg:mt-20 lg:grid-cols-2">
+        <SectionHead eyebrow={eyebrow} title={title} />
+        <div className="mt-10 grid gap-4 lg:mt-14 lg:grid-cols-2">
           {items.map((item, i) => {
             const primary = i === 0;
             return (
               <Reveal key={item.href} delay={i * 0.1}>
                 <Link
                   href={item.href}
-                  className={`group relative flex min-h-[300px] flex-col justify-between overflow-hidden p-8 transition-colors duration-500 ease-premium sm:p-10 lg:min-h-[360px] ${
+                  className={`group relative flex min-h-[280px] flex-col justify-between overflow-hidden rounded-[20px] p-7 transition-[background-color,box-shadow,border-color] duration-500 ease-premium sm:p-9 lg:min-h-[320px] ${
                     primary
-                      ? "bg-ink text-fg hover:bg-ink-700"
-                      : "border border-ink/20 text-ink hover:border-ink hover:bg-paper-dark"
+                      ? "bg-graphite text-fg hover:bg-black"
+                      : "border border-hairline bg-card text-graphite hover:border-graphite/30 hover:shadow-[0_20px_50px_-24px_rgba(60,48,30,.25)]"
                   }`}
                 >
-                  <span className={`eyebrow ${primary ? "text-accent" : "text-accent-deep"}`}>{item.kicker}</span>
-                  <span className="mt-12 block">
-                    <span className="display block text-[clamp(32px,3.6vw,56px)]">{item.title}</span>
-                    <span className={`mt-5 block max-w-md text-[15px] leading-relaxed ${primary ? "text-fg/65" : "text-ink/65"}`}>
+                  <span className={`kicker ${primary ? "text-accent" : "text-taupe"}`}>{item.kicker}</span>
+                  <span className="mt-10 block">
+                    <span className="heading block text-[clamp(28px,3vw,42px)]">{item.title}</span>
+                    <span className={`mt-4 block max-w-md text-[15px] leading-relaxed ${primary ? "text-fg/70" : "text-taupe"}`}>
                       {item.text}
                     </span>
                   </span>
                   <span
                     aria-hidden
-                    className={`absolute right-8 top-8 flex h-12 w-12 items-center justify-center rounded-full border transition-all duration-500 ease-premium sm:right-10 sm:top-10 ${
+                    className={`absolute right-7 top-7 flex h-11 w-11 items-center justify-center rounded-full border transition-colors duration-500 ease-premium sm:right-9 sm:top-9 ${
                       primary
-                        ? "border-white/20 group-hover:border-accent group-hover:bg-accent group-hover:text-ink"
-                        : "border-ink/25 group-hover:border-ink group-hover:bg-ink group-hover:text-paper"
+                        ? "border-white/20 group-hover:border-fg group-hover:bg-fg group-hover:text-graphite"
+                        : "border-graphite/20 group-hover:border-graphite group-hover:bg-graphite group-hover:text-white"
                     }`}
                   >
                     <Arrow />

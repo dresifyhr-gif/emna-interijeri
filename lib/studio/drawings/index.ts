@@ -22,8 +22,9 @@ export { floorPlan, wallFrame } from "./floorplan";
 export { elevations, islandElevation, wallElevation } from "./elevation";
 export { elementLabels, runTitle, slotTypeName, WALL_T } from "./common";
 export { slotFace, type Face, type FaceCtx } from "./face";
-export { DEFAULT_COLORS, DEFAULT_WEIGHTS, DIM_GAP, DIM_STEP, STANDARD_SCALES, dimLineAt, dimText, fitScale, paperSize, toSVG, type SvgColors, type SvgOptions, type SvgResult } from "./svg";
+export { DEFAULT_COLORS, DEFAULT_WEIGHTS, DIM_GAP, DIM_STEP, STANDARD_SCALES, dimLineAt, dimText, fitScale, paperSize, svgFrame, toSVG, type SvgColors, type SvgOptions, type SvgResult } from "./svg";
 export { DXF_LAYERS, toDxfEntities, type DxfEntity, type DxfOptions } from "./dxf";
+export { drawingGaps, drawingHits, planRunXf, type DrawingHit } from "./view";
 export * from "./model";
 
 /** which elevation: a wall, the island / peninsula from its working side ("isl") or from its seating side ("isl-straga") */

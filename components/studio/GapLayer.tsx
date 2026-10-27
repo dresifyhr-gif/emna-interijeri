@@ -31,13 +31,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { gapOptions, insertAtGap, type EditResult } from "@/lib/studio/edit";
 import { moduleDef } from "@/lib/studio/catalog";
 import { GAP_LABEL, planGaps, type KitchenPlan, type PlanGap } from "@/lib/studio/plan";
-import type { GapView, KitchenConfig, StudioEngineApi, ViewInfo } from "@/lib/studio/types";
+import type { GapView, KitchenConfig, ViewInfo } from "@/lib/studio/types";
 import { AddPicker, addItems, type AddItem } from "./AddPicker";
 import { gapStretch } from "./addModel";
 import { CloseIcon, PlusIcon } from "./icons";
 import { clamp, gapPlace, islandWord } from "./meta";
 import { seamLine, seamPreview, seamPreviewAtStart, type SeamPreview } from "./optionsModel";
-import { areaOf, moveFocus, spreadApart, useEngineView, type Insets } from "./overlay";
+import { areaOf, moveFocus, spreadApart, useEngineView, type Insets, type ViewSource } from "./overlay";
 import s from "./studio.module.css";
 
 const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
@@ -81,7 +81,7 @@ function spot(gv: GapView, v: ViewInfo, r: number): { x: number; y: number } {
 }
 
 export interface GapLayerProps {
-  apiRef: RefObject<StudioEngineApi | null>;
+  apiRef: RefObject<ViewSource | null>;
   live: boolean;
   cfg: KitchenConfig;
   plan: KitchenPlan;

@@ -78,29 +78,29 @@ export default function InterijeriPage() {
         }
         actions={
           <>
-            <LinkButton href="/kontakt?interes=interijer" variant="accent" arrow>
-              Pošalji upit za interijer
+            <LinkButton href="/kontakt?interes=interijer" variant="ink" arrow>
+              Pošaljite upit za interijer
             </LinkButton>
-            <LinkButton href="#prostori" variant="outline">
+            <LinkButton href="#prostori" variant="text" arrow>
               Što sve radimo
             </LinkButton>
           </>
         }
       >
-        <div className="shell relative mt-16 grid gap-10 lg:mt-24 lg:grid-cols-12 lg:items-end">
+        <div className="shell relative mt-12 grid gap-10 lg:mt-16 lg:grid-cols-12 lg:items-end">
           <figure className="lg:col-span-8">
-            <div className="border border-white/10 bg-ink-700/60 p-4 sm:p-8">
-              <RoomPlan trigger="mount" className="text-accent" />
+            <div className="rounded-[22px] border border-hairline bg-card p-4 sm:p-8">
+              <RoomPlan trigger="mount" className="text-bronze" />
             </div>
-            <figcaption className="eyebrow mt-4 text-mut">Tlocrt · primjer stana opremljenog po mjeri</figcaption>
+            <figcaption className="mt-4 text-[12.5px] text-taupe">Tlocrt · primjer stana opremljenog po mjeri</figcaption>
           </figure>
-          <ol className="border-t border-white/10 lg:col-span-4">
+          <ol className="border-t border-hairline lg:col-span-4">
             {planCallouts.map((c, i) => (
-              <Reveal as="li" key={c.n} delay={0.6 + i * 0.06} className="flex items-center gap-4 border-b border-white/10 py-4">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-accent/70 text-[10px] font-semibold text-accent">
+              <Reveal as="li" key={c.n} delay={0.6 + i * 0.06} className="flex items-center gap-4 border-b border-hairline py-4">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-bronze/70 text-[10.5px] font-semibold text-bronze-deep">
                   {c.n}
                 </span>
-                <span className="font-display text-lg font-medium tracking-tight">{c.title}</span>
+                <span className="heading text-lg tracking-head-sm">{c.title}</span>
               </Reveal>
             ))}
           </ol>
@@ -108,38 +108,35 @@ export default function InterijeriPage() {
       </PageHero>
 
       {/* ── Prostori ── */}
-      <section id="prostori" className="scroll-mt-20 bg-paper py-24 text-ink lg:py-36">
+      <section id="prostori" className="scroll-mt-20 bg-greige py-24 lg:py-32">
         <div className="shell">
           <SectionHead
-            tone="paper"
             eyebrow="Prostori"
             title={
               <>
                 Soba po soba,
                 <br />
-                <span className="text-accent-deep">u istoj liniji.</span>
+                <span className="text-taupe">u istoj liniji.</span>
               </>
             }
             lead="Možete krenuti od jedne prostorije ili od cijelog stana. Ako znate da će se kasnije nastaviti, projektiramo tako da se nastavi bez šava."
           />
-          <ol className="mt-14 grid border-t border-ink/15 lg:mt-20 lg:grid-cols-2 lg:gap-x-16">
+          <ol className="mt-10 grid border-t border-hairline lg:mt-14 lg:grid-cols-2 lg:gap-x-16">
             {rooms.map((r, i) => (
               <Reveal
                 as="li"
                 key={r.name}
                 delay={(i % 2) * 0.08}
-                className="grid grid-cols-[56px_1fr] gap-4 border-b border-ink/15 py-8 sm:grid-cols-[80px_1fr]"
+                className="grid grid-cols-[56px_1fr] gap-4 border-b border-hairline py-7 sm:grid-cols-[80px_1fr]"
               >
-                <span className="font-display text-[28px] font-bold leading-none tracking-tightest text-transparent [-webkit-text-stroke:1px_rgba(138,122,92,.8)] sm:text-[36px]">
-                  {pad(i + 1)}
-                </span>
+                <span className="font-head text-[30px] font-normal leading-none tracking-head text-bronze sm:text-[36px]">{pad(i + 1)}</span>
                 <div>
-                  <h3 className="font-display text-2xl font-medium tracking-tight">{r.name}</h3>
-                  <p className="mt-2 max-w-md text-[15px] leading-relaxed text-ink/70">{r.text}</p>
+                  <h3 className="heading text-2xl tracking-head-sm">{r.name}</h3>
+                  <p className="mt-2 max-w-md text-[15px] leading-relaxed text-taupe">{r.text}</p>
                   {r.link && (
                     <Link
                       href={r.link.href}
-                      className="group mt-4 inline-flex items-center gap-2 text-[12px] font-semibold tracking-wide text-accent-deep transition-colors hover:text-ink"
+                      className="group mt-3.5 inline-flex items-center gap-2 text-[13.5px] font-medium text-graphite underline-offset-4 hover:underline"
                     >
                       {r.link.label}
                       <Arrow />
@@ -153,7 +150,7 @@ export default function InterijeriPage() {
       </section>
 
       {/* ── Zašto zajedno ── */}
-      <section className="bg-ink-700 py-24 lg:py-36">
+      <section className="bg-canvas py-24 lg:py-32">
         <div className="shell">
           <SectionHead
             eyebrow="Zašto zajedno"
@@ -161,16 +158,16 @@ export default function InterijeriPage() {
               <>
                 Prostor koji
                 <br />
-                <span className="text-accent">djeluje kao cjelina.</span>
+                <span className="text-taupe">djeluje kao cjelina.</span>
               </>
             }
           />
-          <ul className="mt-14 grid gap-px border border-white/10 bg-white/10 lg:mt-20 lg:grid-cols-3">
+          <ul className="mt-10 grid gap-3 sm:gap-4 lg:mt-14 lg:grid-cols-3">
             {principles.map((p, i) => (
-              <Reveal as="li" key={p.title} delay={i * 0.08} className="flex flex-col bg-ink-700 p-6 sm:p-10">
-                <span aria-hidden className="block h-px w-10 bg-accent" />
-                <h3 className="mt-8 font-display text-2xl font-medium tracking-tight">{p.title}</h3>
-                <p className="mt-3 text-[15px] leading-relaxed text-fg/65">{p.text}</p>
+              <Reveal as="li" key={p.title} delay={i * 0.08} className="flex flex-col rounded-[18px] border border-hairline bg-card p-6 sm:p-8">
+                <span aria-hidden className="block h-px w-10 bg-bronze" />
+                <h3 className="heading mt-7 text-2xl tracking-head-sm">{p.title}</h3>
+                <p className="mt-3 text-[15px] leading-relaxed text-taupe">{p.text}</p>
               </Reveal>
             ))}
           </ul>
@@ -178,7 +175,7 @@ export default function InterijeriPage() {
       </section>
 
       {/* ── Kako radimo ── */}
-      <section id="kako-radimo" className="scroll-mt-20 bg-ink py-24 lg:py-36">
+      <section id="kako-radimo" className="scroll-mt-20 bg-greige py-24 lg:py-32">
         <div className="shell">
           <SectionHead
             eyebrow="Kako radimo"
@@ -186,24 +183,25 @@ export default function InterijeriPage() {
               <>
                 Od tlocrta
                 <br />
-                <span className="text-accent">do zadnjeg okova.</span>
+                <span className="text-taupe">do zadnjeg okova.</span>
               </>
             }
           />
-          <ProcessSteps className="mt-14 lg:mt-20" />
-          <div className="mt-16 lg:mt-24">
+          <ProcessSteps className="mt-10 lg:mt-14" />
+          <div className="mt-12 lg:mt-16">
             <SoonNote subject="interijera" />
           </div>
         </div>
       </section>
 
       <CtaPair
+        bg="canvas"
         eyebrow="Sljedeći korak"
         title={
           <>
             Opišite prostor.
             <br />
-            <span className="text-accent-deep">Nacrtat ćemo ga.</span>
+            <span className="text-taupe">Nacrtat ćemo ga.</span>
           </>
         }
         items={[

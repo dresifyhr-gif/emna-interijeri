@@ -39,13 +39,13 @@ import {
   type TypeChoice,
 } from "@/lib/studio/edit";
 import { planGaps, planKitchen, type KitchenPlan, type PlanSlot } from "@/lib/studio/plan";
-import type { KitchenConfig, StudioEngineApi, ViewInfo } from "@/lib/studio/types";
+import type { KitchenConfig, ViewInfo } from "@/lib/studio/types";
 import { AddPicker, addItems, type AddItem } from "./AddPicker";
 import { gapStretch } from "./addModel";
 import type { ApplyOptions } from "./ElementEditor";
 import { ChevronDown, CloseIcon, InsertIcon, ModuleGlyph, MoreIcon, PlayIcon, SwapIcon, TrashIcon } from "./icons";
 import { clamp, columnSlots, elementsCount, isFlipped, isInRunTall, islandWord, noRoomText, rowOf, rowSlots } from "./meta";
-import { areaOf, keepAbove, moveFocus, useEngineView, type Area, type Insets } from "./overlay";
+import { areaOf, keepAbove, moveFocus, useEngineView, type Area, type Insets, type ViewSource } from "./overlay";
 import s from "./studio.module.css";
 import { insertPreview, narrowedText, probeTypeFor } from "./optionsModel";
 import { baseChoices, narrowLine, tallSwap } from "./tallSwap";
@@ -71,7 +71,7 @@ const CARET_END = 18;
 const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 
 export interface ElementToolbarProps {
-  apiRef: RefObject<StudioEngineApi | null>;
+  apiRef: RefObject<ViewSource | null>;
   /** the engine has built the kitchen (ViewInfo flows) */
   live: boolean;
   cfg: KitchenConfig;
@@ -889,7 +889,7 @@ export function SelectionLeader({
   slotId,
   panelLeft,
 }: {
-  apiRef: RefObject<StudioEngineApi | null>;
+  apiRef: RefObject<ViewSource | null>;
   live: boolean;
   slotId: string;
   /** x of the panel's left edge (px) */

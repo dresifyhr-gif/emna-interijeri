@@ -92,8 +92,8 @@ function compositionKey(p: KitchenPlan): string {
 const zoneRank = (s: PlanSlot) => ({ base: 0, tall: 1, upper: 2, island: 3 })[s.zone] * 100000 + ["a", "b", "c", "isl"].indexOf(s.run) * 10000 + s.x;
 const pieceKey = (p: PlanPiece) => `${p.kind}:${p.zone}:${Math.round(p.x * 10)}:${Math.round(p.width * 10)}`;
 
-/** background colours as they appear on screen (sRGB) */
-const BG = { showcase: "#0B0B0C", day: "#131315", night: "#070708" };
+/** background colours as they appear on screen (sRGB); showcase = the homepage hero's warm charcoal (night, tailwind) */
+const BG = { showcase: "#141416", day: "#131315", night: "#070708" };
 const EXPOSURE = 0.95;
 
 /**

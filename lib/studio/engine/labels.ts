@@ -21,7 +21,7 @@ const CSS = `
 .emna-studio-canvas[data-mode=studio][data-hover=on]{cursor:pointer}
 .emna-studio-canvas:focus-visible{box-shadow:inset 0 0 0 2px rgba(201,185,154,.55)}
 .emna-studio-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-.emna-studio-dim{font:500 11px/1 var(--font-display,"Space Grotesk"),system-ui,-apple-system,sans-serif;letter-spacing:.12em;color:#C9B99A;background:rgba(8,8,9,.72);padding:6px 11px;border-radius:999px;border:1px solid rgba(201,185,154,.35);white-space:nowrap;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:opacity .6s cubic-bezier(.2,.8,.2,1);font-variant-numeric:tabular-nums}
+.emna-studio-dim{font:500 11px/1 var(--font-head,"Inter Tight"),system-ui,-apple-system,sans-serif;letter-spacing:.12em;color:#C9B99A;background:rgba(8,8,9,.72);padding:6px 11px;border-radius:999px;border:1px solid rgba(201,185,154,.35);white-space:nowrap;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:opacity .6s cubic-bezier(.2,.8,.2,1);font-variant-numeric:tabular-nums}
 .emna-studio-dim b{font-weight:700;color:#F2EFE9;margin-right:.55em}
 .emna-studio-dim.emna-studio-dim--run{border-style:dashed;background:rgba(8,8,9,.6);font-size:10.5px;padding:5px 10px}
 .emna-studio-dim.emna-studio-dim--run b{font-weight:600;color:#C9B99A}
@@ -35,7 +35,7 @@ const CSS = `
 .emna-studio-pen svg{display:block;width:11px;height:11px;flex:none}
 .emna-studio-dim[role=button]:hover .emna-studio-pen,.emna-studio-dim[role=button]:focus-visible .emna-studio-pen{width:11px;margin-left:7px;opacity:1}
 @media (hover:none){.emna-studio-dim[role=button] .emna-studio-pen{width:11px;margin-left:7px;opacity:.8}}
-.emna-studio-tag{font:600 10.5px/1 var(--font-display,"Space Grotesk"),system-ui,-apple-system,sans-serif;letter-spacing:.08em;color:#0B0B0C;background:#C9B99A;padding:5px 9px;border-radius:999px;white-space:nowrap;pointer-events:none;opacity:0;font-variant-numeric:tabular-nums;box-shadow:0 4px 14px rgba(0,0,0,.35);transition:opacity .35s cubic-bezier(.2,.8,.2,1)}
+.emna-studio-tag{font:600 10.5px/1 var(--font-head,"Inter Tight"),system-ui,-apple-system,sans-serif;letter-spacing:.08em;color:#0B0B0C;background:#C9B99A;padding:5px 9px;border-radius:999px;white-space:nowrap;pointer-events:none;opacity:0;font-variant-numeric:tabular-nums;box-shadow:0 4px 14px rgba(0,0,0,.35);transition:opacity .35s cubic-bezier(.2,.8,.2,1)}
 .emna-studio-tag[data-on]{opacity:1}
 @media (prefers-reduced-motion:reduce){.emna-studio-dim,.emna-studio-dim[role=button],.emna-studio-pen,.emna-studio-tag{transition:none}}
 `;

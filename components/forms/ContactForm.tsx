@@ -107,28 +107,29 @@ function toPayload(v: Values): LeadInput {
 
 const THEME = {
   paper: {
-    text: "text-ink",
-    muted: "text-mut-paper",
-    label: "text-mut-paper peer-focus:text-accent-deep",
-    input: "text-ink caret-accent-deep [&:-webkit-autofill]:[-webkit-text-fill-color:#0B0B0C]",
-    border: "border-ink/20 hover:border-ink/40",
-    focusLine: "bg-accent-deep",
+    text: "text-graphite",
+    muted: "text-taupe",
+    label: "text-taupe peer-focus:text-graphite",
+    input: "text-graphite caret-bronze [&:-webkit-autofill]:[-webkit-text-fill-color:#1A1A18]",
+    border: "border-graphite/20 hover:border-graphite/40",
+    focusLine: "bg-graphite",
     error: "text-[#9A3B2B]",
     errorLine: "bg-[#9A3B2B]",
     errorBorder: "border-[#9A3B2B]/60 hover:border-[#9A3B2B]",
-    segTrack: "border-ink/15",
-    segThumb: "bg-ink",
-    segOn: "text-paper",
-    segOff: "text-ink/55 hover:text-ink",
-    box: "border-ink/35 checked:border-ink checked:bg-ink",
+    segTrack: "border-hairline",
+    segThumb: "bg-graphite",
+    segOn: "text-white",
+    segOff: "text-graphite/60 hover:text-graphite",
+    segFocus: "peer-focus-visible:outline-graphite",
+    box: "border-graphite/35 checked:border-graphite checked:bg-graphite",
     boxError: "border-[#9A3B2B]",
-    tick: "text-paper",
-    link: "text-ink underline decoration-ink/30 underline-offset-4 transition-colors hover:decoration-ink",
-    panel: "border-ink/10 bg-paper-dark/60",
-    accent: "text-accent-deep",
-    ring: "stroke-ink/15",
-    submit: "dark" as const,
-    reset: "outline-dark" as const,
+    tick: "text-white",
+    link: "text-graphite underline decoration-graphite/30 underline-offset-4 transition-colors hover:decoration-graphite",
+    panel: "border-hairline bg-greige/70",
+    accent: "text-bronze-deep",
+    ring: "stroke-graphite/15",
+    submit: "ink" as const,
+    reset: "line" as const,
   },
   dark: {
     text: "text-fg",
@@ -144,6 +145,7 @@ const THEME = {
     segThumb: "bg-fg",
     segOn: "text-ink",
     segOff: "text-fg/55 hover:text-fg",
+    segFocus: "peer-focus-visible:outline-accent",
     box: "border-white/30 checked:border-accent checked:bg-accent",
     boxError: "border-[#E39A84]",
     tick: "text-ink",
@@ -306,8 +308,8 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
             {...swap}
           >
             <DrawnCheck theme={t} reduce={Boolean(reduce)} />
-            <p className={`eyebrow mt-8 ${t.accent}`}>Upit je poslan</p>
-            <h3 id={`${uid}-thanks`} className="display mt-4 text-[clamp(38px,5.4vw,72px)]">
+            <p className={`kicker mt-8 ${t.accent}`}>Upit je poslan</p>
+            <h3 id={`${uid}-thanks`} className="heading mt-4 text-[clamp(34px,4.4vw,56px)]">
               Hvala, {sent.first}.
             </h3>
             <p className={`mt-6 max-w-md text-[15px] leading-relaxed ${t.muted}`}>
@@ -407,7 +409,7 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
             </div>
 
             <fieldset className="mt-10" disabled={sending}>
-              <legend className={`eyebrow mb-4 ${t.muted}`}>Zanima me</legend>
+              <legend className={`kicker mb-4 ${t.muted}`}>Zanima me</legend>
               <div className={`relative grid grid-cols-4 rounded-full border p-1 ${t.segTrack}`}>
                 {INTERESTS.map((opt) => {
                   const on = values.interest === opt;
@@ -430,7 +432,7 @@ export function ContactForm({ variant = "paper", interest = "Kuhinja", className
                         />
                       )}
                       <span
-                        className={`relative z-10 flex h-10 items-center justify-center rounded-full px-1 text-[12.5px] font-medium tracking-wide transition-colors duration-300 ease-premium peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent sm:text-[13px] ${
+                        className={`relative z-10 flex h-10 items-center justify-center rounded-full px-1 text-[12.5px] font-medium tracking-wide transition-colors duration-300 ease-premium peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 ${t.segFocus} sm:text-[13px] ${
                           on ? t.segOn : t.segOff
                         }`}
                       >
@@ -744,8 +746,8 @@ function StatusPanel({
 
   return (
     <div className={`mt-8 rounded-2xl border p-6 sm:p-7 ${t.panel}`}>
-      <p className={`eyebrow ${t.accent}`}>Upit nije poslan</p>
-      <p className="mt-3 font-display text-xl font-medium leading-tight tracking-tight">{title}</p>
+      <p className={`kicker ${t.accent}`}>Upit nije poslan</p>
+      <p className="heading mt-3 text-xl leading-tight tracking-head-sm">{title}</p>
       <p className={`mt-3 text-sm leading-relaxed ${t.muted}`}>{text}</p>
 
       {(hasDirect || showTodos) && <p className={`mt-5 text-sm ${t.text}`}>Javite nam se izravno:</p>}
@@ -800,7 +802,7 @@ function StatusPanel({
 function ContactLine({ label, theme: t, children }: { label: string; theme: Theme; children: ReactNode }) {
   return (
     <li className="flex items-baseline gap-4">
-      <span className={`eyebrow w-24 shrink-0 ${t.muted}`}>{label}</span>
+      <span className={`kicker w-24 shrink-0 ${t.muted}`}>{label}</span>
       <span className="min-w-0">{children}</span>
     </li>
   );

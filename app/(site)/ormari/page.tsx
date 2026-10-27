@@ -67,46 +67,45 @@ export default function OrmariPage() {
         }
         actions={
           <>
-            <LinkButton href="/kontakt?interes=ormar" variant="accent" arrow>
-              Pošalji upit za ormar
+            <LinkButton href="/kontakt?interes=ormar" variant="ink" arrow>
+              Pošaljite upit za ormar
             </LinkButton>
-            <LinkButton href="#iznutra" variant="outline">
+            <LinkButton href="#iznutra" variant="text" arrow>
               Kako je složen
             </LinkButton>
           </>
         }
         aside={
-          <figure className="relative">
-            <WardrobeElevation trigger="mount" className="text-accent" />
-            <figcaption className="eyebrow mt-4 text-mut">Pogled · ugradbeni ormar 320 × 260 cm</figcaption>
+          <figure className="relative rounded-[22px] border border-hairline bg-card p-5 sm:p-7">
+            <WardrobeElevation trigger="mount" className="text-bronze" />
+            <figcaption className="mt-4 text-[12.5px] text-taupe">Pogled · ugradbeni ormar 320 × 260 cm</figcaption>
           </figure>
         }
       />
 
       {/* ── Što izrađujemo ── */}
-      <section id="vrste" className="scroll-mt-20 bg-paper py-24 text-ink lg:py-36">
+      <section id="vrste" className="scroll-mt-20 bg-greige py-24 lg:py-32">
         <div className="shell">
           <SectionHead
-            tone="paper"
             eyebrow="Što izrađujemo"
             title={
               <>
                 Ormar za svaki
                 <br />
-                <span className="text-accent-deep">kut i kosinu.</span>
+                <span className="text-taupe">kut i kosinu.</span>
               </>
             }
             lead="Ormar po mjeri ne bira se iz kataloga širina. Crtamo ga za zid, nišu ili potkrovlje u kojem će stajati."
           />
-          <ul className="mt-14 grid gap-px border border-ink/15 bg-ink/15 sm:grid-cols-2 lg:mt-20 lg:grid-cols-3">
+          <ul className="mt-10 grid gap-3 sm:grid-cols-2 sm:gap-4 lg:mt-14 lg:grid-cols-3">
             {types.map((t, i) => (
-              <Reveal as="li" key={t.id} delay={(i % 3) * 0.07} className="group flex flex-col bg-paper p-6 sm:p-8">
+              <Reveal as="li" key={t.id} delay={(i % 3) * 0.07} className="flex flex-col rounded-[18px] border border-hairline bg-card p-6 sm:p-7">
                 <div className="flex items-start justify-between gap-6">
-                  <span className="eyebrow text-mut-paper">{pad(i + 1)}</span>
-                  <WardrobeTypeDrawing id={t.id} className="w-[132px] text-accent-deep sm:w-[150px]" />
+                  <span className="text-[13px] font-medium tabular-nums text-bronze-deep">{pad(i + 1)}</span>
+                  <WardrobeTypeDrawing id={t.id} className="w-[132px] text-bronze sm:w-[150px]" />
                 </div>
-                <h3 className="mt-8 font-display text-2xl font-medium tracking-tight">{t.name}</h3>
-                <p className="mt-3 text-[15px] leading-relaxed text-ink/70">{t.text}</p>
+                <h3 className="heading mt-7 text-[24px] tracking-head-sm">{t.name}</h3>
+                <p className="mt-2.5 text-[14.5px] leading-relaxed text-taupe">{t.text}</p>
               </Reveal>
             ))}
           </ul>
@@ -114,7 +113,7 @@ export default function OrmariPage() {
       </section>
 
       {/* ── Unutrašnjost ── */}
-      <section id="iznutra" className="scroll-mt-20 bg-ink-700 py-24 lg:py-36">
+      <section id="iznutra" className="scroll-mt-20 bg-canvas py-24 lg:py-32">
         <div className="shell">
           <SectionHead
             eyebrow="Unutrašnjost"
@@ -122,28 +121,24 @@ export default function OrmariPage() {
               <>
                 Iznutra složen
                 <br />
-                <span className="text-accent">po vama.</span>
+                <span className="text-taupe">po vama.</span>
               </>
             }
             lead="Prije crtanja pitamo što spremate: koliko dugih stvari, koliko složenih, koliko pari cipela. Iz toga nastaje raspored polica, šipki i ladica."
           />
-          <div className="mt-14 grid gap-12 lg:mt-20 lg:grid-cols-12 lg:gap-10">
-            <Reveal className="lg:col-span-7">
-              <WardrobeElevation annotated className="text-accent" />
+          <div className="mt-10 grid gap-10 lg:mt-14 lg:grid-cols-12 lg:gap-10">
+            <Reveal className="rounded-[22px] border border-hairline bg-card p-5 sm:p-8 lg:col-span-7">
+              <WardrobeElevation annotated className="text-bronze" />
             </Reveal>
-            <ol className="border-t border-white/10 lg:col-span-5">
+            <ol className="border-t border-hairline lg:col-span-5">
               {wardrobeCallouts.map((c) => (
-                <Reveal
-                  as="li"
-                  key={c.n}
-                  className="grid grid-cols-[44px_1fr] gap-4 border-b border-white/10 py-5"
-                >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full border border-accent/70 text-[10px] font-semibold text-accent">
+                <Reveal as="li" key={c.n} className="grid grid-cols-[44px_1fr] gap-4 border-b border-hairline py-5">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full border border-bronze/70 text-[10.5px] font-semibold text-bronze-deep">
                     {c.n}
                   </span>
                   <div>
-                    <h3 className="font-display text-lg font-medium tracking-tight">{c.title}</h3>
-                    <p className="mt-1.5 text-sm leading-relaxed text-fg/60">{c.text}</p>
+                    <h3 className="heading text-lg tracking-head-sm">{c.title}</h3>
+                    <p className="mt-1.5 text-[14px] leading-relaxed text-taupe">{c.text}</p>
                   </div>
                 </Reveal>
               ))}
@@ -153,7 +148,7 @@ export default function OrmariPage() {
       </section>
 
       {/* ── Kako radimo ── */}
-      <section id="kako-radimo" className="scroll-mt-20 bg-ink py-24 lg:py-36">
+      <section id="kako-radimo" className="scroll-mt-20 bg-greige py-24 lg:py-32">
         <div className="shell">
           <SectionHead
             eyebrow="Kako radimo"
@@ -161,24 +156,25 @@ export default function OrmariPage() {
               <>
                 Od izmjere
                 <br />
-                <span className="text-accent">do zadnje police.</span>
+                <span className="text-taupe">do zadnje police.</span>
               </>
             }
           />
-          <ProcessSteps className="mt-14 lg:mt-20" />
-          <div className="mt-16 lg:mt-24">
+          <ProcessSteps className="mt-10 lg:mt-14" />
+          <div className="mt-12 lg:mt-16">
             <SoonNote subject="ormara" />
           </div>
         </div>
       </section>
 
       <CtaPair
+        bg="canvas"
         eyebrow="Sljedeći korak"
         title={
           <>
             Izmjerite nišu.
             <br />
-            <span className="text-accent-deep">Ostalo je na nama.</span>
+            <span className="text-taupe">Ostalo je na nama.</span>
           </>
         }
         items={[

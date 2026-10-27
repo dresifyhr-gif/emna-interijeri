@@ -41,20 +41,20 @@ export default function PitanjaPage() {
         }
       />
 
-      <section aria-label="Pitanja po temama" className="bg-paper py-20 text-ink lg:py-32">
+      <section aria-label="Pitanja po temama" className="bg-canvas pb-24 pt-6 lg:pb-32 lg:pt-8">
         <div className="shell grid gap-12 lg:grid-cols-12 lg:gap-10">
           <nav aria-label="Teme" className="lg:col-span-3">
             <div className="lg:sticky lg:top-32">
-              <p className="eyebrow text-accent-deep">Teme</p>
+              <p className="kicker text-taupe">Teme</p>
               <ul className="mt-5 flex flex-wrap gap-2 lg:flex-col lg:gap-0">
                 {faq.map((g) => (
                   <li key={g.id}>
                     <a
                       href={`#${g.id}`}
-                      className="inline-flex items-center gap-3 rounded-full border border-ink/20 px-4 py-2 text-[13px] text-ink/80 transition-colors hover:border-ink hover:text-ink lg:rounded-none lg:border-0 lg:border-b lg:border-ink/10 lg:px-0 lg:py-3 lg:w-full lg:justify-between"
+                      className="inline-flex items-center gap-3 rounded-full border border-hairline bg-card px-4 py-2 text-[13.5px] text-graphite/85 transition-colors hover:border-graphite/40 hover:text-graphite lg:w-full lg:justify-between lg:rounded-none lg:border-0 lg:border-b lg:border-hairline lg:bg-transparent lg:px-0 lg:py-3"
                     >
                       {g.title}
-                      <span className="tabular-nums text-[11px] text-ink/60">{g.items.length}</span>
+                      <span className="tabular-nums text-[12px] text-taupe">{g.items.length}</span>
                     </a>
                   </li>
                 ))}
@@ -66,9 +66,9 @@ export default function PitanjaPage() {
             {faq.map((g, i) => (
               <section key={g.id} id={g.id} aria-labelledby={`${g.id}-naslov`} className="scroll-mt-28">
                 <Reveal y={14}>
-                  <div className="mb-6 flex items-baseline gap-4">
-                    <span className="eyebrow text-mut-paper">{String(i + 1).padStart(2, "0")}</span>
-                    <h2 id={`${g.id}-naslov`} className="display text-[clamp(30px,3.4vw,48px)]">
+                  <div className="mb-5 flex items-baseline gap-4">
+                    <span className="text-[13px] font-medium tabular-nums text-bronze-deep">{String(i + 1).padStart(2, "0")}</span>
+                    <h2 id={`${g.id}-naslov`} className="heading text-[clamp(28px,3vw,40px)]">
                       {g.title}
                     </h2>
                   </div>
@@ -86,7 +86,7 @@ export default function PitanjaPage() {
           <>
             Pitajte nas
             <br />
-            <span className="text-accent-deep">izravno.</span>
+            <span className="text-taupe">izravno.</span>
           </>
         }
         items={[

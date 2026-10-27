@@ -14,27 +14,27 @@ export function Footer() {
     { key: "registry", value: legal.registry, label: "sudski registar / MBS", prefix: null, muted: true },
   ].filter((r) => r.value || showTodos);
   return (
-    <footer className="relative overflow-hidden bg-ink-900 text-fg">
+    <footer data-header="dark" data-tone="dark" className="relative overflow-hidden bg-night-deep text-fg">
       <FooterCta />
 
       <div className={`shell grid gap-12 py-16 sm:grid-cols-2 ${companyRows.length ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
         <div>
           <Wordmark />
-          <p className="mt-6 max-w-xs text-sm leading-relaxed text-mut">{site.tagline}. Izmjera, 3D projekt, izrada i montaža.</p>
+          <p className="mt-6 max-w-xs text-sm leading-relaxed text-fg/60">{site.tagline}. Izmjera, 3D projekt, izrada i montaža.</p>
         </div>
 
         <div>
-          <p className="eyebrow text-mut">Stranice</p>
+          <p className="kicker text-mut">Stranice</p>
           <ul className="mt-5 space-y-2.5 text-sm">
             {nav.map((n) => (
               <li key={n.href}>
-                <Link href={n.href} className="text-fg/80 hover:text-accent">
+                <Link href={n.href} className="text-fg/75 transition-colors hover:text-fg">
                   {n.label}
                 </Link>
               </li>
             ))}
             <li>
-              <Link href="/pitanja" className="text-fg/80 hover:text-accent">
+              <Link href="/pitanja" className="text-fg/75 transition-colors hover:text-fg">
                 Česta pitanja
               </Link>
             </li>
@@ -42,13 +42,13 @@ export function Footer() {
         </div>
 
         <div>
-          <p className="eyebrow text-mut">Kontakt</p>
-          <ul className="mt-5 space-y-2.5 text-sm text-fg/80">
+          <p className="kicker text-mut">Kontakt</p>
+          <ul className="mt-5 space-y-2.5 text-sm text-fg/75">
             {(contact.phone || showTodos) && (
               <li>
                 <Fill value={contact.phone} label="telefon">
                   {(v) => (
-                    <a href={telHref(v)} className="hover:text-accent">
+                    <a href={telHref(v)} className="transition-colors hover:text-fg">
                       {v}
                     </a>
                   )}
@@ -59,7 +59,7 @@ export function Footer() {
               <li>
                 <Fill value={contact.email} label="e-mail">
                   {(v) => (
-                    <a href={`mailto:${v}`} className="hover:text-accent">
+                    <a href={`mailto:${v}`} className="transition-colors hover:text-fg">
                       {v}
                     </a>
                   )}
@@ -82,20 +82,20 @@ export function Footer() {
               </li>
             )}
             <li>
-              <Link href="/kontakt" className="text-fg/80 underline decoration-white/20 underline-offset-4 hover:text-accent">
+              <Link href="/kontakt" className="text-fg underline decoration-white/25 underline-offset-4 transition-colors hover:decoration-fg">
                 Pošaljite upit
               </Link>
             </li>
           </ul>
           {(social.instagram || social.facebook) && (
-            <div className="mt-6 flex gap-5 text-[11px] uppercase tracking-[0.2em]">
+            <div className="mt-6 flex gap-5 text-[13px] text-fg/75">
               {social.instagram && (
-                <a href={social.instagram} target="_blank" rel="noreferrer" className="hover:text-accent">
+                <a href={social.instagram} target="_blank" rel="noreferrer" className="transition-colors hover:text-fg">
                   Instagram
                 </a>
               )}
               {social.facebook && (
-                <a href={social.facebook} target="_blank" rel="noreferrer" className="hover:text-accent">
+                <a href={social.facebook} target="_blank" rel="noreferrer" className="transition-colors hover:text-fg">
                   Facebook
                 </a>
               )}
@@ -105,8 +105,8 @@ export function Footer() {
 
         {companyRows.length > 0 && (
           <div>
-            <p className="eyebrow text-mut">Tvrtka</p>
-            <ul className="mt-5 space-y-2.5 text-sm text-fg/80">
+            <p className="kicker text-mut">Tvrtka</p>
+            <ul className="mt-5 space-y-2.5 text-sm text-fg/75">
               {companyRows.map((r) => (
                 <li key={r.key} className={r.muted ? "text-mut" : undefined}>
                   {r.prefix}
@@ -118,15 +118,15 @@ export function Footer() {
         )}
       </div>
 
-      <div className="shell flex flex-col justify-between gap-4 border-t border-white/10 py-8 text-xs text-mut sm:flex-row">
+      <div className="shell flex flex-col justify-between gap-4 border-t border-white/[0.08] py-8 text-xs text-mut sm:flex-row">
         <p>
           © {new Date().getFullYear()} {legal.companyName ?? site.name}. Sva prava pridržana.
         </p>
         <div className="flex gap-6">
-          <Link href="/privatnost" className="hover:text-fg">
+          <Link href="/privatnost" className="transition-colors hover:text-fg">
             Politika privatnosti
           </Link>
-          <Link href="/pitanja" className="hover:text-fg">
+          <Link href="/pitanja" className="transition-colors hover:text-fg">
             Česta pitanja
           </Link>
         </div>

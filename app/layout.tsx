@@ -1,12 +1,17 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Space_Grotesk } from "next/font/google";
+import { Inter, Inter_Tight } from "next/font/google";
 import { site } from "@/lib/site";
 import "./globals.css";
 
-const display = Space_Grotesk({
+/**
+ * Two faces, one family — clean, upright print letters everywhere (site, 3D studio, quote page, admin):
+ * Inter Tight for every heading, number and title (Tailwind `font-head`, and `font-display` / `.display`, which now
+ * point at it too), Inter for text. Inter Tight is the display-size cut of Inter — the same letterforms, spaced for
+ * large sizes — with full latin-ext (č ć đ š ž). Variable weight. (The kitchen PDF embeds its own fonts, lib/pdf.)
+ */
+const head = Inter_Tight({
   subsets: ["latin", "latin-ext"],
-  weight: ["400", "500", "700"],
-  variable: "--font-display",
+  variable: "--font-head",
   display: "swap",
 });
 
@@ -42,7 +47,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="hr" className={`${display.variable} ${sans.variable}`} data-scroll-behavior="smooth">
+    <html lang="hr" className={`${sans.variable} ${head.variable}`} data-scroll-behavior="smooth">
       <body className="min-h-screen bg-ink font-sans text-fg antialiased">{children}</body>
     </html>
   );

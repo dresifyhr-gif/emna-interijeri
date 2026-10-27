@@ -170,13 +170,26 @@ export function HeroStage({
   const storyVis = useTransform(storyOpacity, (v) => (v < 0.02 ? "hidden" : "visible"));
   const cueOpacity = useTransform(scrollYProgress, [0, 0.06, 1], [1, 0, 0]);
 
+  /** the swatch chip scrolls the hero to a preset (the scroll drives the engine), roughly into the middle of its range */
+  const showPreset = (i: number) => {
+    const el = sectionRef.current;
+    if (!el) return;
+    const travel = el.offsetHeight - window.innerHeight;
+    const at = [0, 0.5, 0.85][i] ?? 0;
+    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY + travel * at });
+  };
+
+  const current = presets[Math.min(active, presets.length - 1)];
+
   return (
     <section
       ref={sectionRef}
       aria-labelledby="naslovnica-naslov"
-      // the header drops its backdrop blur while it sits over this section (blurring a live canvas every frame is costly)
-      data-header="solid"
-      className={`relative bg-ink ${still ? "h-[100svh]" : "h-[220vh]"} motion-reduce:h-[100svh]`}
+      // the header turns light-on-dark over this section and drops its backdrop blur here (blurring a live canvas
+      // every frame is costly)
+      data-header="dark"
+      data-tone="dark"
+      className={`relative bg-night text-fg ${still ? "h-[100svh]" : "h-[220vh]"} motion-reduce:h-[100svh]`}
     >
       <div className="sticky top-0 h-[100svh] w-full overflow-hidden">
         {/* poster: line drawing until the first 3D frame (and as the fallback); hidden once faded out so the
@@ -187,32 +200,31 @@ export function HeroStage({
           {poster}
         </div>
 
-        {/* live 3D — the engine appends its own canvas here */}
+        {/* live 3D — the engine appends its own canvas here (its background is the same #141416) */}
         <div
           ref={mountRef}
           className={`absolute inset-0 transition-opacity duration-[1600ms] ease-premium ${live ? "opacity-100" : "opacity-0"}`}
         />
 
+        {/* static overlay: the warm radial lift and the text-legibility scrims (composited, never repainted) */}
         <div aria-hidden className={`pointer-events-none absolute inset-0 ${s.scrim}`} />
 
         <div className={`shell relative z-10 grid h-full ${s.heroLayout}`}>
-          {/* own compositor layer while scroll-driven: the big headline (with its soft text-shadow) is rasterised
-              once and only moved/faded, instead of being repainted on every scroll frame */}
+          {/* own compositor layer while scroll-driven: the big headline is rasterised once and only moved/faded,
+              instead of being repainted on every scroll frame */}
           <motion.div
             style={live ? { opacity: introOpacity, y: introY, visibility: introVis } : STATIC_STYLE}
-            className={`col-start-1 row-start-1 max-w-[46rem] ${live ? "[will-change:transform,opacity]" : ""}`}
+            className={`col-start-1 row-start-1 ${s.intro} ${live ? "[will-change:transform,opacity]" : ""}`}
           >
-            <p className={`eyebrow flex items-center gap-4 text-accent ${s.fadeUp}`} style={{ animationDelay: "0.05s" }}>
-              <span aria-hidden className="h-px w-8 bg-accent/70" />
+            <p className={`kicker text-accent ${s.fadeUp}`} style={{ animationDelay: "0.05s" }}>
               Kuhinje i namještaj po mjeri
             </p>
-            <h1 id="naslovnica-naslov" className={`display mt-6 text-fg ${s.h1}`}>
+            <h1 id="naslovnica-naslov" className={`heading mt-5 ${s.h1}`}>
               {[
-                { t: "Kuhinje", accent: false },
-                { t: "po mjeri.", accent: true },
-                { t: "Bez kompromisa.", accent: false },
+                { t: "Kuhinje po mjeri.", accent: false },
+                { t: "Bez kompromisa.", accent: true },
               ].map((l, i) => (
-                <span key={l.t} className="block overflow-hidden pb-[0.06em] -mb-[0.06em]">
+                <span key={l.t} className="-my-[0.12em] block overflow-hidden py-[0.12em]">
                   <span className={`${s.rise} ${l.accent ? "text-accent" : ""}`} style={{ animationDelay: `${0.12 + i * 0.1}s` }}>
                     {l.t}
                   </span>
@@ -220,49 +232,104 @@ export function HeroStage({
               ))}
             </h1>
             <p
-              className={`mt-7 max-w-[30rem] text-[15px] leading-relaxed text-fg/75 sm:text-base ${s.lead} ${s.fadeUp}`}
-              style={{ animationDelay: "0.55s" }}
+              className={`mt-6 max-w-[30rem] text-[15px] leading-relaxed text-fg/70 sm:text-[17px] sm:leading-[1.65] ${s.lead} ${s.fadeUp}`}
+              style={{ animationDelay: "0.45s" }}
             >
-              Projektiramo, izrađujemo i montiramo kuhinje, ormare i interijere. Složite svoju kuhinju u 3D studiju i
-              odmah vidite okvirnu cijenu.
+              Mjerimo, projektiramo u 3D-u, izrađujemo i montiramo kuhinje, ormare i interijere. Složite svoju kuhinju u 3D
+              studiju i odmah vidite okvirnu cijenu.
             </p>
-            <div className={`mt-8 flex flex-wrap gap-2.5 sm:gap-3 ${s.fadeUp}`} style={{ animationDelay: "0.7s" }}>
-              <StudioLaunch variant="accent">Uđi u 3D studio</StudioLaunch>
-              <LinkButton href="/radovi" variant="outline">
-                Pogledaj radove
+            <div className={`mt-8 flex flex-wrap items-center gap-x-5 gap-y-3 ${s.fadeUp}`} style={{ animationDelay: "0.6s" }}>
+              <StudioLaunch variant="cream">Složite kuhinju u 3D-u</StudioLaunch>
+              {/* phones: the works are the very next section, and the 3D needs the room */}
+              <LinkButton href="/radovi" variant="text" arrow className="hidden sm:inline-flex">
+                Pogledajte radove
               </LinkButton>
             </div>
+            <ul className={`mt-10 grid-cols-3 gap-6 border-t border-white/[0.12] pt-6 ${s.trust} ${s.fadeUp}`} style={{ animationDelay: "0.75s" }}>
+              {TRUST.map((t) => (
+                <li key={t.text} className="text-[13px] leading-snug text-fg/80">
+                  <span aria-hidden className="mb-3 flex h-8 w-8 items-center justify-center rounded-[9px] border border-white/[0.16] text-accent">
+                    {t.icon}
+                  </span>
+                  {t.text}
+                </li>
+              ))}
+            </ul>
           </motion.div>
 
           {live && (
             <motion.div
               style={{ opacity: storyOpacity, y: storyY, visibility: storyVis }}
-              className="col-start-1 row-start-1 w-full max-w-[34rem] [will-change:transform,opacity]"
+              className={`col-start-1 row-start-1 w-full max-w-[30rem] [will-change:transform,opacity] ${s.story}`}
             >
               <PresetStory presets={presets} active={active} progress={scrollYProgress} />
             </motion.div>
           )}
         </div>
 
-        {/* bottom bar: scroll cue + live indicator */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
-          <div className="shell flex items-end justify-between gap-6 pb-5 sm:pb-7">
+        {/* chips over the 3D: live indicator, the shown kitchen's rough price, the three front finishes */}
+        {!still && (
+          <div className="pointer-events-none absolute inset-0 z-10">
+            <div className={`chip-night flex items-center gap-2.5 px-3.5 py-2.5 text-[12px] ${s.chipLive}`}>
+              <span
+                aria-hidden
+                className={`inline-block h-[7px] w-[7px] shrink-0 rounded-full ${live ? `bg-[#6FB27D] ${s.liveDot}` : "bg-fg/30"}`}
+              />
+              <span>
+                <span className="block font-medium">{live ? "Uživo 3D" : "Učitavanje 3D prikaza"}</span>
+                <span className="mt-0.5 block text-[11px] text-fg/55">{readout}</span>
+              </span>
+            </div>
+
+            {live && current && (
+              <>
+                <div className={`chip-night px-3.5 py-2.5 text-right sm:px-4 sm:py-3 ${s.chipPrice}`}>
+                  <span className={`text-[11px] text-fg/60 ${s.wide}`}>Okvirna cijena</span>
+                  <span className={`text-[10.5px] text-fg/60 ${s.tall}`}>okvirno, bez aparata</span>
+                  <span className="mt-0.5 block font-head text-[15px] font-semibold tabular-nums tracking-head-sm text-accent sm:mt-1 sm:text-[17px]">
+                    {current.price}
+                  </span>
+                  <span className={`mt-1 text-[10.5px] text-fg/50 ${s.wide}`}>bez kućanskih aparata</span>
+                </div>
+
+                <div className={`chip-night pointer-events-auto flex items-center gap-3 px-2 py-1.5 sm:px-3.5 sm:py-2.5 ${s.chipSwatch}`}>
+                  <span className={`pl-1 text-[11px] leading-tight text-fg/60 ${s.wide}`}>
+                    Fronta
+                    <span className="block text-[12px] font-medium text-fg">{current.frontName}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5" role="group" aria-label="Izvedbe u 3D prikazu">
+                    {presets.map((p, i) => (
+                      <button
+                        key={`${p.front}-${p.top}`}
+                        type="button"
+                        onClick={() => showPreset(i)}
+                        aria-pressed={i === active}
+                        aria-label={`Prikaži izvedbu ${i + 1}: ${p.frontName}, radna ploča ${p.topName}`}
+                        className="flex h-8 w-8 items-center justify-center rounded-full"
+                      >
+                        <span
+                          aria-hidden
+                          className={`block h-[22px] w-[22px] rounded-full border border-black/20 transition-[outline-color] duration-300 ${
+                            i === active ? "outline outline-[1.5px] outline-offset-2 outline-accent" : "outline outline-[1.5px] outline-offset-2 outline-transparent"
+                          }`}
+                          style={{ background: p.frontSwatch }}
+                        />
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* scroll cue */}
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 ${s.cueBar}`}>
+          <div className="shell pb-5 sm:pb-7">
             <motion.div style={live ? { opacity: cueOpacity } : { opacity: 1 }} className="flex items-center gap-3 text-fg/55">
               <span aria-hidden className={`block h-9 w-px bg-white/15 ${s.cue}`} />
-              <span className="eyebrow">Listajte</span>
+              <span className="kicker">Listajte</span>
             </motion.div>
-            {!still && (
-              <div className="text-right">
-                <p className="eyebrow flex items-center justify-end gap-2.5 text-fg/80">
-                  <span
-                    aria-hidden
-                    className={`inline-block h-[7px] w-[7px] rounded-full ${live ? `bg-accent ${s.liveDot}` : "bg-fg/30"}`}
-                  />
-                  {live ? "Uživo 3D" : "Učitavanje 3D prikaza"}
-                </p>
-                <p className="mt-2 hidden text-[11px] tracking-wide text-mut sm:block">{readout}</p>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -270,16 +337,47 @@ export function HeroStage({
   );
 }
 
+/* ------------------------------------------------------------------ trust row */
+
+const icon = { width: 18, height: 18, viewBox: "0 0 18 18", fill: "none", stroke: "currentColor", strokeWidth: 1.2 } as const;
+
+const TRUST: { text: string; icon: ReactNode }[] = [
+  {
+    text: "Izmjera na licu mjesta",
+    icon: (
+      <svg {...icon}>
+        <path d="M2 11.5 11.5 2 16 6.5 6.5 16Z" />
+        <path d="m5 9.5 1.6 1.6M7.2 7.3l1 1M9.4 5.1l1.6 1.6M11.6 2.9l1 1" />
+      </svg>
+    ),
+  },
+  {
+    text: "3D projekt prije izrade",
+    icon: (
+      <svg {...icon}>
+        <path d="M9 1.8 15.5 5.5v7L9 16.2 2.5 12.5v-7Z" />
+        <path d="M2.5 5.5 9 9.2l6.5-3.7M9 9.2v7" />
+      </svg>
+    ),
+  },
+  {
+    text: "Izrada i montaža",
+    icon: (
+      <svg {...icon}>
+        <path d="M2 15.5h14M3.5 15.5V6.5h11v9M3.5 10.5h11" />
+        <path d="M8 8.5h2M8 12.5h2" />
+      </svg>
+    ),
+  },
+];
+
 /* ------------------------------------------------------------------ material story (scroll-synchronised with the engine presets) */
 
 function PresetStory({ presets, active, progress }: { presets: HeroPreset[]; active: number; progress: MotionValue<number> }) {
   const current = presets[Math.min(active, presets.length - 1)];
   return (
     <div>
-      <p className="eyebrow flex items-center gap-4 text-accent">
-        <span aria-hidden className="h-px w-8 bg-accent/70" />
-        Isti prostor, tri izvedbe
-      </p>
+      <p className="kicker text-accent">Isti prostor, tri izvedbe</p>
       <ol className="mt-7 space-y-5">
         {presets.map((p, i) => (
           <PresetRow key={`${p.front}-${p.top}`} preset={p} index={i} on={i === active} progress={progress} />
@@ -287,7 +385,7 @@ function PresetStory({ presets, active, progress }: { presets: HeroPreset[]; act
       </ol>
       {current && (
         <div className="mt-9">
-          <LinkButton href={current.href} variant="outline" arrow>
+          <LinkButton href={current.href} variant="line-dark" arrow>
             Složite ovu kombinaciju
           </LinkButton>
         </div>
@@ -300,18 +398,17 @@ function PresetRow({ preset, index, on, progress }: { preset: HeroPreset; index:
   const [a, b] = PRESET_RANGES[index] ?? [0, 1];
   const bar = useTransform(progress, [a, b], [0, 1]);
   return (
-    <li className={`transition-colors duration-700 ease-premium ${on ? "text-fg" : "text-fg/30"}`} aria-current={on ? "true" : undefined}>
+    // the rows not shown are quieter but still readable (fg/55 ≈ 5.5:1, their second line ≈ 4.7:1 on the charcoal)
+    <li className={`transition-colors duration-700 ease-premium ${on ? "text-fg" : "text-fg/55"}`} aria-current={on ? "true" : undefined}>
       <div className="flex items-center gap-4">
-        <span className={`eyebrow w-6 shrink-0 tabular-nums ${on ? "text-accent" : ""}`}>{String(index + 1).padStart(2, "0")}</span>
+        <span className={`w-6 shrink-0 text-[12px] font-medium tabular-nums ${on ? "text-accent" : ""}`}>{String(index + 1).padStart(2, "0")}</span>
         <span aria-hidden className="flex shrink-0 -space-x-1.5">
           <span className="h-5 w-5 rounded-full ring-1 ring-white/20" style={{ background: preset.frontSwatch }} />
           <span className="h-5 w-5 rounded-full ring-1 ring-white/20" style={{ background: preset.topSwatch }} />
         </span>
         <span className="min-w-0">
-          <span className="block font-display text-[clamp(22px,2.4vw,34px)] font-medium leading-none tracking-[-0.02em]">
-            {preset.frontName}
-          </span>
-          <span className="mt-1.5 block text-[12px] tracking-wide text-current opacity-70">Radna ploča: {preset.topName}</span>
+          <span className="heading block text-[clamp(22px,2.2vw,30px)] leading-none">{preset.frontName}</span>
+          <span className={`mt-1.5 block text-[12.5px] text-current ${on ? "opacity-70" : "opacity-90"}`}>Radna ploča: {preset.topName}</span>
         </span>
       </div>
       <div className="ml-10 mt-3 h-px bg-white/10">

@@ -59,14 +59,14 @@ const sections = [
 function Section({ id, n, children }: { id: (typeof sections)[number]["id"]; n: number; children: ReactNode }) {
   const title = sections.find((s) => s.id === id)?.title;
   return (
-    <section id={id} aria-labelledby={`${id}-naslov`} className="scroll-mt-28 border-t border-ink/15 pt-10">
+    <section id={id} aria-labelledby={`${id}-naslov`} className="scroll-mt-28 border-t border-hairline pt-9">
       <div className="flex items-baseline gap-4">
-        <span className="eyebrow text-mut-paper">{String(n).padStart(2, "0")}</span>
-        <h2 id={`${id}-naslov`} className="font-display text-[26px] font-medium tracking-tight sm:text-[30px]">
+        <span className="text-[13px] font-medium tabular-nums text-bronze-deep">{String(n).padStart(2, "0")}</span>
+        <h2 id={`${id}-naslov`} className="heading text-[24px] tracking-head-sm sm:text-[28px]">
           {title}
         </h2>
       </div>
-      <div className="mt-6 space-y-4 text-[15px] leading-relaxed text-ink/75 sm:text-base [&_a]:underline [&_a]:decoration-1 [&_a]:underline-offset-4 [&_a:hover]:text-accent-deep [&_strong]:font-semibold [&_strong]:text-ink [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-5 [&_li::marker]:text-accent-deep">
+      <div className="mt-5 space-y-4 text-[15px] leading-relaxed text-taupe sm:text-base [&_a]:text-graphite [&_a]:underline [&_a]:decoration-graphite/30 [&_a]:decoration-1 [&_a]:underline-offset-4 [&_a:hover]:decoration-graphite [&_strong]:font-semibold [&_strong]:text-graphite [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-5 [&_li::marker]:text-bronze">
         {children}
       </div>
     </section>
@@ -113,28 +113,28 @@ export default function PrivatnostPage() {
         }
       />
 
-      <section className="bg-paper py-20 text-ink lg:py-28">
+      <section className="bg-canvas pb-24 pt-6 lg:pb-32 lg:pt-8">
         <div className="shell grid gap-12 lg:grid-cols-12 lg:gap-10">
           <nav aria-label="Sadržaj" className="lg:col-span-3">
             <div className="lg:sticky lg:top-32">
-              <p className="eyebrow text-accent-deep">Sadržaj</p>
+              <p className="kicker text-taupe">Sadržaj</p>
               <ol className="mt-5 space-y-2.5 text-[14px]">
                 {sections.map((s, i) => (
                   <li key={s.id}>
-                    <a href={`#${s.id}`} className="flex gap-3 text-ink/70 transition-colors hover:text-ink">
-                      <span className="tabular-nums text-mut-paper">{String(i + 1).padStart(2, "0")}</span>
+                    <a href={`#${s.id}`} className="flex gap-3 text-graphite/75 transition-colors hover:text-graphite">
+                      <span className="tabular-nums text-taupe">{String(i + 1).padStart(2, "0")}</span>
                       {s.title}
                     </a>
                   </li>
                 ))}
               </ol>
-              <p className="mt-8 text-[13px] text-mut-paper">Posljednja izmjena: {UPDATED}</p>
+              <p className="mt-8 text-[13px] text-taupe">Posljednja izmjena: {UPDATED}</p>
             </div>
           </nav>
 
           <div className="max-w-2xl space-y-14 lg:col-span-8 lg:col-start-5">
             {showTodos && (
-              <div role="note" className="border border-dashed border-accent-deep/60 bg-paper-dark p-5 text-[14px] leading-relaxed">
+              <div role="note" className="rounded-2xl border border-dashed border-bronze/60 bg-greige p-5 text-[14px] leading-relaxed text-graphite">
                 <strong className="font-semibold">Nacrt za pregled.</strong> Ovu politiku vlasnik mora pregledati i potvrditi
                 (po mogućnosti uz pravni savjet) prije objave: podatke voditelja obrade, pružatelje hostinga i e-pošte,
                 prijenos podataka u SAD, rok čuvanja od {RETENTION_MONTHS} mjeseci i tekst privole u formama (mora
@@ -143,18 +143,18 @@ export default function PrivatnostPage() {
               </div>
             )}
 
-            <p className="text-[17px] leading-relaxed text-ink/80">
+            <p className="text-[17px] leading-relaxed text-graphite/85">
               Osobne podatke obrađujemo u skladu s Općom uredbom o zaštiti podataka (EU) 2016/679 (GDPR) i Zakonom o
               provedbi Opće uredbe o zaštiti podataka. Prikupljamo samo ono što je potrebno da odgovorimo na vaš upit.
             </p>
 
             <Section id="voditelj" n={1}>
               <p>Voditelj obrade osobnih podataka je:</p>
-              <dl className="grid gap-x-8 gap-y-4 border border-ink/15 p-5 sm:grid-cols-2">
+              <dl className="grid gap-x-8 gap-y-4 rounded-2xl border border-hairline bg-card p-5 sm:grid-cols-2">
                 {controller.map((r) => (
                   <div key={r.label}>
-                    <dt className="eyebrow text-mut-paper">{r.label}</dt>
-                    <dd className="mt-1.5 text-ink">
+                    <dt className="text-[13px] text-taupe">{r.label}</dt>
+                    <dd className="mt-1 text-graphite">
                       <Fill value={r.value} label={r.todo} />
                     </dd>
                   </div>
@@ -162,7 +162,7 @@ export default function PrivatnostPage() {
               </dl>
               {/* production with missing facts: say so instead of silently showing a shorter list */}
               {!showTodos && controllerMissing.length > 0 && (
-                <p role="note" className="border border-ink/20 bg-paper-dark p-4 text-[14px] text-ink">
+                <p role="note" className="rounded-2xl border border-hairline bg-greige p-4 text-[14px] text-graphite">
                   Dio podataka o voditelju obrade još nije objavljen na ovoj stranici ({controllerMissing.join(", ")}).
                 </p>
               )}

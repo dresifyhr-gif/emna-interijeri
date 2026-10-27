@@ -35,34 +35,29 @@ export default function KontaktPage() {
         }
       />
 
-      <section id="upit" className="scroll-mt-20 bg-paper py-20 text-ink lg:py-32">
-        <div className="shell grid gap-16 lg:grid-cols-12 lg:gap-10">
+      <section id="upit" className="scroll-mt-20 bg-greige py-20 lg:py-28">
+        <div className="shell grid gap-12 lg:grid-cols-12 lg:gap-10">
           <aside aria-label="Kontakt podaci" className="lg:col-span-4">
             <Reveal y={14}>
-              <p className="eyebrow flex items-center gap-4 text-accent-deep">
-                <span aria-hidden className="h-px w-8 bg-accent-deep/70" />
-                Izravno
-              </p>
+              <p className="kicker text-taupe">Izravno</p>
             </Reveal>
-            <div className="mt-8">
+            <div className="mt-6">
               <ContactDetails />
             </div>
 
-            <Reveal delay={0.2} className="mt-10">
+            <Reveal delay={0.2} className="mt-8">
               <Link
                 href="/studio"
-                className="group flex items-center justify-between gap-6 bg-ink p-6 text-fg transition-colors duration-500 ease-premium hover:bg-ink-700"
+                className="group flex items-center justify-between gap-6 rounded-[20px] bg-graphite p-6 text-fg transition-colors duration-500 ease-premium hover:bg-black"
               >
                 <span>
-                  <span className="eyebrow block text-accent">3D studio</span>
-                  <span className="mt-2 block font-display text-xl font-medium tracking-tight">
-                    Radije složite kuhinju sami?
-                  </span>
-                  <span className="mt-1 block text-sm text-fg/60">Upit iz studija stiže s mjerama i slikom.</span>
+                  <span className="kicker block text-accent">3D studio</span>
+                  <span className="heading mt-3 block text-xl tracking-head-sm">Radije složite kuhinju sami?</span>
+                  <span className="mt-1.5 block text-sm text-fg/65">Upit iz studija stiže s mjerama i slikom.</span>
                 </span>
                 <span
                   aria-hidden
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/20 transition-all duration-500 ease-premium group-hover:border-accent group-hover:bg-accent group-hover:text-ink"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/20 transition-colors duration-500 ease-premium group-hover:border-fg group-hover:bg-fg group-hover:text-graphite"
                 >
                   <Arrow />
                 </span>
@@ -72,16 +67,13 @@ export default function KontaktPage() {
 
           <div className="lg:col-span-7 lg:col-start-6">
             <Reveal y={14}>
-              <p className="eyebrow flex items-center gap-4 text-accent-deep">
-                <span aria-hidden className="h-px w-8 bg-accent-deep/70" />
-                Upit
-              </p>
+              <p className="kicker text-taupe">Upit</p>
             </Reveal>
             <Reveal delay={0.08}>
-              <h2 className="display mt-6 text-[clamp(36px,4.4vw,68px)]">Pošaljite upit.</h2>
+              <h2 className="heading mt-4 text-[clamp(32px,4vw,52px)]">Pošaljite upit.</h2>
             </Reveal>
             <Reveal delay={0.14}>
-              <p className="mt-5 max-w-lg text-base leading-relaxed text-ink/70">
+              <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-taupe sm:text-base">
                 Napišite što trebate i gdje. Okvirne mjere zidova i visina stropa pomažu da prvi razgovor bude konkretan.
                 {/* the form takes no files: photos and floor plans only once there is a real address to send them to */}
                 {(site.contact.email || showTodos) && (
@@ -92,7 +84,7 @@ export default function KontaktPage() {
                       {(v) => (
                         <a
                           href={`mailto:${v}`}
-                          className="text-ink underline decoration-ink/25 decoration-1 underline-offset-4 hover:text-accent-deep hover:decoration-accent-deep"
+                          className="text-graphite underline decoration-graphite/30 decoration-1 underline-offset-4 hover:decoration-graphite"
                         >
                           {v}
                         </a>
@@ -103,16 +95,18 @@ export default function KontaktPage() {
                 )}
               </p>
             </Reveal>
-            <Reveal delay={0.2} className="mt-10">
-              <Suspense fallback={<ContactForm variant="paper" />}>
-                <InterestContactForm variant="paper" />
-              </Suspense>
+            <Reveal delay={0.2} className="mt-8">
+              <div className="rounded-[20px] bg-card p-6 shadow-[0_20px_50px_-20px_rgba(60,48,30,.18)] sm:p-9">
+                <Suspense fallback={<ContactForm variant="paper" />}>
+                  <InterestContactForm variant="paper" />
+                </Suspense>
+              </div>
             </Reveal>
           </div>
         </div>
       </section>
 
-      <section aria-labelledby="suradnja" className="bg-ink py-24 lg:py-32">
+      <section aria-labelledby="suradnja" className="bg-canvas py-24 lg:py-32">
         <div className="shell">
           <SectionHead
             eyebrow="Kako izgleda suradnja"
@@ -120,17 +114,17 @@ export default function KontaktPage() {
               <span id="suradnja">
                 Od upita
                 <br />
-                <span className="text-accent">do montaže.</span>
+                <span className="text-taupe">do montaže.</span>
               </span>
             }
           />
-          <div className="mt-14 lg:mt-20">
+          <div className="mt-10 lg:mt-14">
             <Timeline steps={collaborationSteps} />
           </div>
-          <Reveal className="mt-14 lg:mt-20">
-            <p className="text-sm text-fg/60">
+          <Reveal className="mt-12 lg:mt-16">
+            <p className="text-[14.5px] text-taupe">
               Imate pitanje prije upita?{" "}
-              <Link href="/pitanja" className="text-fg underline decoration-1 underline-offset-4 hover:text-accent">
+              <Link href="/pitanja" className="text-graphite underline decoration-graphite/30 decoration-1 underline-offset-4 hover:decoration-graphite">
                 Pogledajte česta pitanja
               </Link>
               .

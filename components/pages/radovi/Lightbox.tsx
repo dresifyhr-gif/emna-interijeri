@@ -104,7 +104,8 @@ export function Lightbox({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-[80] flex flex-col bg-ink-900/[.97] text-fg backdrop-blur-sm"
+      data-tone="dark"
+      className="fixed inset-0 z-[80] flex flex-col bg-night-deep/[.97] font-sans text-fg backdrop-blur-sm"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -112,7 +113,7 @@ export function Lightbox({
     >
       {/* top bar */}
       <div className="shell flex h-[72px] shrink-0 items-center justify-between gap-6">
-        <p className="eyebrow tabular-nums text-fg/60" aria-hidden>
+        <p className="kicker tabular-nums text-fg/60" aria-hidden>
           {pad(index + 1)} <span className="text-fg/30">/ {pad(count)}</span>
         </p>
         <button
@@ -198,10 +199,10 @@ export function Lightbox({
       {/* caption */}
       <div className="shell flex shrink-0 flex-col gap-3 py-5 sm:flex-row sm:items-end sm:justify-between sm:py-7">
         <div>
-          <h2 id={titleId} className="font-display text-xl font-medium tracking-tight sm:text-2xl">
+          <h2 id={titleId} className="heading text-xl tracking-head-sm sm:text-2xl">
             {photo.title}
           </h2>
-          <p className="eyebrow mt-2 text-accent">
+          <p className="kicker mt-2 text-accent">
             {styleLabel[photo.style]}
             {photo.shape && <span className="text-fg/50"> · {shapeLabel[photo.shape]}</span>}
           </p>

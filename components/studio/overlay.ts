@@ -10,6 +10,12 @@
 import { useEffect, useRef, type RefObject } from "react";
 import type { StudioEngineApi, ViewInfo } from "@/lib/studio/types";
 
+/**
+ * Where the overlays read the view from: the 3D engine's api, or the 2D view's hub (viewMode.ts ViewHub) — both report
+ * ViewInfo the same way (subscribe: after every frame in which something moved; viewInfo: the last one)
+ */
+export type ViewSource = Pick<StudioEngineApi, "subscribe" | "viewInfo">;
+
 /** the parts of the screen the UI covers (px), as told to the engine through the --studio-inset-* properties */
 export interface Insets {
   top: number;
@@ -42,7 +48,7 @@ export function areaOf(size: { w: number; h: number }, ins: Insets, pad = 8): Ar
  * Listen to the engine's ViewInfo while `live` (the engine has built the kitchen). `fn` may change on every render;
  * the subscription does not.
  */
-export function useEngineView(apiRef: RefObject<StudioEngineApi | null>, live: boolean, fn: (v: ViewInfo) => void) {
+export function useEngineView(apiRef: RefObject<ViewSource | null>, live: boolean, fn: (v: ViewInfo) => void) {
   const fnRef = useRef(fn);
   useEffect(() => {
     fnRef.current = fn;

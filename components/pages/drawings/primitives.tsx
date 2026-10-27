@@ -3,7 +3,7 @@
 /**
  * Technical-drawing kit: thin accent lines that draw themselves when scrolled into view,
  * dimension lines with architectural ticks and labels in cm, callout bubbles.
- * Colour comes from `currentColor` — set `text-accent` (dark) or `text-accent-deep` (paper).
+ * Colour comes from `currentColor` — set `text-bronze` on the light pages (`text-accent` on dark).
  *
  * The drawing is pure CSS (`.drawing` / `.dr-draw` / `.dr-fade` in globals.css): the server HTML is
  * the finished drawing, "mount" drawings (heroes) animate from the first paint without JS, "view"

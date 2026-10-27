@@ -26,10 +26,14 @@ const p = (file: string, title: string, style: Style, shape?: Shape, w = 1400, h
 });
 
 export const gallery: Photo[] = [
-  p("kuhinja-crna-drvo-otok", "Crna kuhinja s drvenim otokom", "premium", "otok"),
-  p("kuhinja-zelena-crni-mramor-2", "Zelena kuhinja s crnim mramornim zidom", "premium", "U"),
-  p("kuhinja-bijela-drvo-velik", "Velika bijela kuhinja s otokom i drvom", "premium", "otok"),
+  // the owner's five favourites lead everywhere (homepage "Naši radovi", /radovi, its share image)
   p("kuhinja-siva-mramor", "Antracit kuhinja s mramornom pločom", "premium"),
+  p("kuhinja-crna-mramor-2", "Crna kuhinja i mramorni pod", "premium"),
+  p("kuhinja-crna-drvo-otok", "Crna kuhinja s drvenim otokom", "premium", "otok"),
+  p("kuhinja-beton-mramor-2", "Beton dekor s mramornom pločom", "moderna"),
+  p("kuhinja-zelena-crni-mramor-2", "Zelena kuhinja s crnim mramornim zidom", "premium", "U"),
+
+  p("kuhinja-bijela-drvo-velik", "Velika bijela kuhinja s otokom i drvom", "premium", "otok"),
   p("kuhinja-tamna-drvo-l", "Tamna L-kuhinja s drvenim gornjim elementima", "moderna", "L", 1200, 900),
   p("kuhinja-krem-drvo", "Krem kuhinja s drvenim detaljima", "moderna"),
   p("kuhinja-bijela-zlato", "Bijela kuhinja s otokom i zlatnim detaljima", "premium", "otok"),
@@ -44,10 +48,8 @@ export const gallery: Photo[] = [
   p("kuhinja-drvo-bijela-2", "L-kuhinja u drvu i bijeloj", "moderna", "L"),
   p("kuhinja-bijela-granit", "Bijela kuhinja s crnom granitnom pločom", "minimal", undefined, 960, 720),
   p("kuhinja-bijela-crna-otok", "Bijela kuhinja s crnim otokom", "premium", "otok"),
-  p("kuhinja-crna-mramor-2", "Crna kuhinja i mramorni pod", "premium"),
   p("kuhinja-crna-bijela-otok", "Crna kuhinja s bijelim otokom", "premium", "otok"),
   p("kuhinja-zelena-crni-mramor", "Tamnozelena kuhinja s crnim mramorom", "premium"),
-  p("kuhinja-beton-mramor-2", "Beton dekor s mramornom pločom", "moderna"),
   p("kuhinja-siva-mozaik", "Siva kuhinja s mozaik pločicama", "moderna"),
   p("kuhinja-crna-drvo-sala", "Crna kuhinja s drvenim blagovaonskim dijelom", "moderna"),
   p("kuhinja-bijela-klasicna", "Bijela klasična kuhinja s uzorkastim pločicama", "klasicna"),

@@ -133,7 +133,7 @@ export default async function PublicQuotePage({ params }: { params: Params }) {
           <span aria-hidden className="h-px w-6 bg-accent/70" />
           Ponuda {q.number}
         </p>
-        <h1 className="mt-4 font-display text-[clamp(30px,5vw,52px)] font-medium leading-[1.02] tracking-tightest">
+        <h1 className="mt-4 font-display text-[clamp(30px,5vw,52px)] font-medium leading-[1.04] tracking-head">
           {q.title || "Vaša ponuda"}
         </h1>
         <div className="mt-6 flex flex-wrap items-end justify-between gap-6">

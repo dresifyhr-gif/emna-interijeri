@@ -39,28 +39,49 @@ export function Header() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Over sections marked data-header="solid" (the homepage's live 3D hero) the bar is a near-opaque fill
-  // without backdrop-filter: blurring a canvas that changes every frame costs a full blur pass per frame.
-  const [solid, setSolid] = useState(false);
+  // Tone of whatever sits under the bar: full-width sections marked data-header="dark" (the homepage hero, the 3D
+  // studio band, the footer) give a light-on-dark bar, everything else the light glass bar. Watched with a 1 px band at
+  // the bar's middle. The first render guesses from the route (only the homepage opens on a dark hero), so the server HTML
+  // already has the right colours.
+  const [dark, setDark] = useState(pathname === "/");
+  const [tonePath, setTonePath] = useState(pathname);
+  if (tonePath !== pathname) {
+    setTonePath(pathname);
+    setDark(pathname === "/");
+  }
   useEffect(() => {
-    const targets = document.querySelectorAll<HTMLElement>('[data-header="solid"]');
-    if (!targets.length || typeof IntersectionObserver === "undefined") return;
+    if (typeof IntersectionObserver === "undefined") return;
+    let io: IntersectionObserver | null = null;
     const under = new Set<Element>();
-    // a thin band at the top of the viewport, where the bar sits
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) under.add(e.target);
-          else under.delete(e.target);
-        }
-        setSolid(under.size > 0);
-      },
-      { rootMargin: "0px 0px -92% 0px" },
-    );
-    targets.forEach((t) => io.observe(t));
+    const watch = () => {
+      io?.disconnect();
+      under.clear();
+      const targets = document.querySelectorAll<HTMLElement>('[data-header="dark"]');
+      const band = Math.round((headerRef.current?.offsetHeight ?? 72) / 2);
+      const h = window.innerHeight;
+      io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) under.add(e.target);
+            else under.delete(e.target);
+          }
+          setDark(under.size > 0);
+        },
+        { rootMargin: `-${band}px 0px -${Math.max(0, h - band - 1)}px 0px` },
+      );
+      targets.forEach((t) => io?.observe(t));
+    };
+    watch();
+    let t = 0;
+    const onResize = () => {
+      window.clearTimeout(t);
+      t = window.setTimeout(watch, 150);
+    };
+    window.addEventListener("resize", onResize);
     return () => {
-      io.disconnect();
-      setSolid(false);
+      window.removeEventListener("resize", onResize);
+      window.clearTimeout(t);
+      io?.disconnect();
     };
   }, [pathname]);
 
@@ -132,23 +153,31 @@ export function Header() {
 
   const ease = [0.7, 0, 0.2, 1] as const;
 
+  // light bar whenever the menu is open (the menu itself is light)
+  const onDark = dark && !open;
+  const bar = open
+    ? "border-b border-hairline bg-canvas text-graphite"
+    : onDark
+      ? scrolled
+        ? // over the live 3D hero: a solid translucent fill, no backdrop blur (blurring a repainting canvas costs a full pass per frame)
+          "border-b border-white/[0.06] bg-night/[0.86] text-fg"
+        : "border-b border-transparent text-fg"
+      : scrolled
+        ? "border-b border-hairline/80 bg-canvas/[0.82] text-graphite backdrop-blur-xl backdrop-saturate-150"
+        : "border-b border-transparent text-graphite";
+
   return (
     <>
       <header
         ref={headerRef}
         onClick={onHeaderClick}
-        className={`fixed inset-x-0 top-0 z-50 transition-[background-color,border-color,backdrop-filter,-webkit-backdrop-filter] duration-500 ease-premium ${
-          open || (scrolled && !solid)
-            ? "glass border-x-0 border-t-0"
-            : scrolled
-              ? "border-b border-white/10 bg-ink/[0.88]"
-              : "border-b border-transparent"
-        }`}
+        data-tone={onDark ? "dark" : "light"}
+        className={`fixed inset-x-0 top-0 z-50 transition-[background-color,border-color,color,backdrop-filter,-webkit-backdrop-filter] duration-500 ease-premium ${bar}`}
       >
         <div className="shell flex h-[72px] items-center justify-between gap-6">
           <Wordmark />
 
-          <nav aria-label="Glavna navigacija" className="hidden items-center gap-8 lg:flex">
+          <nav aria-label="Glavna navigacija" className="hidden items-center gap-7 lg:flex xl:gap-8">
             {nav.map((n) => {
               const active = isActive(pathname, n.href);
               return (
@@ -156,14 +185,12 @@ export function Header() {
                   key={n.href}
                   href={n.href}
                   aria-current={active ? "page" : undefined}
-                  className={`relative text-[11px] font-medium uppercase tracking-[0.2em] transition-colors hover:text-fg ${
-                    active ? "text-fg" : "text-fg/65"
-                  }`}
+                  className={`relative py-1 text-[13.5px] transition-opacity duration-300 hover:opacity-100 ${active ? "opacity-100" : "opacity-[0.72]"}`}
                 >
                   {n.label}
                   <span
                     aria-hidden
-                    className={`absolute -bottom-1.5 left-0 h-px bg-accent transition-all duration-500 ease-premium ${
+                    className={`absolute -bottom-0.5 left-0 h-px transition-all duration-500 ease-premium ${onDark ? "bg-accent" : "bg-bronze"} ${
                       active ? "w-full" : "w-0"
                     }`}
                   />
@@ -172,13 +199,13 @@ export function Header() {
             })}
           </nav>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             {site.contact.phone && (
-              <a href={telHref(site.contact.phone)} className="hidden text-[12px] text-fg/70 hover:text-fg xl:block">
+              <a href={telHref(site.contact.phone)} className="hidden text-[13px] opacity-70 transition-opacity hover:opacity-100 xl:block">
                 {site.contact.phone}
               </a>
             )}
-            <LinkButton href="/studio" variant="accent" arrow className="hidden !px-5 !py-2.5 sm:inline-flex">
+            <LinkButton href="/studio" variant={onDark ? "cream" : "ink"} className="hidden !px-[18px] !py-2.5 !text-[13px] sm:inline-flex">
               3D studio
             </LinkButton>
             <button
@@ -190,8 +217,8 @@ export function Header() {
               aria-label={open ? "Zatvori izbornik" : "Otvori izbornik"}
               className="relative -mr-2 flex h-11 w-11 items-center justify-center lg:hidden"
             >
-              <span className={`absolute h-px w-6 bg-fg transition-all duration-300 ${open ? "rotate-45" : "-translate-y-[4px]"}`} />
-              <span className={`absolute h-px w-6 bg-fg transition-all duration-300 ${open ? "-rotate-45" : "translate-y-[4px]"}`} />
+              <span className={`absolute h-px w-6 bg-current transition-transform duration-300 ${open ? "rotate-45" : "-translate-y-[4px]"}`} />
+              <span className={`absolute h-px w-6 bg-current transition-transform duration-300 ${open ? "-rotate-45" : "translate-y-[4px]"}`} />
             </button>
           </div>
         </div>
@@ -208,9 +235,10 @@ export function Header() {
             animate={reduce ? { opacity: 1 } : { clipPath: "circle(150% at 100% 0%)" }}
             exit={reduce ? { opacity: 0 } : { clipPath: "circle(0% at 100% 0%)" }}
             transition={reduce ? { duration: 0.15 } : { duration: 0.7, ease }}
-            className="fixed inset-0 z-40 flex flex-col overflow-y-auto bg-ink-900 pt-[96px] lg:hidden"
+            data-tone="light"
+            className="fixed inset-0 z-40 flex flex-col overflow-y-auto bg-canvas pt-[96px] text-graphite lg:hidden"
           >
-            <nav aria-label="Izbornik" className="shell flex flex-col gap-1">
+            <nav aria-label="Izbornik" className="shell flex flex-col">
               {menuItems.map((n, i) => {
                 const active = isActive(pathname, n.href);
                 return (
@@ -219,22 +247,31 @@ export function Header() {
                     initial={reduce ? false : { opacity: 0, y: 24 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.15 + i * 0.05, duration: 0.6, ease: [0.2, 0.8, 0.2, 1] }}
+                    className="border-b border-hairline"
                   >
                     <Link
                       href={n.href}
                       aria-current={active ? "page" : undefined}
                       onClick={() => closeMenu()}
-                      className={`display block py-1.5 text-[40px] hover:text-accent ${active ? "text-accent" : "text-fg"}`}
+                      className={`heading flex items-center justify-between gap-4 py-3.5 text-[32px] leading-none transition-colors hover:text-taupe ${
+                        active ? "text-graphite" : "text-graphite/85"
+                      }`}
                     >
                       {n.label}
+                      {active && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-bronze" />}
                     </Link>
                   </motion.div>
                 );
               })}
             </nav>
-            <div className="shell mt-auto pb-10 pt-8">
-              <LinkButton href="/studio" variant="accent" arrow className="w-full" onClick={() => closeMenu()}>
-                Složi kuhinju u 3D studiju
+            <div className="shell mt-auto space-y-4 pb-10 pt-10">
+              {site.contact.phone && (
+                <a href={telHref(site.contact.phone)} className="block text-[15px] text-taupe">
+                  {site.contact.phone}
+                </a>
+              )}
+              <LinkButton href="/studio" variant="ink" arrow className="w-full" onClick={() => closeMenu()}>
+                Složite kuhinju u 3D studiju
               </LinkButton>
             </div>
           </motion.div>

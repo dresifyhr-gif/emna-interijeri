@@ -1,14 +1,13 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { site } from "@/lib/site";
 import { HeroStage } from "@/components/home/HeroStage";
 import { HeroPoster } from "@/components/home/HeroPoster";
 import { HERO_CONFIG, heroReadout } from "@/components/home/heroConfig";
 import { heroPresets } from "@/components/home/heroPresets";
-import { Manifest } from "@/components/home/Manifest";
 import { Works } from "@/components/home/Works";
 import { Process } from "@/components/home/Process";
+import { StudioBand } from "@/components/home/StudioBand";
 import { Materials } from "@/components/home/Materials";
-import { StudioCall } from "@/components/home/StudioCall";
 import { Contact } from "@/components/home/Contact";
 import { PerfProbe } from "@/components/home/PerfProbe";
 
@@ -27,15 +26,23 @@ export const metadata: Metadata = {
   },
 };
 
+/** the homepage opens on the dark hero */
+export const viewport: Viewport = {
+  themeColor: "#141416",
+};
+
+/**
+ * Dark hero with the live 3D kitchen → light sections (radovi, kako radimo) → the dark 3D studio band → light
+ * materials and contact → dark footer.
+ */
 export default function HomePage() {
   return (
     <>
       <HeroStage poster={<HeroPoster />} presets={heroPresets(HERO_CONFIG)} readout={heroReadout(HERO_CONFIG)} />
-      <Manifest />
       <Works />
       <Process />
+      <StudioBand />
       <Materials />
-      <StudioCall />
       <Contact />
       <PerfProbe />
     </>

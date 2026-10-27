@@ -197,6 +197,27 @@ export function paperSize(d: Drawing, scale: number, opts: SvgOptions = {}): { w
   return { width: (box.x1 - box.x0) * s + 2 * m, height: (box.y1 - box.y0) * s + 2 * m + (opts.title === false ? 0 : TITLE_H) };
 }
 
+/**
+ * Where toSVG puts the drawing on its paper, for a host that draws on top of the SVG (the studio's 2D view: hit areas,
+ * the selection, "+" markers): paper mm = ((x − box.x0) · s + margin, (box.y1 − y) · s + margin) for a drawing point
+ * (x, y) in cm. `box` is the drawing with its dimensions (cm), `width` / `height` the paper (mm), as toSVG lays them out
+ * with the same options.
+ */
+export function svgFrame(d: Drawing, opts: SvgOptions = {}): { scale: number; s: number; margin: number; box: Box; width: number; height: number } {
+  const scale = opts.scale ?? (opts.fit ? fitScale(d, opts.fit, opts) : 20);
+  const s = 10 / scale;
+  const margin = opts.margin ?? 6;
+  const { box } = measure(d, s, { dims: opts.dims ?? true, textSize: opts.textSize ?? 2.2 });
+  return {
+    scale,
+    s,
+    margin,
+    box,
+    width: (box.x1 - box.x0) * s + 2 * margin,
+    height: (box.y1 - box.y0) * s + 2 * margin + (opts.title === false ? 0 : TITLE_H),
+  };
+}
+
 /** the largest standard scale at which the drawing fits the paper box (the smallest of them when none does) */
 export function fitScale(d: Drawing, fit: { width: number; height: number }, opts: SvgOptions = {}): number {
   const scales = [...(opts.scales ?? STANDARD_SCALES)].sort((a, b) => a - b);

@@ -1,6 +1,6 @@
 /**
  * Admin UI primitives — dark, quiet, matching the site (ink surfaces, accent #C9B99A,
- * Space Grotesk headings, Inter body). Server-component friendly except SubmitButton and
+ * Inter Tight headings, Inter body). Server-component friendly except SubmitButton and
  * PasswordInput (client).
  *
  *   import { PageHeader, Card, CardHeader, Table, THead, TBody, TR, TH, TD, rowLinkClass,

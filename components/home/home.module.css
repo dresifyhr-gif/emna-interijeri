@@ -6,54 +6,151 @@
 
 /* ------------------------------------------------------------------ hero layout */
 
-/* portrait / square: text on top (the 3D frames the kitchen in the lower 38–95 %) */
+/*
+ * The engine frames the kitchen in a fixed region of the stage (lib/studio/engine computeRegion):
+ *   portrait / square  x 5–95 %, y 38–95 %  → text on top, chips along the bottom
+ *   landscape (≥ 11:10) x 41–96 %, y 8–92 % → text in the left column, chips on the corners of the 3D
+ */
 .heroLayout {
   align-content: start;
   align-items: start;
   padding-top: 104px;
-  padding-bottom: 96px;
+  padding-bottom: 150px;
+}
+
+.intro {
+  max-width: 36rem;
 }
 
 .h1 {
-  font-size: clamp(40px, 9vw, 96px);
-  text-shadow: 0 2px 28px rgba(11, 11, 12, 0.45);
+  font-size: clamp(40px, 10.6vw, 64px);
 }
 
-/* landscape: text bottom-left (the 3D frames the kitchen at 41–96 % of the width) */
 @media (min-aspect-ratio: 11/10) {
   .heroLayout {
-    align-content: end;
-    align-items: end;
-    padding-top: 96px;
-    padding-bottom: clamp(92px, 13vh, 150px);
+    align-content: center;
+    align-items: center;
+    padding-top: 88px;
+    padding-bottom: 64px;
+  }
+  .intro,
+  .story {
+    max-width: min(34rem, 44vw);
   }
   .h1 {
-    font-size: clamp(40px, min(5.6vw, 10.5svh), 104px);
+    font-size: clamp(40px, min(4.9vw, 9.5svh), 78px);
   }
 }
 
 @media (max-height: 560px) and (min-aspect-ratio: 11/10) {
-  .heroLayout {
-    padding-bottom: 64px;
-  }
   .lead {
     display: none;
   }
 }
 
-/* text-legibility scrims over the 3D */
+/* the three-item trust row: only where there is room under the buttons */
+.trust {
+  display: none;
+}
+@media (min-aspect-ratio: 11/10) and (min-width: 1024px) and (min-height: 720px) {
+  .trust {
+    display: grid;
+  }
+}
+
+/* text-legibility scrims over the 3D, plus the warm radial lift of the charcoal background */
 .scrim {
   background:
-    linear-gradient(180deg, rgba(11, 11, 12, 0.94) 0%, rgba(11, 11, 12, 0.82) 30%, rgba(11, 11, 12, 0.35) 48%, rgba(11, 11, 12, 0) 62%),
-    linear-gradient(0deg, rgba(11, 11, 12, 0.75) 0%, rgba(11, 11, 12, 0) 16%);
+    linear-gradient(180deg, rgba(20, 20, 22, 0.95) 0%, rgba(20, 20, 22, 0.86) 32%, rgba(20, 20, 22, 0.42) 50%, rgba(20, 20, 22, 0) 64%),
+    linear-gradient(0deg, rgba(17, 17, 19, 0.82) 0%, rgba(17, 17, 19, 0) 20%);
 }
 
 @media (min-aspect-ratio: 11/10) {
   .scrim {
     background:
-      linear-gradient(90deg, rgba(11, 11, 12, 0.94) 0%, rgba(11, 11, 12, 0.8) 28%, rgba(11, 11, 12, 0.42) 46%, rgba(11, 11, 12, 0) 62%),
-      linear-gradient(0deg, rgba(11, 11, 12, 0.85) 0%, rgba(11, 11, 12, 0) 30%),
-      linear-gradient(180deg, rgba(11, 11, 12, 0.6) 0%, rgba(11, 11, 12, 0) 16%);
+      radial-gradient(ellipse 70% 80% at 72% 40%, rgba(255, 246, 232, 0.035), rgba(255, 246, 232, 0) 60%),
+      linear-gradient(90deg, rgba(20, 20, 22, 0.96) 0%, rgba(20, 20, 22, 0.84) 26%, rgba(20, 20, 22, 0.42) 42%, rgba(20, 20, 22, 0) 56%),
+      linear-gradient(0deg, rgba(17, 17, 19, 0.85) 0%, rgba(17, 17, 19, 0) 24%),
+      linear-gradient(180deg, rgba(20, 20, 22, 0.55) 0%, rgba(20, 20, 22, 0) 16%);
+  }
+}
+
+/* ------------------------------------------------------------------ chips over the 3D */
+
+.chipLive,
+.chipPrice,
+.chipSwatch {
+  position: absolute;
+}
+
+/* portrait: compact swatches (left) and price (right) along the bottom; no live chip (it would sit on the text) */
+.chipLive {
+  display: none;
+}
+.chipPrice {
+  right: 16px;
+  bottom: 18px;
+}
+.chipSwatch {
+  left: 16px;
+  bottom: 18px;
+}
+.cueBar {
+  display: none;
+}
+/* chip lines for the landscape (wide) or portrait (tall) layout only */
+.wide {
+  display: none;
+}
+.tall {
+  display: block;
+}
+
+@media (min-width: 640px) {
+  .chipPrice {
+    right: 32px;
+  }
+  .chipSwatch {
+    left: 32px;
+  }
+}
+
+@media (min-aspect-ratio: 11/10) {
+  .chipLive {
+    display: flex;
+    left: 43%;
+    top: calc(72px + 3.5vh);
+  }
+  .chipPrice {
+    right: max(3%, 32px);
+    top: calc(72px + 3.5vh);
+    bottom: auto;
+  }
+  .chipSwatch {
+    left: auto;
+    right: max(3%, 32px);
+    bottom: 6vh;
+  }
+  .cueBar {
+    display: block;
+  }
+  .wide {
+    display: block;
+  }
+  .tall {
+    display: none;
+  }
+}
+
+/* phones held sideways: only the swatches stay, the rest would cover the kitchen or the buttons */
+@media (max-height: 520px) and (min-aspect-ratio: 11/10) {
+  .chipLive,
+  .chipPrice,
+  .cueBar {
+    display: none;
+  }
+  .chipSwatch {
+    bottom: 16px;
   }
 }
 
@@ -61,7 +158,7 @@
 
 .rise {
   display: block;
-  transform: translate3d(0, 108%, 0);
+  transform: translate3d(0, 130%, 0);
   animation: rise 1.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 
@@ -105,15 +202,15 @@
 
 .posterGlow {
   background:
-    radial-gradient(60% 40% at 50% 70%, rgba(201, 185, 154, 0.1), transparent 70%),
-    radial-gradient(120% 90% at 50% 100%, rgba(0, 0, 0, 0.55), transparent 60%);
+    radial-gradient(60% 40% at 50% 70%, rgba(201, 185, 154, 0.08), transparent 70%),
+    radial-gradient(120% 90% at 50% 100%, rgba(10, 10, 11, 0.45), transparent 60%);
 }
 
 @media (min-aspect-ratio: 11/10) {
   .posterGlow {
     background:
-      radial-gradient(42% 55% at 70% 50%, rgba(201, 185, 154, 0.1), transparent 70%),
-      radial-gradient(90% 90% at 100% 100%, rgba(0, 0, 0, 0.5), transparent 60%);
+      radial-gradient(42% 55% at 70% 50%, rgba(201, 185, 154, 0.08), transparent 70%),
+      radial-gradient(90% 90% at 100% 100%, rgba(10, 10, 11, 0.4), transparent 60%);
   }
 }
 
@@ -155,13 +252,13 @@
 }
 
 .poster .faceFront {
-  fill: #0e0e10;
+  fill: #18181b;
 }
 .poster .faceTop {
-  fill: #151517;
+  fill: #1e1d20;
 }
 .poster .faceSide {
-  fill: #0a0a0b;
+  fill: #111113;
 }
 
 .line {
@@ -248,7 +345,7 @@
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: 0 0 12px 1px rgba(201, 185, 154, 0.55);
+  box-shadow: 0 0 0 4px rgba(111, 178, 125, 0.18), 0 0 12px 1px rgba(111, 178, 125, 0.45);
   opacity: 0;
   animation: glow 2.6s ease-in-out infinite;
 }
@@ -319,66 +416,6 @@
     --ly 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* ------------------------------------------------------------------ studio call: spotlight */
-
-/*
- * Sits inside a centred wrapper; the switch-on scales it from the top (see .spot below).
- * The cone is a pre-blurred SVG image (the same trapezoid, gradient and ~22 px softness as before) rather than a
- * clip-path shape under `filter: blur(22px)`: a CSS blur on a ~1200×1000 px layer that animates is re-computed by
- * the compositor on every frame of the switch-on; an image is rasterised once and then only faded / scaled.
- */
-.beam {
-  position: absolute;
-  inset: 0;
-  transform-origin: 50% 0;
-  pointer-events: none;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='rgb(255,240,215)' stop-opacity='.2'/%3E%3Cstop offset='.38' stop-color='rgb(255,240,215)' stop-opacity='.09'/%3E%3Cstop offset='.72' stop-color='rgb(255,240,215)' stop-opacity='.03'/%3E%3Cstop offset='1' stop-color='rgb(255,240,215)' stop-opacity='0'/%3E%3C/linearGradient%3E%3Cfilter id='b' x='-.25' y='-.1' width='1.5' height='1.2'%3E%3CfeGaussianBlur stdDeviation='18'/%3E%3C/filter%3E%3C/defs%3E%3Cpolygon points='465,0 535,0 820,1000 180,1000' fill='url(%23g)' filter='url(%23b)'/%3E%3C/svg%3E")
-    center / 100% 100% no-repeat;
-}
-
-.beamCore {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='rgb(255,244,225)' stop-opacity='.22'/%3E%3Cstop offset='.55' stop-color='rgb(255,244,225)' stop-opacity='.05'/%3E%3Cstop offset='.9' stop-color='rgb(255,244,225)' stop-opacity='0'/%3E%3C/linearGradient%3E%3Cfilter id='b' x='-.25' y='-.1' width='1.5' height='1.2'%3E%3CfeGaussianBlur stdDeviation='18'/%3E%3C/filter%3E%3C/defs%3E%3Cpolygon points='486,0 514,0 640,1000 360,1000' fill='url(%23g)' filter='url(%23b)'/%3E%3C/svg%3E");
-}
-
-.pool {
-  background: radial-gradient(50% 50% at 50% 50%, rgba(255, 238, 210, 0.13), rgba(255, 238, 210, 0.04) 45%, transparent 72%);
-}
-
-.fixture {
-  background: radial-gradient(50% 50% at 50% 50%, rgba(255, 246, 230, 0.95), rgba(255, 240, 215, 0.25) 35%, transparent 70%);
-}
-
-/*
- * Switch-on. Lit by default (server HTML, reduced motion); components/ui/motion.ts sets
- * data-reveal="armed" after mount when the section is still below the fold, then "in" on scroll.
- */
-.spot[data-reveal="armed"] .beam,
-.spot[data-reveal="armed"] .fixture,
-.spot[data-reveal="armed"] .pool {
-  opacity: 0;
-}
-.spot[data-reveal="armed"] .beam {
-  transform: scaleY(0.78);
-}
-.spot[data-reveal="armed"] .beamCore {
-  transform: scaleY(0.7);
-}
-.spot[data-reveal="in"] .beam {
-  transition:
-    opacity 2.4s cubic-bezier(0.2, 0.8, 0.2, 1),
-    transform 2.4s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.spot[data-reveal="in"] .beamCore {
-  transition-duration: 2.8s;
-  transition-delay: 0.25s;
-}
-.spot[data-reveal="in"] .fixture {
-  transition: opacity 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.spot[data-reveal="in"] .pool {
-  transition: opacity 2.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.5s;
-}
-
 /* ------------------------------------------------------------------ reduced motion: final state, no delays */
 
 @media (prefers-reduced-motion: reduce) {
@@ -404,14 +441,5 @@
   .liveDot::after,
   .cue::after {
     animation: none;
-  }
-  .spot .beam,
-  .spot .fixture,
-  .spot .pool {
-    opacity: 1 !important;
-    transition: none !important;
-  }
-  .spot .beam {
-    transform: none !important;
   }
 }

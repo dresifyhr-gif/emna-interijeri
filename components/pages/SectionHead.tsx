@@ -1,14 +1,17 @@
 import type { ReactNode } from "react";
 import { Reveal } from "@/components/ui/Reveal";
 
-export type Tone = "dark" | "paper";
+export type Tone = "light" | "dark";
 
-/** Eyebrow + display heading + optional lead, for both dark and paper sections. */
+/**
+ * Label + heading + optional lead. Headings are `.heading` (Inter Tight, sentence case); emphasise the second half
+ * with colour only: <span className="text-taupe"> on light, <span className="text-accent"> on dark.
+ */
 export function SectionHead({
   eyebrow,
   title,
   lead,
-  tone = "dark",
+  tone = "light",
   className = "",
   titleClassName = "",
   as: Tag = "h2",
@@ -21,23 +24,18 @@ export function SectionHead({
   titleClassName?: string;
   as?: "h2" | "h3";
 }) {
-  const paper = tone === "paper";
+  const dark = tone === "dark";
   return (
     <div className={className}>
       <Reveal y={14}>
-        <p className={`eyebrow flex items-center gap-4 ${paper ? "text-accent-deep" : "text-accent"}`}>
-          <span aria-hidden className={`h-px w-8 ${paper ? "bg-accent-deep/70" : "bg-accent/70"}`} />
-          {eyebrow}
-        </p>
+        <p className={`kicker ${dark ? "text-accent" : "text-taupe"}`}>{eyebrow}</p>
       </Reveal>
       <Reveal delay={0.08}>
-        <Tag className={`display mt-6 text-[clamp(38px,5.6vw,92px)] ${titleClassName}`}>{title}</Tag>
+        <Tag className={`heading mt-4 text-[clamp(32px,4.2vw,56px)] ${titleClassName}`}>{title}</Tag>
       </Reveal>
       {lead && (
         <Reveal delay={0.16}>
-          <div className={`mt-7 max-w-xl text-base leading-relaxed sm:text-lg ${paper ? "text-ink/70" : "text-fg/70"}`}>
-            {lead}
-          </div>
+          <div className={`mt-5 max-w-xl text-[15px] leading-relaxed sm:text-base ${dark ? "text-fg/70" : "text-taupe"}`}>{lead}</div>
         </Reveal>
       )}
     </div>

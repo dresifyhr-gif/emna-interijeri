@@ -6,7 +6,7 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { LinkButton } from "@/components/ui/Button";
 
-type Variant = "light" | "accent" | "outline";
+type Variant = "light" | "accent" | "outline" | "cream" | "ink";
 
 /**
  * "Enter the studio" button: on click the screen darkens in a circle that grows out of the button,
@@ -55,14 +55,14 @@ export function StudioLaunch({
         createPortal(
           <motion.div
             aria-hidden
-            className="fixed inset-0 z-[80] flex items-center justify-center bg-ink-900"
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-night"
             initial={{ clipPath: `circle(0px at ${origin.x}px ${origin.y}px)` }}
             animate={{ clipPath: `circle(150vmax at ${origin.x}px ${origin.y}px)` }}
             transition={{ duration: 0.8, ease: [0.7, 0, 0.2, 1] }}
             onAnimationComplete={() => router.push(href)}
           >
             <motion.p
-              className="eyebrow text-accent"
+              className="kicker text-accent"
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.45, duration: 0.6, ease: [0.2, 0.8, 0.2, 1] }}

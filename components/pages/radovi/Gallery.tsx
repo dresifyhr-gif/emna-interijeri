@@ -74,12 +74,12 @@ function Chip({
       aria-pressed={active}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[12px] font-medium tracking-wide transition-all duration-300 ease-premium disabled:cursor-not-allowed disabled:opacity-35 ${
-        active ? "border-ink bg-ink text-paper" : "border-ink/20 text-ink/80 hover:border-ink/60 hover:text-ink"
+      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[13px] font-medium transition-colors duration-300 ease-premium disabled:cursor-not-allowed disabled:opacity-35 ${
+        active ? "border-graphite bg-graphite text-white" : "border-hairline bg-card text-graphite/80 hover:border-graphite/40 hover:text-graphite"
       }`}
     >
       {children}
-      <span className={`tabular-nums text-[10px] ${active ? "text-paper/70" : "text-ink/60"}`}>{count}</span>
+      <span className={`tabular-nums text-[11px] ${active ? "text-white/70" : "text-taupe"}`}>{count}</span>
     </button>
   );
 }
@@ -119,10 +119,10 @@ export function Gallery() {
   return (
     <div>
       {/* filters */}
-      <div className="flex flex-col gap-6 border-y border-ink/15 py-6 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-6 border-y border-hairline py-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-col gap-5 sm:flex-row sm:flex-wrap sm:gap-10">
           <div role="group" aria-label="Filtriraj po stilu" className="flex flex-wrap items-center gap-2">
-            <span className="eyebrow mr-2 w-14 text-mut-paper">Stil</span>
+            <span className="mr-2 w-14 text-[13px] text-taupe">Stil</span>
             <Chip active={!style} onClick={() => setStyle(null)} count={styleCount(null)}>
               Svi
             </Chip>
@@ -136,7 +136,7 @@ export function Gallery() {
             })}
           </div>
           <div role="group" aria-label="Filtriraj po obliku" className="flex flex-wrap items-center gap-2">
-            <span className="eyebrow mr-2 w-14 text-mut-paper">Oblik</span>
+            <span className="mr-2 w-14 text-[13px] text-taupe">Oblik</span>
             <Chip active={!shape} onClick={() => setShape(null)} count={shapeCount(null)}>
               Svi
             </Chip>
@@ -150,8 +150,8 @@ export function Gallery() {
             })}
           </div>
         </div>
-        <p className="text-[13px] text-ink/60" aria-live="polite">
-          Prikazano <span className="tabular-nums text-ink">{items.length}</span> od {gallery.length} fotografija
+        <p className="text-[13px] text-taupe" aria-live="polite">
+          Prikazano <span className="tabular-nums text-graphite">{items.length}</span> od {gallery.length} fotografija
         </p>
       </div>
 
@@ -178,7 +178,7 @@ export function Gallery() {
                     }}
                     onClick={() => setOpen(i)}
                     aria-label={`Otvori fotografiju: ${p.title}`}
-                    className={`group relative block aspect-[4/3] w-full overflow-hidden bg-paper-dark ${
+                    className={`group relative block aspect-[4/3] w-full overflow-hidden rounded-[18px] bg-hairline ${
                       cell.stretch ? "lg:aspect-auto lg:flex-1" : ""
                     }`}
                   >
@@ -192,7 +192,7 @@ export function Gallery() {
                     />
                     <span
                       aria-hidden
-                      className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-ink/55 text-fg opacity-0 backdrop-blur-md transition-all duration-500 ease-premium group-hover:opacity-100 group-focus-visible:opacity-100"
+                      className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.88] text-graphite opacity-0 backdrop-blur-md transition-opacity duration-500 ease-premium group-hover:opacity-100 group-focus-visible:opacity-100"
                     >
                       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                         <path d="M8.5 1H13v4.5M13 1 8 6M5.5 13H1V8.5M1 13l5-5" stroke="currentColor" strokeWidth="1.3" />
@@ -200,8 +200,8 @@ export function Gallery() {
                     </span>
                   </button>
                   <figcaption className="mt-3.5 flex items-baseline justify-between gap-4">
-                    <span className="text-[14px] text-ink/80">{p.title}</span>
-                    <span className="eyebrow shrink-0 text-mut-paper">
+                    <span className="text-[14px] text-graphite">{p.title}</span>
+                    <span className="shrink-0 text-[12.5px] text-taupe">
                       {styleLabel[p.style]}
                       {p.shape ? ` · ${shapeLabel[p.shape]}` : ""}
                     </span>
@@ -214,12 +214,12 @@ export function Gallery() {
       </AnimatePresence>
 
       {items.length === 0 && (
-        <div className="mt-10 border border-dashed border-ink/25 p-10 text-center">
-          <p className="font-display text-2xl font-medium">Nema fotografija za ovaj odabir.</p>
+        <div className="mt-10 rounded-[20px] border border-dashed border-graphite/20 p-10 text-center">
+          <p className="heading text-2xl tracking-head-sm">Nema fotografija za ovaj odabir.</p>
           <button
             type="button"
             onClick={reset}
-            className="mt-5 text-[13px] font-semibold underline decoration-1 underline-offset-4 hover:text-accent-deep"
+            className="mt-5 text-[13.5px] font-medium underline decoration-graphite/30 decoration-1 underline-offset-4 hover:decoration-graphite"
           >
             Poništi filtre
           </button>

@@ -1,60 +1,55 @@
-import { catalog } from "@/lib/studio/catalog";
+import { catalog, type MaterialDef } from "@/lib/studio/catalog";
 import { Reveal } from "@/components/ui/Reveal";
 import { Eyebrow } from "./Eyebrow";
 import { MaskLines } from "./MaskLines";
 import { MaterialSwatches, type SwatchItem } from "./MaterialSwatches";
 
-/** worktops shown on the homepage (the rest are in the studio) */
+/** a light-to-dark run of fronts and four worktops; the rest are in the studio */
+const FRONT_IDS = ["lak", "kasmir", "hrast", "maslina", "orah", "antracit"];
 const TOP_IDS = ["mramor", "crni", "beton", "hrast"];
 
-/** 05 · Materijali — dark. Fronts and a few worktops straight from lib/studio/catalog.ts. */
+function pick(list: readonly MaterialDef[], ids: string[], group: SwatchItem["group"]): SwatchItem[] {
+  return ids
+    .map((id) => list.find((m) => m.id === id))
+    .filter((m): m is MaterialDef => m !== undefined)
+    .map((m) => ({
+      id: m.id,
+      group,
+      name: m.name,
+      swatch: m.swatch,
+      render: m.render,
+      href: `/studio?${group}=${encodeURIComponent(m.id)}`,
+    }));
+}
+
+/** Materijali — warm white. Fronts and worktops straight from lib/studio/catalog.ts, each opening the studio. */
 export function Materials() {
-  // the studio has dozens of fronts; the homepage strip shows the featured ones, in their set order
-  const fronts: SwatchItem[] = catalog.fronts
-    .filter((m) => m.featured)
-    .sort((a, b) => (a.featured ?? 0) - (b.featured ?? 0))
-    .map((m) => ({
-      id: m.id,
-      group: "front",
-      name: m.name,
-      swatch: m.swatch,
-      render: m.render,
-      href: `/studio?front=${encodeURIComponent(m.id)}`,
-    }));
-  const tops: SwatchItem[] = catalog.tops
-    .filter((m) => TOP_IDS.includes(m.id))
-    .map((m) => ({
-      id: m.id,
-      group: "top",
-      name: m.name,
-      swatch: m.swatch,
-      render: m.render,
-      href: `/studio?top=${encodeURIComponent(m.id)}`,
-    }));
+  const fronts = pick(catalog.fronts, FRONT_IDS, "front");
+  const tops = pick(catalog.tops, TOP_IDS, "top");
 
   return (
-    <section aria-labelledby="materijali-naslov" className="cv-auto relative overflow-hidden bg-ink-700 py-28 text-fg sm:py-36 lg:py-48">
-      <div className="shell relative">
-        <div className="grid gap-10 lg:grid-cols-12 lg:items-end">
-          <div className="lg:col-span-7">
+    <section aria-labelledby="materijali-naslov" className="cv-auto bg-canvas py-24 sm:py-28 lg:py-32">
+      <div className="shell">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between lg:gap-12">
+          <div>
             <Reveal y={12}>
-              <Eyebrow index="04">Materijali</Eyebrow>
+              <Eyebrow>Materijali</Eyebrow>
             </Reveal>
             <MaskLines
               id="materijali-naslov"
-              lines={[{ text: "Odaberite" }, { text: "materijal.", accent: true }]}
-              className="mt-7 text-[clamp(42px,7vw,120px)]"
+              lines={[{ text: "Odaberite materijal." }, { text: "Vidite ga na svojoj kuhinji.", accent: true }]}
+              className="mt-4 text-[clamp(34px,4.2vw,56px)]"
             />
           </div>
-          <Reveal delay={0.15} className="lg:col-span-4 lg:col-start-9 lg:pb-3">
-            <p className="max-w-md text-base leading-relaxed text-fg/70 sm:text-lg">
-              Odaberite uzorak — 3D studio se otvara s tim materijalom već postavljenim na kuhinju.
+          <Reveal delay={0.1} className="max-w-[24rem] lg:pb-1.5">
+            <p className="text-[15px] leading-relaxed text-taupe">
+              Kliknite uzorak i 3D studio se otvara s tim materijalom već postavljenim na kuhinju.
             </p>
-            <p className="mt-4 text-[12px] text-mut">Boje na zaslonu su približne.</p>
+            <p className="mt-2 text-[12.5px] text-taupe">Boje na zaslonu su približne.</p>
           </Reveal>
         </div>
 
-        <Reveal className="mt-16 lg:mt-24" y={40}>
+        <Reveal className="mt-10 lg:mt-12" y={28}>
           <MaterialSwatches fronts={fronts} tops={tops} />
         </Reveal>
       </div>

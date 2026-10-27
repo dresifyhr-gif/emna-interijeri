@@ -9,7 +9,7 @@
 import { SHOWCASE_CONFIG } from "@/lib/studio/showcase";
 import type { KitchenConfig } from "@/lib/studio/types";
 
-/** The engine's SHOWCASE_CONFIG (lib/studio/showcase.ts, pure data): wall A 420 cm, 240 cm island, tall column, antracit + marble. */
+/** The engine's SHOWCASE_CONFIG (lib/studio/showcase.ts, pure data): wall A 420 cm, 240 cm island, tall column, white lacquer + black stone. */
 export const HERO_CONFIG: KitchenConfig = SHOWCASE_CONFIG;
 
 export interface HeroPreset {
@@ -21,6 +21,8 @@ export interface HeroPreset {
   topSwatch: string;
   /** opens the studio with this front + worktop preselected */
   href: string;
+  /** the studio's rough estimate for exactly this kitchen in these materials, e.g. "15.800 – 18.500 €" (lib/studio/price.ts) */
+  price: string;
 }
 
 /**

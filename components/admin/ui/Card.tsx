@@ -82,7 +82,7 @@ export function StatCard({
         )}
       />
       <span className="eyebrow block text-mut">{label}</span>
-      <span className="mt-4 block font-display text-[40px] font-medium leading-none tracking-tightest text-fg tabular-nums">
+      <span className="mt-4 block font-display text-[40px] font-medium leading-none tracking-head text-fg tabular-nums">
         {value}
       </span>
       {hint && <span className="mt-3 block text-[12.5px] leading-snug text-mut">{hint}</span>}

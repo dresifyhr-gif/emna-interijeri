@@ -25,6 +25,14 @@
  * their element up in 3D. Overlays follow the view through the engine's ViewInfo (overlay.ts) and never make the engine
  * render.
  *
+ * "3D | Tlocrt | Nacrt" (ViewSwitch, top-left of the kitchen view; remembered for the visit, viewMode.ts): the 2D views
+ * (PlanView) draw the floor plan or a wall's elevation in the 3D view's place — the same drawings as the PDF, live with
+ * every edit. A click there selects an element exactly like a click in 3D (the toolbar over it, the editor in the panel),
+ * the "+" stand at the drawing's empty places; the overlays read the drawing's ViewInfo from a ViewHub instead of the
+ * engine's. Meanwhile the engine keeps its kitchen but renders nothing: its canvas is moved out of view (its own
+ * IntersectionObserver pauses the render loop) and comes back, rendering again, with "3D". Without WebGL the 2D views
+ * still work.
+ *
  * "Jednostavno / Napredno" (the step header; remembered, hooks.ts StudioMode) leaves the finer controls out for
  * customers by default. A first visit gets three skippable coach marks (CoachMarks; on a phone on the step sheet, never
  * over the 3D view).
@@ -50,11 +58,12 @@ import { ElementEditor, type ApplyOptions, type EditNote } from "./ElementEditor
 import { ElementToolbar, SelectionLeader } from "./ElementToolbar";
 import { CoachMarks } from "./CoachMarks";
 import { readCoach, setCoach, setStudioMode, useCoach, useMediaQuery, useOrigin, useStudioMode, useViewport } from "./hooks";
-import { OrbitIcon } from "./icons";
+import { OrbitIcon, PlanIcon, Spinner } from "./icons";
 import { fitToPlanner } from "./limits";
 import { EASE, LAST_STEP, STEPS, clamp, columnSlots, eur, islandWord, resetTarget, runName, stepIndex } from "./meta";
-import { isTyping, type Insets } from "./overlay";
+import { isTyping, type Insets, type ViewSource } from "./overlay";
 import { DesktopPanel, MobileSheet, MobileSummary, PANEL_GAP, PANEL_W } from "./Panel";
+import { PlanView } from "./PlanView";
 import { usePdfExport } from "./PdfExport";
 import { Segmented } from "./controls";
 import { STEP_PANEL_ID, stepTabId } from "./StepNav";
@@ -74,6 +83,8 @@ import { ShapeStep } from "./steps/ShapeStep";
 import { TopStep } from "./steps/TopStep";
 import type { StepEditOptions, StepProps } from "./steps/types";
 import { WallsStep } from "./steps/WallsStep";
+import { createViewHub, readStudioView, setNacrtPick, setStudioView, useNacrtPick, useStudioView, type NacrtPick, type StudioView } from "./viewMode";
+import { ViewSwitch, viewDockHeight } from "./ViewSwitch";
 
 const INSET_DESKTOP = { top: TOPBAR_H.desktop, right: PANEL_W + PANEL_GAP * 2, bottom: 0, left: 0 };
 /** how long the engine may report "nothing selected" while it rebuilds / re-lays out under an edit */
@@ -161,6 +172,20 @@ export function Studio() {
   /** the config before a shape change put edited elements back to the planner's (ShapeStep offers it back) */
   const [layoutUndo, setLayoutUndo] = useState<KitchenConfig | null>(null);
 
+  // ---- 3D / 2D
+  const view = useStudioView();
+  const nacrtPick = useNacrtPick();
+  /** the 2D view's ViewInfo for the overlays (PlanView publishes, they subscribe like to the engine) */
+  const [hub] = useState(createViewHub);
+  const hubRef = useRef<ViewSource | null>(hub);
+  const flat = view !== "3d";
+  /**
+   * the studio opens in a 2D view (remembered for the visit): the engine waits until the drawing is on screen (or a few
+   * seconds), so its heavy first steps do not hold the drawing back; "3D" releases it at once. Read straight from storage
+   * (the hydrating render still sees "3d"); never rendered, so server and client may differ.
+   */
+  const [engineHeld, setEngineHeld] = useState(() => typeof window !== "undefined" && readStudioView() !== "3d");
+
   // ---- colours
   const [twoTone, setTwoTone] = useState(() => Boolean(initial.zoneFronts));
   const [frontZone, setFrontZone] = useState<FrontZone>("base");
@@ -184,6 +209,8 @@ export function Studio() {
   const focusSeq = useRef(0);
   const restoreRow = useRef<string | null>(null);
   const selRef = useRef<string | null>(null);
+  /** a 2D view is shown (keyboard focus goes to the drawing, not to the 3D canvas) */
+  const flatRef = useRef(false);
   const slotsRef = useRef<PlanSlot[]>([]);
   const undoSeq = useRef(0);
   const toastSeq = useRef(0);
@@ -215,6 +242,7 @@ export function Studio() {
 
   useEffect(() => {
     selRef.current = selSlot ? selSlot.id : null;
+    flatRef.current = flat;
     slotsRef.current = plan.slots;
     overlayRef.current = Boolean(dimEdit || gapOpen);
   });
@@ -274,7 +302,14 @@ export function Studio() {
     onSelect: handleSelect,
     onDimLabel: handleDimLabel,
     onSurfaceClick: handleSurface,
+    start: !engineHeld,
   });
+  useEffect(() => {
+    if (!engineHeld) return;
+    const t = window.setTimeout(() => setEngineHeld(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [engineHeld]);
+  const releaseEngine = useCallback(() => setEngineHeld(false), []);
   const readyRef = useRef(false);
   useEffect(() => {
     readyRef.current = status === "ready";
@@ -291,8 +326,9 @@ export function Studio() {
   );
 
   const focusCanvas = useCallback(() => {
-    containerRef.current?.querySelector<HTMLCanvasElement>("canvas")?.focus({ preventScroll: true });
-  }, []);
+    if (flatRef.current) hub.focus();
+    else containerRef.current?.querySelector<HTMLCanvasElement>("canvas")?.focus({ preventScroll: true });
+  }, [hub]);
 
   /** close the element editor and the toolbar, and clear the engine's selection rim */
   const closeEditor = useCallback(
@@ -359,8 +395,9 @@ export function Studio() {
   const hoverElement = useCallback(
     (id: string | null) => {
       if (readyRef.current) apiRef.current?.highlight?.(id);
+      hub.highlight(id);
     },
-    [apiRef],
+    [apiRef, hub],
   );
 
   // focus goes back to the list row the editor was opened from (once the steps are interactive again)
@@ -398,12 +435,13 @@ export function Studio() {
     };
   }, [cfg, engineSelect]);
 
-  // UI arrives as the intro's camera dolly settles (immediately with reduced motion or without 3D)
+  // UI arrives as the intro's camera dolly settles (immediately with reduced motion, without 3D, or in a 2D view — the
+  // engine does not render while it is out of view, so it would never get "ready")
   useEffect(() => {
-    const delay = status === "loading" ? 15000 : status === "ready" && !reduce ? 3000 : 0;
+    const delay = flat ? 0 : status === "loading" ? 15000 : status === "ready" && !reduce ? 3000 : 0;
     const t = window.setTimeout(() => setUiShown(true), delay);
     return () => window.clearTimeout(t);
-  }, [status, reduce]);
+  }, [status, reduce, flat]);
 
   // interaction hints fade after the first touch of the canvas (or on their own)
   useEffect(() => {
@@ -477,6 +515,7 @@ export function Studio() {
       el.style.setProperty("--studio-inset-bottom", `${v.bottom}px`);
       el.style.setProperty("--studio-inset-left", `${v.left}px`);
       apiRef.current?.resize();
+      hub.resize();
     };
     if (desktop) {
       apply(INSET_DESKTOP);
@@ -491,7 +530,7 @@ export function Studio() {
     const ro = new ResizeObserver(measure);
     ro.observe(sheet);
     return () => ro.disconnect();
-  }, [desktop, apiRef]);
+  }, [desktop, apiRef, hub]);
 
   // the engine was created after the insets were set on first mount; re-read them once it's live
   useEffect(() => {
@@ -816,6 +855,51 @@ export function Studio() {
     [focusCanvas],
   );
 
+  /* ---------------------------------------------------------------- 3D / Tlocrt / Nacrt */
+
+  /** the elevations "Nacrt" can show: the layout's walls, then the island / peninsula */
+  const nacrtWalls = useMemo<NacrtPick[]>(() => [...wallsFor(cfg.layout), ...(plan.island ? (["isl"] as const) : [])], [cfg.layout, plan.island]);
+  const nacrt: NacrtPick = nacrtWalls.includes(nacrtPick) ? nacrtPick : "a";
+
+  const changeView = useCallback(
+    (v: StudioView) => {
+      if (v === view) return;
+      setStudioView(v);
+      if (v === "3d") setEngineHeld(false);
+      // what stands on the other view's places goes: the length editor (a 3D label), a wall's finishes, an open "+"
+      setDimEdit(null);
+      setSurface(null);
+      setGapOpen(null);
+      setHintsGone(true);
+      setAnnounce(v === "3d" ? "3D prikaz kuhinje." : `${v === "tlocrt" ? "Tlocrt" : "Nacrt"} s mjerama. Odaberite element na crtežu da ga uredite.`);
+    },
+    [view],
+  );
+
+  // back in 3D: the engine renders again (it was paused out of view; a resize marks the view to be drawn)
+  const wasFlat = useRef(flat);
+  useEffect(() => {
+    if (wasFlat.current && !flat) apiRef.current?.resize();
+    wasFlat.current = flat;
+  }, [flat, apiRef]);
+
+  /** a click on the 2D drawing: an element selects it as a click in 3D does, the paper clears the selection */
+  const pick2d = useCallback(
+    (id: string | null) => {
+      setHintsGone(true);
+      if (!id) {
+        if (selRef.current) closeEditor();
+        return;
+      }
+      openedFrom.current = "canvas";
+      setEditorFocus(0);
+      openElement(id);
+      const sl = slotsRef.current.find((x) => x.id === id);
+      if (sl) setAnnounce(`Odabran element: ${slotName(sl)}, ${Math.round(sl.width)} cm. Brze radnje su uz element (tipka Tab), Delete ga uklanja.`);
+    },
+    [closeEditor, openElement],
+  );
+
   /* ---------------------------------------------------------------- steps */
 
   const goTo = (i: number, opts: { focus?: boolean } = {}) => {
@@ -842,12 +926,29 @@ export function Studio() {
     }
   }, []);
 
+  /**
+   * a picture of the kitchen (the "Pošalji" preview, the inquiry): the 3D view as it is — or, when the 3D view has not been
+   * shown yet this visit (2D since the start: the engine built the kitchen but never rendered, its intro still waiting),
+   * one of the engine's own camera presets (snapshotViews finishes the assembly and the lights itself)
+   */
+  const engineShot = useCallback(
+    async (width: number, lead: boolean): Promise<string | undefined> => {
+      const api = apiRef.current;
+      if (!api || status === "failed") return undefined;
+      if (status === "ready") return lead ? leadSnapshot(api, containerRef.current) : studioSnapshot(api, containerRef.current, width);
+      if (!api.viewInfo?.() || !api.snapshotViews) return undefined;
+      const shots = await api.snapshotViews({ views: ["perspektiva-desno"], width, height: Math.round(width * 0.75), quality: 0.85 });
+      return shots[0]?.dataUrl;
+    },
+    [apiRef, status],
+  );
+
   // live snapshot for the "Pošalji" preview
   useEffect(() => {
-    if (stepId !== "posalji" || status !== "ready") return;
+    if (stepId !== "posalji" || status === "failed") return;
     let alive = true;
     const t = window.setTimeout(() => {
-      void studioSnapshot(apiRef.current, containerRef.current, 720).then((u) => {
+      void engineShot(720, false).then((u) => {
         if (alive && u) setPreview(u);
       });
     }, 700);
@@ -855,7 +956,7 @@ export function Studio() {
       alive = false;
       window.clearTimeout(t);
     };
-  }, [stepId, status, cfg, apiRef]);
+  }, [stepId, status, cfg, engineShot]);
 
   /* ---------------------------------------------------------------- lead */
 
@@ -864,7 +965,7 @@ export function Studio() {
     () => ({ config: sanitizeConfig(cfg), configUrl: `${origin}${studioPath(cfg)}`, summary, price }),
     [cfg, origin, summary, price],
   );
-  const getSnapshot = useCallback(() => leadSnapshot(apiRef.current, containerRef.current), [apiRef]);
+  const getSnapshot = useCallback(() => engineShot(1200, true), [engineShot]);
   const lead = useStudioLead({ getSnapshot, fieldId, getPayloadExtras });
   const thanks = lead.status === "success" && lead.sent ? lead.sent : null;
 
@@ -877,7 +978,8 @@ export function Studio() {
       source: "studio",
       cfg: sanitizeConfig(cfg),
       configUrl: `${origin}${studioPath(cfg)}`,
-      pictures: { engine: status === "ready" ? apiRef.current : null },
+      // the engine takes its pictures itself, also while it is paused out of view (2D) once it has built the kitchen
+      pictures: { engine: status === "ready" || (status === "loading" && apiRef.current?.viewInfo?.()) ? apiRef.current : null },
       preparedFor: thanks ? lead.values.name.trim() || null : null,
     }),
     setAnnounce,
@@ -1018,7 +1120,10 @@ export function Studio() {
 
   const loading = status === "loading" && !uiShown;
   const live = status === "ready";
-  const overlays = live && uiShown && !failed;
+  /** where the overlays read the view from, and whether it reports: the engine in 3D, the drawing in 2D (also without WebGL) */
+  const viewRef = flat ? hubRef : apiRef;
+  const viewLive = flat || live;
+  const overlays = flat ? uiShown : live && uiShown && !failed;
   // the element toolbar: over the element (desktop) / docked above the sheet (phone, not while the editor fills it)
   const toolbarOn = Boolean(overlays && selInfo);
   const toolbarHidden = !desktop && (editorOpen || summaryOpen || Boolean(dimEdit) || Boolean(gapOpen));
@@ -1028,8 +1133,9 @@ export function Studio() {
   const gapsQuiet = stepId !== "elementi" && !selSlot && !gapOpen;
   const panelLeft = viewport.w - PANEL_GAP - PANEL_W;
   // first-visit coach marks: once the UI is in, never over an open picker / editor / the thank-you
-  const coachOn = Boolean(overlays && coach !== "done" && !dimEdit && !gapOpen && !surface && !summaryOpen && !thanks && !(editorOpen && !desktop));
-  const canDemo = Boolean(selSlot && moduleDef(selSlot.zone, selSlot.type)?.demo !== false);
+  const coachOn = Boolean(!flat && overlays && coach !== "done" && !dimEdit && !gapOpen && !surface && !summaryOpen && !thanks && !(editorOpen && !desktop));
+  const canDemo = Boolean(!flat && selSlot && moduleDef(selSlot.zone, selSlot.type)?.demo !== false);
+  const dockH = viewDockHeight(!desktop, view === "nacrt");
 
   return (
     <div ref={rootRef} className="fixed inset-0 overflow-hidden bg-ink text-fg">
@@ -1050,18 +1156,68 @@ export function Studio() {
           }}
         />
 
-        {/* the 3D view */}
-        <div ref={containerRef} className={`absolute inset-0 z-0 bg-[#131315] ${s.stage}`} data-coach={coachOn && coach === "2" ? "dims" : undefined} />
+        {/* 3D | Tlocrt | Nacrt (and which wall) — before the view in the Tab order */}
+        <ViewSwitch
+          view={view}
+          onView={changeView}
+          nacrt={nacrt}
+          walls={nacrtWalls}
+          onNacrt={setNacrtPick}
+          layout={cfg.layout}
+          docked={!desktop}
+          shown={uiShown}
+          reduce={reduce}
+        />
 
-        {failed && <NoWebGL desktop={desktop} />}
+        {/* the 3D view — in 2D out of view (its render loop pauses) and out of reach */}
+        <div
+          ref={containerRef}
+          className={`absolute inset-0 z-0 bg-[#131315] ${s.stage}`}
+          style={flat ? STAGE_AWAY : undefined}
+          inert={flat}
+          aria-hidden={flat || undefined}
+          data-coach={coachOn && coach === "2" ? "dims" : undefined}
+        />
+
+        {/* the 2D view: the floor plan or a wall's elevation, with its dimensions */}
+        {flat && (
+          <PlanView
+            plan={plan}
+            pick={view === "nacrt" ? { kind: "nacrt", wall: nacrt } : { kind: "tlocrt" }}
+            hub={hub}
+            selectedId={selSlot?.id ?? null}
+            insetsRef={insetsRef}
+            chromeTop={dockH}
+            // phone: the element toolbar docked above the sheet (GapLayer DOCKED_BAR)
+            reserveBottom={!desktop && toolbarOn && !toolbarHidden ? 74 : 0}
+            docked={!desktop}
+            shown={uiShown}
+            reduce={reduce}
+            onPick={pick2d}
+            onRemove={removeSelected}
+            onWall={setNacrtPick}
+            onDrawn={releaseEngine}
+          />
+        )}
+
+        {failed && !flat && <NoWebGL desktop={desktop} onPlan={() => changeView("tlocrt")} />}
+
+        {/* 3D chosen after the visit began in 2D: the engine is still starting (the loading veil is long gone) */}
+        {!flat && uiShown && status === "loading" && (
+          <p role="status" className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center gap-2.5 text-[12.5px] text-mut" style={desktop ? { paddingRight: INSET_DESKTOP.right } : undefined}>
+            <Spinner className="text-accent" />
+            Učitavam 3D prikaz…
+          </p>
+        )}
+
 
         {/* how to orbit (this visit, once the coach marks are done) */}
         <div
           aria-hidden="true"
-          className={`pointer-events-none absolute z-10 flex gap-2 ${desktop ? "bottom-6 left-8 items-end" : "inset-x-0 top-[64px] flex-col items-center"}`}
+          className={`pointer-events-none absolute z-10 flex gap-2 ${desktop ? "bottom-6 left-8 items-end" : "inset-x-0 top-[120px] flex-col items-center"}`}
         >
           <AnimatePresence>
-            {uiShown && !failed && !selSlot && !hintsGone && !toast && !dimEdit && coach === "done" && (
+            {uiShown && !failed && !flat && !selSlot && !hintsGone && !toast && !dimEdit && coach === "done" && (
               <motion.div
                 key="orbit"
                 initial={{ opacity: 0, y: reduce ? 0 : 8 }}
@@ -1092,7 +1248,7 @@ export function Studio() {
 
         {/* desktop, with the editor open in the panel: a leader line from the element to it */}
         {overlays && desktop && editorOpen && selSlot && (
-          <SelectionLeader apiRef={apiRef} live={live} slotId={selSlot.id} panelLeft={panelLeft} />
+          <SelectionLeader apiRef={viewRef} live={viewLive} slotId={selSlot.id} panelLeft={panelLeft} />
         )}
 
         {/* on the kitchen itself: "+" at every empty place, the selected element's toolbar, the length editor and the
@@ -1107,8 +1263,8 @@ export function Studio() {
               exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.2, ease: EASE } }}
             >
               <GapLayer
-                apiRef={apiRef}
-                live={live}
+                apiRef={viewRef}
+                live={viewLive}
                 cfg={cfg}
                 plan={plan}
                 docked={!desktop}
@@ -1140,8 +1296,8 @@ export function Studio() {
               exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.22, ease: EASE } }}
             >
               <ElementToolbar
-                apiRef={apiRef}
-                live={live}
+                apiRef={viewRef}
+                live={viewLive}
                 cfg={cfg}
                 plan={plan}
                 info={selInfo}
@@ -1195,6 +1351,7 @@ export function Studio() {
           top={!desktop && Boolean(gapOpen || dimEdit || surface)}
           selLow={Boolean(selSlot && selSlot.zone !== "upper")}
           insetsRef={insetsRef}
+          below={desktop ? 0 : dockH}
         />
 
         {desktop ? (
@@ -1272,7 +1429,10 @@ function Hint({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   );
 }
 
-function NoWebGL({ desktop }: { desktop: boolean }) {
+/** the 3D view in 2D: out of view (the engine's IntersectionObserver pauses its render loop), its size kept (no re-layout) */
+const STAGE_AWAY = { visibility: "hidden", transform: "translate3d(-300vw, 0, 0)" } as const;
+
+function NoWebGL({ desktop, onPlan }: { desktop: boolean; onPlan: () => void }) {
   return (
     <div
       className="absolute inset-0 z-[1] flex items-start justify-center overflow-hidden bg-ink"
@@ -1291,6 +1451,14 @@ function NoWebGL({ desktop }: { desktop: boolean }) {
           Ovaj preglednik ili uređaj ne može prikazati 3D (WebGL). Oblik, mjere, elemente, boje i detalje odaberite u
           koracima — upit stiže do nas jednako, samo bez slike.
         </p>
+        <button
+          type="button"
+          onClick={onPlan}
+          className="mt-6 inline-flex items-center gap-2.5 rounded-full border border-white/20 px-5 py-3 text-[13px] font-semibold tracking-wide text-fg transition-colors duration-300 ease-premium hover:border-accent hover:text-accent"
+        >
+          <PlanIcon className="h-4 w-4" />
+          Pogledajte tlocrt i nacrte
+        </button>
       </div>
     </div>
   );

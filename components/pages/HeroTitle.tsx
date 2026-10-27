@@ -3,14 +3,15 @@ import type { CSSProperties } from "react";
 export type TitleLine = { text: string; accent?: boolean };
 
 /**
- * Big display headline whose lines rise out of a mask, one after another.
- * Pure CSS (`.hero-rise` in globals.css), so the headline moves on the first paint, before and
- * without JavaScript; reduced motion shows it still.
+ * Page headline (`.heading`: Inter Tight, sentence case) whose lines rise out of a mask, one after another.
+ * Emphasis is colour only (`accentClass`, taupe on light). Pure CSS (`.hero-rise` in globals.css), so the headline
+ * moves on the first paint, before and without JavaScript; reduced motion shows it still.
+ * The mask reaches a little above and below each line so diacritics (Č, Š, Ž) and descenders are never clipped.
  */
 export function HeroTitle({
   lines,
   className = "",
-  accentClass = "text-accent",
+  accentClass = "text-taupe",
   delay = 0.1,
 }: {
   lines: TitleLine[];
@@ -19,9 +20,9 @@ export function HeroTitle({
   delay?: number;
 }) {
   return (
-    <h1 className={`display ${className}`}>
+    <h1 className={`heading ${className}`}>
       {lines.map((l, i) => (
-        <span key={i} className="block overflow-hidden pb-[0.06em]">
+        <span key={i} className="-my-[0.12em] block overflow-hidden py-[0.12em]">
           <span
             className={`hero-rise block ${l.accent ? accentClass : ""}`}
             style={{ animationDelay: `${delay + i * 0.09}s` } as CSSProperties}

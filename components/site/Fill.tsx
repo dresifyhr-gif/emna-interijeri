@@ -27,7 +27,7 @@ export function Fill({
   return (
     <span
       title="Podatak još nije upisan u lib/site.ts"
-      className={`inline-block rounded border border-dashed border-accent/60 px-1.5 py-0.5 align-middle font-sans text-[11px] font-medium normal-case tracking-normal text-accent ${className}`}
+      className={`fill-todo inline-block rounded border border-dashed border-accent/60 px-1.5 py-0.5 align-middle font-sans text-[11px] font-medium normal-case tracking-normal text-accent ${className}`}
     >
       upisati: {label}
     </span>

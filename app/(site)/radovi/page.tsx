@@ -30,7 +30,7 @@ export default function RadoviPage() {
         }
       />
 
-      <section aria-label="Galerija realizacija" className="bg-paper pb-24 pt-10 text-ink lg:pb-36 lg:pt-14">
+      <section aria-label="Galerija realizacija" className="bg-canvas pb-24 lg:pb-32">
         <div className="shell">
           <Gallery />
         </div>
@@ -42,7 +42,7 @@ export default function RadoviPage() {
           <>
             Sljedeća može
             <br />
-            <span className="text-accent-deep">biti vaša.</span>
+            <span className="text-taupe">biti vaša.</span>
           </>
         }
         items={[

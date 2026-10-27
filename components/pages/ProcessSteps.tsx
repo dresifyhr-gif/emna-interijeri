@@ -1,5 +1,4 @@
 import { Reveal } from "@/components/ui/Reveal";
-import type { Tone } from "./SectionHead";
 
 export type Step = { title: string; text: string };
 
@@ -49,46 +48,25 @@ export const collaborationSteps: Step[] = [
 
 const cols: Record<number, string> = { 3: "lg:grid-cols-3", 4: "lg:grid-cols-4", 5: "lg:grid-cols-5" };
 
-/** Numbered steps on a hairline grid. Outlined numerals echo the line-drawing motif. */
-export function ProcessSteps({
-  steps = defaultSteps,
-  tone = "dark",
-  className = "",
-}: {
-  steps?: Step[];
-  tone?: Tone;
-  className?: string;
-}) {
-  const paper = tone === "paper";
+/** Numbered steps as white cards on a light section. */
+export function ProcessSteps({ steps = defaultSteps, className = "" }: { steps?: Step[]; className?: string }) {
   return (
-    <ol
-      className={`grid gap-px overflow-hidden border ${
-        paper ? "border-ink/15 bg-ink/15" : "border-white/10 bg-white/10"
-      } sm:grid-cols-2 ${cols[steps.length] ?? "lg:grid-cols-4"} ${className}`}
-    >
+    <ol className={`grid gap-3 sm:grid-cols-2 sm:gap-4 ${cols[steps.length] ?? "lg:grid-cols-4"} ${className}`}>
       {steps.map((s, i) => (
         <Reveal
           as="li"
           key={s.title}
           delay={i * 0.08}
-          className={`group relative flex flex-col p-6 sm:p-8 lg:min-h-[340px] ${paper ? "bg-paper" : "bg-ink"}`}
+          className="flex flex-col rounded-[18px] border border-hairline bg-card p-6 sm:p-7 lg:min-h-[300px]"
         >
-          <span
-            aria-hidden
-            className={`font-display text-[72px] font-bold leading-none tracking-tightest text-transparent transition-colors duration-700 ease-premium ${
-              paper
-                ? "[-webkit-text-stroke:1px_rgba(138,122,92,.75)] group-hover:text-accent-deep/15"
-                : "[-webkit-text-stroke:1px_rgba(201,185,154,.7)] group-hover:text-accent/10"
-            }`}
-          >
+          <span aria-hidden className="font-head text-[40px] font-normal leading-none tracking-head text-bronze">
             {String(i + 1).padStart(2, "0")}
           </span>
-          <h3 className="mt-10 font-display text-[22px] font-medium tracking-tight lg:mt-auto lg:pt-14">
+          <h3 className="heading mt-8 text-[22px] tracking-head-sm lg:mt-auto lg:pt-12">
             <span className="sr-only">Korak {i + 1}: </span>
             {s.title}
           </h3>
-          <span aria-hidden className={`mt-4 block h-px w-10 ${paper ? "bg-accent-deep" : "bg-accent"}`} />
-          <p className={`mt-4 text-sm leading-relaxed ${paper ? "text-ink/70" : "text-fg/65"}`}>{s.text}</p>
+          <p className="mt-3 text-[14.5px] leading-relaxed text-taupe">{s.text}</p>
         </Reveal>
       ))}
     </ol>

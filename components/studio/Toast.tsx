@@ -51,6 +51,7 @@ export function Toast({
   top = false,
   selLow = false,
   insetsRef,
+  below = 0,
 }: {
   toast: ToastData | null;
   /** the toast's edit is still the last undo step */
@@ -69,6 +70,8 @@ export function Toast({
   selLow?: boolean;
   /** the UI's insets over the 3D view (phone: is there room below the middle of the 3D view?) */
   insetsRef?: RefObject<Insets>;
+  /** phone: px under the top bar taken by other controls (the view switcher) — a toast that goes up stays below them */
+  below?: number;
 }) {
   const reduce = Boolean(useReducedMotion());
   const [paused, setPaused] = useState<number | null>(null);
@@ -104,7 +107,7 @@ export function Toast({
     const ins = insetsRef?.current;
     if (!ins || ins.bottom < 0) return;
     const H = window.innerHeight;
-    const top = Math.max(0, ins.top);
+    const top = Math.max(0, ins.top) + below;
     const foot = H - Math.max(0, ins.bottom) - (raised ? LIFT.toolbar : LIFT.sheet);
     const mid = (top + H - Math.max(0, ins.bottom)) / 2;
     const dots = [...document.querySelectorAll<HTMLElement>("[data-gap-btn][data-on]")].map((b) => {
@@ -112,7 +115,7 @@ export function Toast({
       return r.y + r.height / 2;
     });
     setCramped(toastAtTop({ top, foot, mid, lineH: LINE_H, drop: DROP, dots, raised, selLow }));
-  }, [compact, n, raised, selLow, insetsRef]);
+  }, [compact, n, raised, selLow, insetsRef, below]);
 
   const hold = (on: boolean) => setPaused(on ? n : null);
   const atTop = compact && (top || cramped);
@@ -126,7 +129,7 @@ export function Toast({
         desktop
           ? { right: "var(--studio-inset-right, 0px)" }
           : atTop
-            ? { top: `calc(var(--studio-inset-top, 56px) + ${DROP}px)` }
+            ? { top: `calc(var(--studio-inset-top, 56px) + ${DROP + below}px)` }
             : {
                 bottom: `calc(var(--studio-inset-bottom, 0px) + ${raised ? LIFT.toolbar : LIFT.sheet}px)`,
                 transition: "bottom .5s cubic-bezier(.2,.8,.2,1)",

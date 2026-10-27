@@ -14,6 +14,8 @@ export type EngineStatus = "loading" | "ready" | "failed";
  * - `onDimLabel` makes every dimension label in 3D clickable — the room's walls and the kitchen runs / island (the
  *   length editor); `onSurfaceClick` makes the room's walls and floor clickable (their finish).
  * - Overlays read where things are on screen through api.subscribe (components/studio/overlay.ts useEngineView).
+ * - `start: false` holds the engine back (the studio opens in a 2D view: the drawing is drawn first, the engine's heavy
+ *   first steps follow); it is created once `start` turns true and lives until unmount.
  */
 export function useStudioEngine(
   containerRef: RefObject<HTMLDivElement | null>,
@@ -23,12 +25,14 @@ export function useStudioEngine(
     onSelect,
     onDimLabel,
     onSurfaceClick,
+    start = true,
   }: {
     config: KitchenConfig;
     mood: Mood;
     onSelect: (m: ModuleInfo | null) => void;
     onDimLabel?: (target: DimLabelTarget, rect: ScreenRect) => void;
     onSurfaceClick?: (hit: SurfaceHit) => void;
+    start?: boolean;
   },
 ) {
   const apiRef = useRef<StudioEngineApi | null>(null);
@@ -40,6 +44,7 @@ export function useStudioEngine(
   });
 
   useEffect(() => {
+    if (!start) return;
     let cancelled = false;
     let api: StudioEngineApi | null = null;
 
@@ -80,7 +85,7 @@ export function useStudioEngine(
       api?.dispose();
       apiRef.current = null;
     };
-  }, [containerRef]);
+  }, [containerRef, start]);
 
   useEffect(() => {
     apiRef.current?.setConfig(config);

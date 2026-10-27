@@ -7,24 +7,14 @@ const fade = (delay: number, y: number) => ({ animationDelay: `${delay}s`, "--he
 // sized so the longest single word of each page still fits a 375 px screen
 const sizes = {
   /** one long word filling the width ("Razgovarajmo.") */
-  fit: "text-[clamp(36px,10.4vw,188px)]",
-  lg: "text-[clamp(48px,9.4vw,152px)]",
-  md: "text-[clamp(42px,7.4vw,120px)]",
-  sm: "text-[clamp(36px,6vw,96px)]",
+  fit: "text-[clamp(44px,11.6vw,136px)]",
+  lg: "text-[clamp(42px,6.6vw,96px)]",
+  md: "text-[clamp(40px,6vw,88px)]",
+  sm: "text-[clamp(36px,5vw,72px)]",
 };
 
-/** Faint blueprint grid used behind dark heroes. */
-export function BlueprintGrid({ className = "" }: { className?: string }) {
-  return (
-    <div
-      aria-hidden
-      className={`pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(242,239,233,.045)_1px,transparent_1px),linear-gradient(to_bottom,rgba(242,239,233,.045)_1px,transparent_1px)] bg-[size:72px_72px] [mask-image:radial-gradient(ellipse_80%_70%_at_30%_0%,black,transparent_75%)] ${className}`}
-    />
-  );
-}
-
 /**
- * Dark page opener: eyebrow, huge masked headline, lead + actions.
+ * Light page opener: small caps label, big sentence-case headline (second line in taupe), lead + actions.
  * `aside` sits to the right on large screens (drawings), `children` below (photos, extras).
  */
 export function PageHero({
@@ -44,31 +34,29 @@ export function PageHero({
   aside?: ReactNode;
   children?: ReactNode;
   size?: keyof typeof sizes;
-  /** small technical index shown next to the eyebrow, e.g. "K—01" */
+  /** small index shown next to the label, e.g. "K—01" */
   index?: string;
 }) {
   return (
-    <section className="relative overflow-hidden bg-ink pb-16 pt-[136px] sm:pb-20 lg:pb-28 lg:pt-[184px]">
-      <BlueprintGrid />
-      <div className={`shell relative ${aside ? "grid items-end gap-14 lg:grid-cols-12 lg:gap-10" : ""}`}>
+    <section className="relative overflow-hidden bg-canvas pb-14 pt-[124px] sm:pb-16 lg:pb-20 lg:pt-[164px]">
+      <div className={`shell relative ${aside ? "grid items-end gap-12 lg:grid-cols-12 lg:gap-10" : ""}`}>
         <div className={aside ? "lg:col-span-7" : ""}>
-          <p className="hero-fade eyebrow flex items-center gap-4 text-accent" style={fade(0, 12)}>
-            <span aria-hidden className="h-px w-8 bg-accent/70" />
+          <p className="hero-fade kicker flex items-center gap-3 text-taupe" style={fade(0, 12)}>
             {eyebrow}
-            {index && <span className="text-mut">{index}</span>}
+            {index && <span className="text-taupe/70">{index}</span>}
           </p>
-          <HeroTitle lines={lines} className={`mt-7 ${sizes[size]}`} />
+          <HeroTitle lines={lines} className={`mt-5 ${sizes[size]}`} />
           {(lead || actions) && (
-            <div className={`mt-10 grid gap-8 lg:mt-14 ${aside ? "" : "lg:grid-cols-12 lg:items-end"}`}>
+            <div className={`mt-8 grid gap-7 lg:mt-10 ${aside ? "" : "lg:grid-cols-12 lg:items-end"}`}>
               {lead && (
-                <div className={`hero-fade ${aside ? "max-w-xl" : "max-w-xl lg:col-span-6"}`} style={fade(0.35, 28)}>
-                  <div className="text-base leading-relaxed text-fg/70 sm:text-lg">{lead}</div>
+                <div className={`hero-fade ${aside ? "max-w-xl" : "max-w-xl lg:col-span-6"}`} style={fade(0.3, 20)}>
+                  <div className="text-base leading-relaxed text-taupe sm:text-[17px] sm:leading-[1.65]">{lead}</div>
                 </div>
               )}
               {actions && (
                 <div
-                  className={`hero-fade flex flex-wrap gap-3 ${aside ? "" : "lg:col-span-6 lg:justify-end"}`}
-                  style={fade(0.45, 28)}
+                  className={`hero-fade flex flex-wrap items-center gap-x-5 gap-y-3 ${aside ? "" : "lg:col-span-6 lg:justify-end"}`}
+                  style={fade(0.4, 20)}
                 >
                   {actions}
                 </div>

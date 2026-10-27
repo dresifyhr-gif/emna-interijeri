@@ -14,7 +14,7 @@ export function HeroPoster() {
   const p = buildPoster(HERO_CONFIG);
   const [vx, vy, vw, vh] = p.viewBox.split(" ").map(Number);
   return (
-    <div aria-hidden className="absolute inset-0 overflow-hidden bg-ink">
+    <div aria-hidden className="absolute inset-0 overflow-hidden bg-night">
       <div className={`absolute inset-0 ${s.posterGlow}`} />
       <div className={`absolute inset-0 ${s.posterGrid}`} />
       <div className={s.posterBox}>
@@ -46,7 +46,7 @@ export function HeroPoster() {
               y={l.y}
               transform={`rotate(${l.rot} ${l.x} ${l.y})`}
               textAnchor="middle"
-              className={`font-display ${s.label}`}
+              className={`font-head ${s.label}`}
               style={{ animationDelay: `${l.delay}s` }}
             >
               {l.text}

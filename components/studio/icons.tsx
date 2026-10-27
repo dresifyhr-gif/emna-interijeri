@@ -1189,3 +1189,36 @@ export function Spinner({ className = "" }: { className?: string }) {
     </svg>
   );
 }
+
+/* ------------------------------------------------------------------ 2D / 3D view (ViewSwitch, PlanView) */
+
+/** "3D": a box in perspective */
+export const CubeIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 3.8 19.5 8v8L12 20.2 4.5 16V8Z" {...line} />
+    <path d="M4.5 8 12 12.2 19.5 8M12 12.2v8" {...line} />
+  </Svg>
+);
+
+/** "Tlocrt": a room from above — walls in an L, a run of cabinets along them */
+export const PlanIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4.5 19.5v-15h15" {...line} />
+    <path d="M7.5 7.5h12M7.5 7.5v12M7.5 10.5h3v9M10.5 7.5v3" {...line} />
+  </Svg>
+);
+
+/** "Nacrt": a wall seen from the front — wall units over base cabinets */
+export const ElevationIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 19.5h16" {...line} />
+    <path d="M5.5 19.5v-6h13v6M12 13.5v6M5.5 4.5h13v4.5h-13ZM12 4.5V9" {...line} />
+  </Svg>
+);
+
+/** "Uklopi": four corners drawn in */
+export const FitIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15" {...line} />
+  </Svg>
+);
