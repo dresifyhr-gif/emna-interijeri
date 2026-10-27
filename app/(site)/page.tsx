@@ -6,6 +6,7 @@ import { HERO_CONFIG, heroReadout } from "@/components/home/heroConfig";
 import { heroPresets } from "@/components/home/heroPresets";
 import { Works } from "@/components/home/Works";
 import { Process } from "@/components/home/Process";
+import { StudioToReal } from "@/components/home/StudioToReal";
 import { StudioBand } from "@/components/home/StudioBand";
 import { Materials } from "@/components/home/Materials";
 import { Contact } from "@/components/home/Contact";
@@ -33,7 +34,7 @@ export const viewport: Viewport = {
 };
 
 /**
- * Dark hero with the live 3D kitchen → light sections (radovi, kako radimo) → the dark 3D studio band → light
+ * Dark hero with the live 3D kitchen → light sections (radovi, kako radimo, 3D → stvarnost) → the dark 3D studio band → light
  * materials and contact → dark footer.
  */
 export default function HomePage() {
@@ -42,6 +43,7 @@ export default function HomePage() {
       <HeroStage poster={<HeroPoster />} presets={heroPresets(HERO_CONFIG)} readout={heroReadout(HERO_CONFIG)} />
       <Works />
       <Process />
+      <StudioToReal />
       <StudioBand />
       <Materials />
       <Contact />
