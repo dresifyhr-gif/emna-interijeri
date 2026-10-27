@@ -38,6 +38,7 @@ import {
   remove,
   slotEditInfo,
   tallPlaces,
+  typeDescription,
   type EditResult,
   type SlotEditInfo,
   type TypeChoice,
@@ -395,7 +396,8 @@ export function ElementEditor({
           </IconButton>
         </div>
       </div>
-      {desktop && def?.description && <p className="mt-2 text-[12.5px] leading-relaxed text-mut">{def.description}</p>}
+      {/* an oven column's text follows its variant (where the oven stands, what is under it) */}
+      {desktop && def?.description && <p className="mt-2 text-[12.5px] leading-relaxed text-mut">{typeDescription(def, slot.opt)}</p>}
 
       <div className={`relative overflow-hidden rounded-xl border border-white/[0.08] bg-ink-900/40 ${desktop ? "mt-4 px-2 pb-1.5 pt-2" : "mt-2.5 px-1.5 pb-1 pt-1.5"}`}>
         <RunElevation

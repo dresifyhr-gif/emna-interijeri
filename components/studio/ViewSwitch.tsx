@@ -15,14 +15,19 @@
  * All are radio groups (the arrow keys move and pick); the choices are remembered for the visit (viewMode.ts). On a phone
  * the 3D view is short: the camera row waits behind a button at the end of the first row (its icon shows the preset
  * chosen) and opens under it while wanted (`cameraOpen`).
+ *
+ * On a desktop the second row goes beside the first when the kitchen view is wide enough (it wraps under it otherwise);
+ * the switch reports its height (`onHeight`) and the studio keeps the 3D kitchen framed below it (--studio-inset-top), so
+ * the rows never lie over the kitchen. It stands right under the top bar, whatever that inset is.
  */
 import { motion } from "framer-motion";
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { Layout, ViewPreset } from "@/lib/studio/types";
 import { Segmented } from "./controls";
 import { CameraGlyph, CeilingIcon, CubeIcon, ElevationIcon, PlanIcon } from "./icons";
 import { EASE, islandWord } from "./meta";
 import { CAMERA_PRESETS, cameraPresetDef } from "./optionsModel";
+import { TOPBAR_H } from "./TopBar";
 import { VIEW_DOCK, loadDrawings, type NacrtPick, type StudioView } from "./viewMode";
 
 const prefetch = () => {
@@ -48,6 +53,7 @@ export function ViewSwitch({
   docked,
   shown,
   reduce,
+  onHeight,
 }: {
   view: StudioView;
   onView: (v: StudioView) => void;
@@ -72,6 +78,8 @@ export function ViewSwitch({
   /** the UI is in */
   shown: boolean;
   reduce: boolean;
+  /** the switch's height (px, its rows and the gap between them) whenever it changes */
+  onHeight?: (h: number) => void;
 }) {
   const g = docked ? VIEW_DOCK.docked : VIEW_DOCK.desktop;
   const btn = docked ? "[&_button]:h-10 max-[359px]:[&_button]:px-1.5" : "";
@@ -79,8 +87,29 @@ export function ViewSwitch({
   const presets = view === "3d" && cameraShown && (!docked || cameraOpen);
   const ceilingShown = presets && cameraPresetDef(camera).ceiling;
   const rowId = useId();
+  const boxRef = useRef<HTMLDivElement>(null);
+  const heightCb = useRef(onHeight);
+  useEffect(() => {
+    heightCb.current = onHeight;
+  });
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    let last = -1;
+    const report = () => {
+      const h = Math.round(el.offsetHeight);
+      if (h === last) return;
+      last = h;
+      heightCb.current?.(h);
+    };
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   return (
     <motion.div
+      ref={boxRef}
       initial={false}
       animate={{ opacity: shown ? 1 : 0, y: shown ? 0 : -6 }}
       transition={{ duration: reduce ? 0 : 0.9, ease: EASE }}
@@ -88,8 +117,14 @@ export function ViewSwitch({
       // the drawings load a moment before "Tlocrt" / "Nacrt" is chosen
       onPointerEnter={prefetch}
       onFocus={prefetch}
-      className={`absolute z-[30] flex flex-col items-start ${shown ? "" : "pointer-events-none"}`}
-      style={{ top: `calc(var(--studio-inset-top, ${docked ? 56 : 72}px) + ${g.top}px)`, left: docked ? 12 : 32, gap: g.gap }}
+      className={`absolute z-[30] flex ${docked ? "flex-col items-start" : "flex-row flex-wrap items-center"} ${shown ? "" : "pointer-events-none"}`}
+      style={{
+        top: (docked ? TOPBAR_H.mobile : TOPBAR_H.desktop) + g.top,
+        left: docked ? 12 : 32,
+        gap: g.gap,
+        // desktop: as wide as the kitchen view leaves (the settings panel on the right) — the second row wraps when it must
+        maxWidth: docked ? undefined : "calc(100vw - var(--studio-inset-right, 0px) - 56px)",
+      }}
     >
       <div className="flex items-center" style={{ gap: 6 }}>
         <div className={PILL}>

@@ -27,7 +27,7 @@ export const metadata: Metadata = pageMetadata({
 
 /** TODO(vlasnik): potvrditi rok čuvanja upita koji nisu prešli u suradnju */
 const RETENTION_MONTHS = 12;
-const UPDATED = "24. listopada 2026.";
+const UPDATED = "27. listopada 2026.";
 
 /** what a GDPR controller notice (čl. 13. st. 1. t. a) cannot do without */
 const controllerMissing = [
@@ -181,6 +181,17 @@ export default function PrivatnostPage() {
                 upit.
               </p>
               <p>
+                <strong>Pomoćnik „Opišite kuhinju“ u 3D studiju.</strong> Ako ga koristite, vaš opis kuhinje, fotografija koju
+                dodate i trenutni izgled kuhinje u studiju šalju se preko usluge Vercel AI Gateway pružatelju umjetne
+                inteligencije (npr. Anthropic), samo da bi se iz njih složila kuhinja. Te podatke ne spremamo, pružatelj ih
+                ne koristi za učenje modela, a u svoje zapise bilježimo samo tehničke podatke (veličinu zahtjeva, trajanje,
+                cijenu), nikad sam tekst ni fotografiju. Na fotografiji neka ne budu osobe ni osobni podaci. Da bismo
+                ograničili broj zahtjeva, iz vaše IP adrese računamo jednosmjerni zaštićeni sažetak (hash) i čuvamo ga
+                najviše jedan dan; samu IP adresu ne spremamo. Ako opis izgovorite preko gumba s mikrofonom, glas
+                pretvara u tekst vaš preglednik (npr. Chrome preko Googlea, Safari preko Applea) prema svojim pravilima
+                privatnosti; mi primamo samo dobiveni tekst.
+              </p>
+              <p>
                 <strong>Tehnički podaci.</strong> Pri slanju upita IP adresa se kratkotrajno koristi u radnoj memoriji
                 poslužitelja kako bismo ograničili broj upita i zaštitili stranicu od zlouporabe; ne spremamo je uz upit.
                 Pružatelj smještaja stranice može voditi uobičajene zapise poslužitelja (IP adresa, vrijeme pristupa,
@@ -220,6 +231,11 @@ export default function PrivatnostPage() {
                   izvode. <Fill value={null} label="naziv pružatelja hostinga, npr. Vercel Inc. (SAD)" />
                 </li>
                 <li>
+                  <strong>Vercel Inc.</strong> (SAD, usluga AI Gateway) i pružatelj umjetne inteligencije kojem ona prosljeđuje
+                  zahtjev (npr. Anthropic PBC, SAD) — samo kad koristite pomoćnika „Opišite kuhinju“: obrađuju opis i
+                  fotografiju samo da bi složili kuhinju i ne koriste ih za učenje modela.
+                </li>
+                <li>
                   <strong>Pružatelj poslovne e-pošte</strong> u čiji pretinac upiti stižu.{" "}
                   <Fill value={null} label="naziv pružatelja e-pošte" />
                 </li>
@@ -246,6 +262,10 @@ export default function PrivatnostPage() {
                   računovodstvenu dokumentaciju onoliko koliko propisuju porezni i računovodstveni propisi.
                 </li>
                 <li>IP adrese korištene za ograničenje broja upita ne spremamo trajno.</li>
+                <li>
+                  Opise i fotografije poslane pomoćniku „Opišite kuhinju“ ne spremamo; ostaje samo kuhinja koju ste složili, u
+                  vašem pregledniku.
+                </li>
               </ul>
             </Section>
 

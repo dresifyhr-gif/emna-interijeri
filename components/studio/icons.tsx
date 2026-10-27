@@ -1306,3 +1306,37 @@ export function DrawerSplitGlyph({ ratios, mid = false, ...rest }: P & { ratios:
     </Svg>
   );
 }
+
+/* ------------------------------------------------------------------ "Opišite kuhinju" (AI) */
+
+/** two four-pointed stars: the AI helper */
+export const SparkleIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 3.5c.6 3.9 2.6 5.9 6.5 6.5-3.9.6-5.9 2.6-6.5 6.5-.6-3.9-2.6-5.9-6.5-6.5 3.9-.6 5.9-2.6 6.5-6.5Z" {...line} />
+    <path d="M18.5 15.5c.25 1.6 1 2.35 2.5 2.5-1.5.15-2.25.9-2.5 2.5-.25-1.6-1-2.35-2.5-2.5 1.5-.15 2.25-.9 2.5-2.5Z" {...line} />
+  </Svg>
+);
+
+/** dictation */
+export const MicIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="9" y="3.5" width="6" height="11" rx="3" {...line} />
+    <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5M9 20.5h6" {...line} />
+  </Svg>
+);
+
+/** a photo (camera or gallery) */
+export const PhotoIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="3.5" y="5.5" width="17" height="13" rx="2" {...line} />
+    <circle cx="9" cy="10" r="1.6" {...line} />
+    <path d="M4 16.5l4.6-4 3.4 3 2.6-2.2 5 4.2" {...line} />
+  </Svg>
+);
+
+/** "Pošalji" — an arrow up */
+export const SendUpIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 19V5.5M6.5 11 12 5.5l5.5 5.5" {...line} strokeWidth={1.5} />
+  </Svg>
+);

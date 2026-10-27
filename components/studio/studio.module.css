@@ -657,6 +657,12 @@
     0 0 0 4px rgba(201, 185, 154, 0.8);
 }
 
+/* the phone's step-by-step flow: the 3D view above it is a preview that takes no touches — its labels show the lengths,
+   without the pencil that says "click to change" */
+.stage[data-preview] :global(.emna-studio-dim) :global(.emna-studio-pen) {
+  display: none;
+}
+
 /* the first-visit coach mark points at the labels: they glow once */
 .stage[data-coach="dims"] :global(.emna-studio-dim[role="button"]) {
   animation: coachGlow 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) 2;
@@ -1088,5 +1094,59 @@
   .planHit,
   .planTip {
     transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------- "Opišite kuhinju" (AI chat, ai/AiChat.tsx) */
+
+/* the AI's sparkle while it works: a slow breath, nothing that hurries */
+.aiBreath {
+  animation: aiBreath 2.6s ease-in-out infinite;
+  transform-origin: center;
+}
+@keyframes aiBreath {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+/* a quiet line under the progress text: a soft glow drifting across */
+.aiDrift {
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(201, 185, 154, 0.85), transparent);
+  animation: aiDrift 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes aiDrift {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+/* the microphone while it listens */
+.aiMic[data-on] {
+  animation: aiMic 1.6s ease-out infinite;
+}
+@keyframes aiMic {
+  0% {
+    box-shadow: 0 0 0 0 rgba(201, 185, 154, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 12px rgba(201, 185, 154, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aiBreath,
+  .aiDrift,
+  .aiMic[data-on] {
+    animation: none;
   }
 }

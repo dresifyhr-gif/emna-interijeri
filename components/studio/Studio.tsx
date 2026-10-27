@@ -39,6 +39,13 @@
  * customers by default. A first visit gets three skippable coach marks (CoachMarks; on a phone on the step sheet, never
  * over the 3D view).
  *
+ * "Opišite kuhinju" (ai/*; only when GET /api/studio/ai says this visitor may use it — in production the logged-in owner
+ * until it is opened to everyone): the customer describes a kitchen (or changes to this one), with a photo or dictation;
+ * the server builds the kitchen and every change it makes is one undo step here (applyEdit), so the link follows it and
+ * "Poništi" / Ctrl + Z take it back. Desktop: a chat in the right-hand panel's place (the "AI" pill in the top bar).
+ * Phone: the first card of the start screen and "Opišite" in the bottom bar open a full-screen chat; after a change the
+ * 3D view shows the new kitchen with the answer in a card where the bar is. Tablets: the top bar's sparkle, the same sheet.
+ *
  * The kitchen-wide options are in the steps — "Boje": how the fronts open (Ručke / Na dodir / Gola / Luft za prste) and
  * the glass of vitrines; "Ploča i detalji": worktop thickness, the wall behind the worktop, the hood, rails; "Zidovi": the
  * depth of the "do stropa" top row. An element's own (its glass, opening, top-box depth, a hob's hood, shelves, end units at
@@ -96,12 +103,29 @@ import {
   useNacrtPick,
   useStudioView,
   viewDockHeight,
+  VIEW_DOCK,
   type NacrtPick,
   type StudioView,
 } from "./viewMode";
 import { ViewSwitch } from "./ViewSwitch";
+import { PHONE_QUERY, firstStage, nextStage, parseStage, prevStage, type PhoneStage } from "./phone/flow";
+import { PhoneBar } from "./phone/PhoneBar";
+import { PhoneStart } from "./phone/PhoneStart";
+import { PhoneWizard, WIZARD_TOP } from "./phone/PhoneWizard";
+import { setPhoneStage, usePhoneStageKey } from "./phone/stage";
+import { AiPanel, AiResultCard, AiSheet } from "./ai/AiChat";
+import { lastChange, type AssistantEntry } from "./ai/chat";
+import { useStudioAi } from "./ai/useStudioAi";
 
 const INSET_DESKTOP = { top: TOPBAR_H.desktop, right: PANEL_W + PANEL_GAP * 2, bottom: 0, left: 0 };
+/**
+ * The engine frames the kitchen with a margin of 6 % of the view's height under --studio-inset-top (lib/studio/engine
+ * computeRegion). The view switch's rows stand under the top bar: in 3D the top inset is raised by what of them that
+ * margin does not already leave free (+ a little air), so the rows never lie over the kitchen.
+ */
+const ENGINE_TOP_MARGIN = 0.06;
+const DOCK_AIR = 8;
+const dockRaise = (dock: number, h: number) => (h > 0 ? Math.max(0, Math.round(dock - ENGINE_TOP_MARGIN * h + DOCK_AIR)) : 0);
 /** how long the engine may report "nothing selected" while it rebuilds / re-lays out under an edit */
 const FOLLOW_MS = 2200;
 const UNDO_MAX = 25;
@@ -187,6 +211,37 @@ export function Studio() {
   /** the config before a shape change put edited elements back to the planner's (ShapeStep offers it back) */
   const [layoutUndo, setLayoutUndo] = useState<KitchenConfig | null>(null);
 
+  // ---- the phone's simple flow (phone/flow.ts): start → step by step → the 3D view with a small bar
+  const phone = useMediaQuery(PHONE_QUERY);
+  const stageKey = usePhoneStageKey();
+  /** the visit came with a link to a kitchen: straight into the 3D view */
+  const [linked] = useState(() => Boolean(params.get("k")));
+  const stage: PhoneStage | null = phone ? firstStage(parseStage(stageKey), linked) : null;
+  /** "off": not a phone (the full studio, unchanged) */
+  const phase = stage?.kind ?? "off";
+  const wizardStep = stage?.kind === "wizard" ? stage.step : 0;
+  /** the studio's own UI (top-bar controls, view switch, overlays, sheet / panel) — not on the phone's start and wizard */
+  const chrome = phase === "off" || phase === "3d";
+  /** phone, 3D view: the settings sheet is open ("Uredi" / "Pošalji upit"; the bar shows otherwise) */
+  const [phoneSheet, setPhoneSheet] = useState(false);
+  const [wizardDir, setWizardDir] = useState(1);
+  /** back on the start screen after the engine had started: it stays (out of view, paused) — never a second WebGL context */
+  const [keepEngine, setKeepEngine] = useState(false);
+  const wizardPanelRef = useRef<HTMLElement>(null);
+  const barRef = useRef<HTMLElement>(null);
+  /** the view switch's measured height (its rows) */
+  const [switchH, setSwitchH] = useState(0);
+
+  // ---- "Opišite kuhinju" (AI, ai/*): only when GET /api/studio/ai says this visitor may use it
+  /**
+   * closed; chat: the panel in the right-hand panel's place (desktop) / the full-screen sheet (phone, tablet); result:
+   * phone and tablet after a change — the 3D view with the AI's answer in a card where the bottom bar is
+   */
+  const [aiView, setAiView] = useState<"closed" | "chat" | "result">("closed");
+  /** the sheet opens with the box focused ("Napišite izmjenu"), else the dialog (the examples stay in view) */
+  const [aiFocusBox, setAiFocusBox] = useState(false);
+  const aiCardRef = useRef<HTMLElement>(null);
+
   // ---- 3D / 2D
   const view = useStudioView();
   const nacrtPick = useNacrtPick();
@@ -197,7 +252,8 @@ export function Studio() {
   /** the 2D view's ViewInfo for the overlays (PlanView publishes, they subscribe like to the engine) */
   const [hub] = useState(createViewHub);
   const hubRef = useRef<ViewSource | null>(hub);
-  const flat = view !== "3d";
+  // (the phone's start and wizard show the 3D view whatever was chosen: the drawings wait for the full studio)
+  const flat = view !== "3d" && chrome;
   /**
    * the studio opens in a 2D view (remembered for the visit): the engine waits until the drawing is on screen (or a few
    * seconds), so its heavy first steps do not hold the drawing back; "3D" releases it at once. Read straight from storage
@@ -322,8 +378,15 @@ export function Studio() {
     onDimLabel: handleDimLabel,
     onSurfaceClick: handleSurface,
     camera,
-    start: !engineHeld,
+    // held while a 2D view is shown first (the drawing comes first) and while the phone's start screen asks how to begin
+    start: !(engineHeld && flat) && (phase !== "start" || keepEngine),
   });
+  // the phone's start screen: the 3D view's code is fetched meanwhile, so either way in is quick
+  useEffect(() => {
+    if (phase !== "start") return;
+    const t = window.setTimeout(() => void import("@/lib/studio/engine").catch(() => {}), 600);
+    return () => window.clearTimeout(t);
+  }, [phase]);
   useEffect(() => {
     if (!engineHeld) return;
     const t = window.setTimeout(() => setEngineHeld(false), 4000);
@@ -458,10 +521,12 @@ export function Studio() {
   // UI arrives as the intro's camera dolly settles (immediately with reduced motion, without 3D, or in a 2D view — the
   // engine does not render while it is out of view, so it would never get "ready")
   useEffect(() => {
+    // (not while the phone's start screen asks how to begin: the engine has not started)
+    if (phase === "start") return;
     const delay = flat ? 0 : status === "loading" ? 15000 : status === "ready" && !reduce ? 3000 : 0;
     const t = window.setTimeout(() => setUiShown(true), delay);
     return () => window.clearTimeout(t);
-  }, [status, reduce, flat]);
+  }, [status, reduce, flat, phase]);
 
   // interaction hints fade after the first touch of the canvas (or on their own)
   useEffect(() => {
@@ -522,6 +587,25 @@ export function Studio() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  // the view switch's rows under the top bar (measured; the fallback until they are): the walls of "Nacrt", the camera
+  // presets in 3D (a desktop shows them beside the first row when it is wide enough, a phone when they are opened)
+  const dockH =
+    switchH > 0
+      ? (desktop ? VIEW_DOCK.desktop.top : VIEW_DOCK.docked.top) + switchH
+      : viewDockHeight(!desktop, view === "nacrt" || (view === "3d" && status !== "failed" && (desktop || cameraOpen)));
+  /** phone, 3D view: the settings sheet shows (opened from the bar, or for the element editor), else the bar */
+  const sheetShown = phase !== "3d" || phoneSheet || editorOpen;
+  /** phone / tablet: the AI's full-screen sheet is open (the studio under it is inert, the 3D view paused out of view) */
+  const aiSheet = !desktop && aiView === "chat";
+  /** phone / tablet: the AI's answer card stands where the bottom bar (tablet: the step sheet) is */
+  const aiDocked = !desktop && aiView === "result" && uiShown && chrome && !editorOpen && !phoneSheet && !summaryOpen;
+  /** where the free part of the screen starts: under the top bar, and in 3D under the view switch's rows too */
+  const insetTop = desktop
+    ? TOPBAR_H.desktop + (flat ? 0 : dockRaise(dockH, viewport.h))
+    : phase === "wizard"
+      ? WIZARD_TOP
+      : TOPBAR_H.mobile + (phase === "3d" && !flat ? dockRaise(dockH, viewport.h) : 0);
+
   // framing: tell the engine which part of the screen the UI covers (set on the root: the overlays read them too)
   useEffect(() => {
     const el = rootRef.current;
@@ -538,11 +622,12 @@ export function Studio() {
       hub.resize();
     };
     if (desktop) {
-      apply(INSET_DESKTOP);
+      apply({ ...INSET_DESKTOP, top: insetTop });
       return;
     }
-    const sheet = sheetRef.current;
-    const measure = () => apply({ top: TOPBAR_H.mobile, right: 0, bottom: sheet ? Math.round(sheet.offsetHeight) : 0, left: 0 });
+    // what covers the bottom: the step sheet — or on a phone the wizard's panel, or the 3D view's small bar
+    const sheet = (aiDocked ? aiCardRef : phase === "wizard" ? wizardPanelRef : phase === "3d" && !sheetShown ? barRef : sheetRef).current;
+    const measure = () => apply({ top: insetTop, right: 0, bottom: sheet ? Math.round(sheet.offsetHeight) : 0, left: 0 });
     measure();
     if (!sheet) return;
     // the sheet animates its height when folded (and when the editor opens) — the kitchen glides with it, and the
@@ -550,7 +635,7 @@ export function Studio() {
     const ro = new ResizeObserver(measure);
     ro.observe(sheet);
     return () => ro.disconnect();
-  }, [desktop, apiRef, hub]);
+  }, [desktop, apiRef, hub, insetTop, phase, sheetShown, aiDocked]);
 
   // the engine was created after the insets were set on first mount; re-read them once it's live
   useEffect(() => {
@@ -920,12 +1005,14 @@ export function Studio() {
     [cfg, selId, applyEdit],
   );
 
-  // back in 3D: the engine renders again (it was paused out of view; a resize marks the view to be drawn)
-  const wasFlat = useRef(flat);
+  // back in 3D (from a 2D view, the phone's start screen or the AI's full-screen sheet): the engine renders again (it was
+  // paused out of view; a resize marks the view to be drawn)
+  const away = flat || phase === "start" || aiSheet;
+  const wasAway = useRef(away);
   useEffect(() => {
-    if (wasFlat.current && !flat) apiRef.current?.resize();
-    wasFlat.current = flat;
-  }, [flat, apiRef]);
+    if (wasAway.current && !away) apiRef.current?.resize();
+    wasAway.current = away;
+  }, [away, apiRef]);
 
   /** a click on the 2D drawing: an element selects it as a click in 3D does, the paper clears the selection */
   const pick2d = useCallback(
@@ -962,6 +1049,131 @@ export function Studio() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
   }, [step]);
+
+  /* ---------------------------------------------------------------- the phone's simple flow (phone/*) */
+
+  const startWizard = () => {
+    setWizardDir(1);
+    setPhoneStage({ kind: "wizard", step: 0 });
+  };
+  const start3d = () => {
+    setPhoneSheet(false);
+    setPhoneStage({ kind: "3d" });
+  };
+  const wizardNext = () => {
+    const n = nextStage(wizardStep);
+    setWizardDir(1);
+    if (n.kind === "3d") {
+      // done: the full 3D view; "Uredi" then opens on the elements (shape, measures and colours are chosen)
+      setPhoneSheet(false);
+      setDir(1);
+      setStep(stepIndex("elementi"));
+    }
+    setPhoneStage(n);
+  };
+  const wizardBack = () => {
+    const back = prevStage(wizardStep);
+    setWizardDir(-1);
+    if (back.kind === "start") setKeepEngine(true);
+    setPhoneStage(back);
+  };
+  /** an edit from a wizard screen: one undo step, quietly (the screen shows its note); refused ones change nothing */
+  const wizardEdit = useCallback(
+    (r: EditResult, say?: string): boolean => {
+      if (!r.ok) return false;
+      applyEdit(r, { select: null, quiet: true, say });
+      return true;
+    },
+    [applyEdit],
+  );
+  /** the bar's "Uredi": the studio's settings sheet over the 3D view */
+  const openPhoneSheet = () => {
+    setSheetOpen(true);
+    setPhoneSheet(true);
+  };
+  /** the bar's "Pošalji upit": the sheet at the inquiry step */
+  const sendFromBar = () => {
+    setPhoneSheet(true);
+    goTo(stepIndex("posalji"));
+  };
+  /** the sheet's "Gotovo" (or its handle): back to the bar */
+  const closePhoneSheet = () => {
+    if (selId) closeEditor();
+    setGapOpen(null);
+    setPhoneSheet(false);
+  };
+
+  /* ---------------------------------------------------------------- "Opišite kuhinju" (AI, ai/*) */
+
+  /**
+   * a kitchen from the AI: one undo step like any edit (applyEdit — fitToPlanner, the engine diffs and animates it, the
+   * link follows), whatever was open on the kitchen closes. From the phone's start screen it lands in the 3D view. Phone
+   * and tablet then show the answer over the 3D view; the desktop panel stays open beside the kitchen.
+   */
+  const applyAi = useCallback(
+    (next: KitchenConfig, reply: string): number | null => {
+      closeEditor();
+      setGapOpen(null);
+      setDimEdit(null);
+      setSurface(null);
+      setSummaryOpen(false);
+      if (next.layout !== cfg.layout) setRunTab("a");
+      if (next.zoneFronts) setTwoTone(true);
+      if (!applyEdit({ cfg: next, ok: true, warning: null, slotId: null }, { select: null, quiet: true, say: reply })) return null;
+      const id = undoSeq.current;
+      if (phase === "start" || phase === "wizard") {
+        // shape, measures and finishes are chosen: "Uredi" opens on the elements (as after the wizard)
+        setDir(1);
+        setStep(stepIndex("elementi"));
+        setPhoneSheet(false);
+        setPhoneStage({ kind: "3d" });
+      }
+      setAiView(desktop ? "chat" : "result");
+      return id;
+    },
+    [closeEditor, cfg.layout, applyEdit, phase, desktop],
+  );
+
+  /** an answer that changed nothing, arriving while the chat was closed (it kept working): a toast says so */
+  const aiAnswered = (e: AssistantEntry) => {
+    if (aiView !== "closed" || e.undoId !== null) return;
+    showToast({ text: e.text, tone: e.tone === "error" ? "refused" : "info", ms: TOAST_MS.note });
+  };
+
+  const ai = useStudioAi({
+    // the phone's start screen: no kitchen yet (the AI makes a new one); else the one on screen
+    getConfig: () => (phase === "start" ? null : encodeConfig(cfg)),
+    apply: applyAi,
+    onAnswer: aiAnswered,
+  });
+  const aiBusy = Boolean(ai.busy);
+  const aiChange = lastChange(ai.entries);
+  const undoTop = undoStack[undoStack.length - 1]?.id ?? null;
+
+  const openAi = useCallback(
+    (focusBox: boolean) => {
+      if (selRef.current) closeEditor();
+      setGapOpen(null);
+      setSurface(null);
+      setDimEdit(null);
+      setSummaryOpen(false);
+      setAiFocusBox(focusBox);
+      setAiView("chat");
+    },
+    [closeEditor],
+  );
+  const closeAi = useCallback(() => setAiView("closed"), []);
+  /** the entry on the phone's start screen and in its bottom bar (absent: the helper is not enabled) */
+  const aiEntry = ai.enabled ? () => openAi(false) : undefined;
+
+  /** "Poništi" on an answer (the conversation or the card): the studio's own undo, while it is still the last step */
+  const undoAi = (undoId: number) => {
+    if (undoTop !== undoId) return;
+    undo();
+    ai.markUndone(undoId);
+    // the card goes with the change it was about; the conversation stays open
+    if (aiView === "result") setAiView("closed");
+  };
 
   const headingRef = useCallback((el: HTMLHeadingElement | null) => {
     if (el && focusHeading.current) {
@@ -1167,34 +1379,56 @@ export function Studio() {
   /** where the overlays read the view from, and whether it reports: the engine in 3D, the drawing in 2D (also without WebGL) */
   const viewRef = flat ? hubRef : apiRef;
   const viewLive = flat || live;
-  const overlays = flat ? uiShown : live && uiShown && !failed;
+  const overlays = chrome && (flat ? uiShown : live && uiShown && !failed);
   // the element toolbar: over the element (desktop) / docked above the sheet (phone, not while the editor fills it)
   const toolbarOn = Boolean(overlays && selInfo);
   const toolbarHidden = !desktop && (editorOpen || summaryOpen || Boolean(dimEdit) || Boolean(gapOpen));
   // "+" markers in every step (not behind the phone's editor, the summary or the length editor): full while editing (the
   // "Elementi" step, an element selected, a picker open), quiet otherwise
   const gapsOn = Boolean(overlays && !dimEdit && !summaryOpen && !(editorOpen && !desktop));
-  const gapsQuiet = stepId !== "elementi" && !selSlot && !gapOpen;
+  // (the phone's 3D view with only its bar: the kitchen itself is where things are added — every "+" shows)
+  const gapsQuiet = !(phase === "3d" && !sheetShown) && stepId !== "elementi" && !selSlot && !gapOpen;
   const panelLeft = viewport.w - PANEL_GAP - PANEL_W;
   // first-visit coach marks: once the UI is in, never over an open picker / editor / the thank-you
-  const coachOn = Boolean(!flat && overlays && coach !== "done" && !dimEdit && !gapOpen && !surface && !summaryOpen && !thanks && !(editorOpen && !desktop));
+  const coachOn = Boolean(
+    !flat &&
+      overlays &&
+      coach !== "done" &&
+      !dimEdit &&
+      !gapOpen &&
+      !surface &&
+      !summaryOpen &&
+      !thanks &&
+      !(editorOpen && !desktop) &&
+      aiView === "closed" &&
+      // phone: the toast docks where the coach card does (it comes back when the toast has gone)
+      !(toast && !desktop) &&
+      // phone's 3D view: not while "Uredi" / "Pošalji upit" has the sheet open — the card would lie over the sheet's
+      // "Gotovo" and step tabs (it comes back above the bar when the sheet closes)
+      !(phase === "3d" && phoneSheet),
+  );
   const canDemo = Boolean(!flat && selSlot && moduleDef(selSlot.zone, selSlot.type)?.demo !== false);
-  // the view switch's second row: the walls of "Nacrt", the camera presets in 3D
-  const dockH = viewDockHeight(!desktop, view === "nacrt" || (view === "3d" && !failed && (desktop || cameraOpen)));
 
   return (
     <div ref={rootRef} className="fixed inset-0 overflow-hidden bg-ink text-fg">
       <h1 className="sr-only">3D studio — složite svoju kuhinju po mjeri</h1>
 
-      {/* everything behind the thank-you dialog; `contents` keeps the absolute layout, `inert` takes it out of focus and AT */}
-      <div className="contents" inert={Boolean(thanks)}>
+      {/* everything behind the thank-you dialog (and the AI's full-screen sheet); `contents` keeps the absolute layout,
+          `inert` takes it out of focus and AT */}
+      <div className="contents" inert={Boolean(thanks) || aiSheet}>
         <TopBar
           desktop={desktop}
           step={step}
           mood={mood}
           onMood={setMood}
-          controls={uiShown && !failed}
-          pdf={uiShown ? pdf : null}
+          controls={uiShown && !failed && chrome}
+          pdf={uiShown && chrome ? pdf : null}
+          // desktop and tablet (a phone has it in its bottom bar and on its start screen)
+          ai={
+            ai.enabled && uiShown && phase === "off"
+              ? { onOpen: () => (aiView === "chat" ? closeAi() : openAi(true)), open: aiView === "chat", busy: aiBusy }
+              : null
+          }
           onSummary={() => {
             if (selId) closeEditor();
             setSummaryOpen((o) => !o);
@@ -1217,17 +1451,20 @@ export function Studio() {
           ceiling={Boolean(cfg.room?.ceiling)}
           onCeiling={toggleCeiling}
           docked={!desktop}
-          shown={uiShown}
+          shown={uiShown && chrome}
           reduce={reduce}
+          onHeight={setSwitchH}
         />
 
-        {/* the 3D view — in 2D out of view (its render loop pauses) and out of reach */}
+        {/* the 3D view — in 2D (and behind the phone's start screen) out of view (its render loop pauses) and out of
+            reach; under the phone's wizard a live preview that takes no touches */}
         <div
           ref={containerRef}
           className={`absolute inset-0 z-0 bg-[#131315] ${s.stage}`}
-          style={flat ? STAGE_AWAY : undefined}
-          inert={flat}
-          aria-hidden={flat || undefined}
+          style={away ? STAGE_AWAY : undefined}
+          inert={flat || !chrome}
+          aria-hidden={flat || !chrome || undefined}
+          data-preview={phase === "wizard" || undefined}
           data-coach={coachOn && coach === "2" ? "dims" : undefined}
         />
 
@@ -1252,10 +1489,10 @@ export function Studio() {
           />
         )}
 
-        {failed && !flat && <NoWebGL desktop={desktop} onPlan={() => changeView("tlocrt")} />}
+        {failed && !flat && chrome && <NoWebGL desktop={desktop} onPlan={() => changeView("tlocrt")} />}
 
         {/* 3D chosen after the visit began in 2D: the engine is still starting (the loading veil is long gone) */}
-        {!flat && uiShown && status === "loading" && (
+        {!flat && chrome && uiShown && status === "loading" && (
           <p role="status" className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center gap-2.5 text-[12.5px] text-mut" style={desktop ? { paddingRight: INSET_DESKTOP.right } : undefined}>
             <Spinner className="text-accent" />
             Učitavam 3D prikaz…
@@ -1268,10 +1505,10 @@ export function Studio() {
           aria-hidden="true"
           className={`pointer-events-none absolute z-10 flex gap-2 ${desktop ? "bottom-6 left-8 items-end" : "inset-x-0 flex-col items-center"}`}
           // phone: under the view switch (its camera row included)
-          style={desktop ? undefined : { top: `calc(var(--studio-inset-top, 56px) + ${dockH + 10}px)` }}
+          style={desktop ? undefined : { top: TOPBAR_H.mobile + dockH + 10 }}
         >
           <AnimatePresence>
-            {uiShown && !failed && !flat && !selSlot && !hintsGone && !toast && !dimEdit && coach === "done" && (
+            {uiShown && chrome && !failed && !flat && !selSlot && !hintsGone && !toast && !dimEdit && coach === "done" && (
               <motion.div
                 key="orbit"
                 initial={{ opacity: 0, y: reduce ? 0 : 8 }}
@@ -1295,6 +1532,7 @@ export function Studio() {
             touch={touch}
             insetsRef={insetsRef}
             selKey={selKey}
+            aboveDock={phase === "3d" && !sheetShown}
             onNext={() => setCoach(coach === "0" ? "1" : coach === "1" ? "2" : "done")}
             onSkip={() => setCoach("done")}
           />
@@ -1395,7 +1633,7 @@ export function Studio() {
           )}
         </AnimatePresence>
         <Toast
-          toast={overlays || failed ? toast : null}
+          toast={overlays || (failed && chrome) ? toast : null}
           canUndo={Boolean(toast?.undoId !== undefined && undoStack[undoStack.length - 1]?.id === toast?.undoId)}
           onUndo={undo}
           onDismiss={dismissToast}
@@ -1405,33 +1643,106 @@ export function Studio() {
           top={!desktop && Boolean(gapOpen || dimEdit || surface)}
           selLow={Boolean(selSlot && selSlot.zone !== "upper")}
           insetsRef={insetsRef}
-          below={desktop ? 0 : dockH}
+          // under the view switch's rows (the top inset already keeps clear of part of them in 3D)
+          below={desktop ? 0 : Math.max(0, TOPBAR_H.mobile + dockH - insetTop)}
         />
 
         {desktop ? (
-          <DesktopPanel {...shell} summaryOpen={summaryOpen} onSummary={setSummaryOpen} scrollRef={scrollRef}>
+          <DesktopPanel
+            {...shell}
+            // the element editor, else the AI chat, in the steps' place
+            overlay={
+              editor ??
+              (aiView === "chat" ? (
+                <AiPanel ai={ai} kitchen undoTop={undoTop} onUndo={undoAi} onClose={closeAi} reduce={reduce} />
+              ) : null)
+            }
+            summaryOpen={summaryOpen}
+            onSummary={setSummaryOpen}
+            scrollRef={scrollRef}
+          >
             {content}
           </DesktopPanel>
         ) : (
-          <MobileSheet
-            {...shell}
-            sheetRef={sheetRef}
-            scrollRef={scrollRef}
-            open={sheetOpen}
-            onOpen={setSheetOpen}
-            covered={summaryOpen}
-          >
-            {content}
-          </MobileSheet>
+          chrome && (
+            <MobileSheet
+              {...shell}
+              shown={uiShown && sheetShown}
+              sheetRef={sheetRef}
+              scrollRef={scrollRef}
+              open={phase === "3d" || sheetOpen}
+              onOpen={setSheetOpen}
+              covered={summaryOpen || aiDocked}
+              onClose={phase === "3d" ? closePhoneSheet : undefined}
+            >
+              {content}
+            </MobileSheet>
+          )
         )}
+
+        {/* the phone's 3D view: the price and "Uredi" / "Pošalji upit" at the thumb (the sheet opens from it) */}
+        {phase === "3d" && (
+          <PhoneBar
+            barRef={barRef}
+            price={price}
+            shown={uiShown && !sheetShown && !summaryOpen && !aiDocked}
+            reduce={reduce}
+            onEdit={openPhoneSheet}
+            onSend={sendFromBar}
+            onAi={aiEntry}
+            aiBusy={aiBusy}
+          />
+        )}
+
+        {/* phone / tablet, after an AI change: its answer where the bottom bar is, the new kitchen above it */}
+        <AnimatePresence>
+          {aiDocked && aiChange && (
+            <AiResultCard
+              key={aiChange.id}
+              entry={aiChange}
+              cardRef={aiCardRef}
+              canUndo={aiChange.undoId !== null && aiChange.undoId === undoTop}
+              onUndo={() => aiChange.undoId !== null && undoAi(aiChange.undoId)}
+              onMore={() => openAi(true)}
+              onClose={closeAi}
+              reduce={reduce}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* the phone's step-by-step flow over the live 3D preview */}
+        <AnimatePresence>
+          {phase === "wizard" && (
+            <PhoneWizard
+              key="wizard"
+              step={wizardStep}
+              cfg={cfg}
+              plan={plan}
+              engine={status}
+              panelRef={wizardPanelRef}
+              reduce={reduce}
+              dir={wizardDir}
+              onLayout={setLayout}
+              onEdit={wizardEdit}
+              onBack={wizardBack}
+              onNext={wizardNext}
+              onSkip={start3d}
+            />
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {!desktop && summaryOpen && <MobileSummary key="summary" summary={summary} price={price} getUrl={getUrl} pdf={pdf} onClose={() => setSummaryOpen(false)} />}
         </AnimatePresence>
 
+        {/* the phone's first screen: how to begin */}
+        <AnimatePresence>
+          {phase === "start" && <PhoneStart key="start" onWizard={startWizard} on3d={start3d} onAi={aiEntry} aiBusy={aiBusy} reduce={reduce} />}
+        </AnimatePresence>
+
         {/* loading veil */}
         <AnimatePresence>
-          {loading && (
+          {loading && chrome && (
             <motion.div
               key="loader"
               className="absolute inset-0 z-50 flex items-center justify-center bg-ink"
@@ -1442,6 +1753,22 @@ export function Studio() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* phone / tablet: the AI chat, full screen (outside the inert part) */}
+      <AnimatePresence>
+        {aiSheet && (
+          <AiSheet
+            key="ai"
+            ai={ai}
+            kitchen={phase !== "start"}
+            undoTop={undoTop}
+            onUndo={undoAi}
+            onClose={closeAi}
+            reduce={reduce}
+            focusBox={aiFocusBox}
+          />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {thanks && <SuccessOverlay key="success" sent={thanks} getUrl={getUrl} pdf={pdf} onContinue={lead.dismissSuccess} />}

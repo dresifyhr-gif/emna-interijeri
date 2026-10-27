@@ -1634,8 +1634,29 @@ export function isEdited(cfg: KitchenConfig, id?: ListId): boolean {
 
 // ---------------------------------------------------------------- what the popover / in-kitchen toolbar can offer
 
-function choice(def: ModuleTypeDef, width: number | null, current: boolean, fitting?: number[]): TypeChoice {
-  const c: TypeChoice = { id: def.id, name: def.name, description: def.description, group: def.group, widths: [...def.widths], width, current };
+const isOvenColumn = (def: Pick<ModuleTypeDef, "id" | "zone">) => def.zone === "tall" && (def.id === "pecnica" || def.id === "pecnica-mikro");
+
+/**
+ * The catalogue description of an element as this variant is built (Croatian, for the element editor's text and the
+ * type tooltips): an oven column's text follows its options — what is under the oven (two drawers, drawers, one door)
+ * and where the oven sits (low, at eye level on the worktop line) — instead of the type's fixed "… ispod ladice". A
+ * column without options (every older link) and every other type: the catalogue text as it is.
+ *
+ *   typeDescription(moduleDef("tall", "pecnica-mikro")!, { below: "vrata", ovenAt: "oci" })
+ *   // "Pećnica u visini očiju (dno u ravnini radne ploče), iznad nje mikrovalna, ispod vrata. Aparati nisu …"
+ */
+export function typeDescription(def: Pick<ModuleTypeDef, "id" | "zone" | "description">, opt?: ElementOpts): string {
+  if (!isOvenColumn(def) || (!opt?.below && !opt?.ovenAt)) return def.description;
+  const micro = def.id === "pecnica-mikro";
+  const at = opt.ovenAt === "oci" ? "u visini očiju (dno u ravnini radne ploče)" : opt.ovenAt === "nisko" ? "nisko" : "u visini očiju";
+  const below = opt.below === "vrata" ? "vrata" : !opt.ovenAt ? "dvije ladice" : opt.ovenAt === "nisko" ? "jedna ladica" : "ladice";
+  if (micro) return `Pećnica ${at}, iznad nje mikrovalna, ispod ${below}. Aparati nisu uračunati u cijenu.`;
+  return `Pećnica ${at}, ispod nje ${below}, iznad ormarić. Pećnica nije uračunata u cijenu.`;
+}
+
+/** `opt`: the element's own options (an oven column's description follows its variant — they carry over to the other oven type) */
+function choice(def: ModuleTypeDef, width: number | null, current: boolean, fitting?: number[], opt?: ElementOpts): TypeChoice {
+  const c: TypeChoice = { id: def.id, name: def.name, description: typeDescription(def, opt), group: def.group, widths: [...def.widths], width, current };
   if (fitting) c.fitting = fitting;
   return c;
 }
@@ -1690,8 +1711,8 @@ export function slotEditInfo(input: KitchenConfig, slotId: string): SlotEditInfo
   const tallCap = ls.zone === "tall" ? tallCapacity(cfg, ls.id) : undefined;
   const widthOf = (r: EditResult) => (r.ok && r.slotId ? (planKitchen(r.cfg).slots.find((s) => s.id === r.slotId)?.width ?? null) : null);
   const types = poolOf(ls.ez).map((d) => {
-    if (d.id === slot.type) return choice(d, slot.width, true);
-    return choice(d, widthOf(changeTypeIn(ctx, d.id, tallCap)), false);
+    if (d.id === slot.type) return choice(d, slot.width, true, undefined, slot.opt);
+    return choice(d, widthOf(changeTypeIn(ctx, d.id, tallCap)), false, undefined, slot.opt);
   });
   // a base cabinet / wall unit of a wall run: what tall unit can take its place, and stand beside it
   const wallRow = slot.run !== "isl" && ls.ez !== "tall" && (ls.zone === "base" || ls.zone === "upper");
@@ -2021,7 +2042,12 @@ export function heightChoices(input: KitchenConfig): HeightChoices {
   const spec = cfg.heights;
   const maxTop = cfg.ceiling - DIM.ceilingGap;
   const main = current.upperTop - current.upperBottom;
-  const doStropa = planHeights({ ...cfg, heights: { mode: "do-stropa", ...(spec?.worktop !== undefined ? { worktop: spec.worktop } : {}) } }).heights;
+  // "do stropa" as this kitchen would have it: its own worktop, gap to the wall units, top-row height / depth and one-piece
+  // choice carry over (only the custom heights do not) — a gap of 50 must not preview the planner's 57
+  const keep: Omit<HeightSpec, "mode"> = { ...(spec ?? {}) };
+  delete keep.upper;
+  delete keep.tallTop;
+  const doStropa = planHeights({ ...cfg, heights: { ...keep, mode: "do-stropa" } }).heights;
   return {
     mode: current.mode,
     worktop: WORKTOP_HEIGHTS.map((v) => ({ value: v, current: v === current.worktop })),

@@ -140,14 +140,16 @@ export function Toast({
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {said}
       </p>
-      <div className="flex w-full max-w-[460px] justify-center">
+      {/* relative + one toast's height: popLayout takes the leaving toast out of the flow and places it here, so it fades
+          where it was (bottom-anchored on a phone) instead of dropping over the bottom bar; it takes no taps while leaving */}
+      <div className="relative flex min-h-11 w-full max-w-[460px] justify-center">
         <AnimatePresence initial={false} mode="popLayout">
           {toast && (
             <motion.div
               key={toast.n}
               initial={{ opacity: 0, y: reduce ? 0 : atTop ? -10 : 10, scale: reduce ? 1 : 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: reduce ? 0 : 0.45, ease: EASE } }}
-              exit={{ opacity: 0, y: reduce ? 0 : atTop ? -6 : 6, transition: { duration: reduce ? 0 : 0.25, ease: EASE } }}
+              exit={{ opacity: 0, y: reduce ? 0 : atTop ? -6 : 6, pointerEvents: "none", transition: { duration: reduce ? 0 : 0.25, ease: EASE } }}
               onPointerEnter={(e) => e.pointerType === "mouse" && hold(true)}
               onPointerLeave={(e) => e.pointerType === "mouse" && hold(false)}
               // keyboard focus holds it (a tap on "Detalji" leaves focus on the button: that must not keep it forever)

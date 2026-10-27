@@ -105,6 +105,7 @@ export function CoachMarks({
   touch,
   insetsRef,
   selKey = null,
+  aboveDock = false,
   onNext,
   onSkip,
 }: {
@@ -120,6 +121,11 @@ export function CoachMarks({
   insetsRef: RefObject<Insets>;
   /** the selected element (the card looks again when it changes) */
   selKey?: string | null;
+  /**
+   * phone, the 3D view with its small bottom bar (phone/PhoneBar): the card rests just above the bar, over the kitchen's
+   * lower edge, instead of on top of the step sheet (it would cover the bar's buttons)
+   */
+  aboveDock?: boolean;
   onNext: () => void;
   onSkip: () => void;
 }) {
@@ -180,7 +186,7 @@ export function CoachMarks({
         // phone: the card never lies over the small 3D view — it rests on the top of the step sheet (the ring, the pulsing
         // "+" and the glowing labels show what it is about); a folded sheet lower than the card: as low as the screen allows
         const sheetTop = size.h - Math.max(0, ins.bottom);
-        const y = Math.max(A.y0, Math.min(sheetTop + 10, size.h - h - 10));
+        const y = aboveDock ? Math.max(A.y0, sheetTop - h - 12) : Math.max(A.y0, Math.min(sheetTop + 10, size.h - h - 10));
         root.style.transform = `translate3d(${Math.round((size.w - w) / 2)}px, ${Math.round(y)}px, 0)`;
         root.dataset.side = "none";
         ring(at);
@@ -226,7 +232,7 @@ export function CoachMarks({
       root.dataset.side = side;
       ring(at);
     },
-    [i, docked, insetsRef, see, seams, plan],
+    [i, docked, aboveDock, insetsRef, see, seams, plan],
   );
 
   useEngineView(apiRef, live, place);

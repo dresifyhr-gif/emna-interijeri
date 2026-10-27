@@ -17,7 +17,7 @@ import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode, type Re
 import { Arrow } from "@/components/ui/Button";
 import { CopyLinkButton } from "./CopyLink";
 import { useReducedMotionSafe } from "./hooks";
-import { ChevronLeft, ChevronUp, CloseIcon } from "./icons";
+import { ChevronDown, ChevronLeft, ChevronUp, CloseIcon } from "./icons";
 import { EASE, STEPS } from "./meta";
 import { PdfButton, type PdfExportApi } from "./PdfExport";
 import { PriceBlock } from "./Price";
@@ -215,6 +215,7 @@ export function MobileSheet({
   scrollRef,
   sheetRef,
   overlay,
+  onClose,
 }: ShellProps & {
   open: boolean;
   onOpen: (open: boolean) => void;
@@ -222,6 +223,11 @@ export function MobileSheet({
   covered: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
   sheetRef: RefObject<HTMLElement | null>;
+  /**
+   * the phone's 3D view (phone/PhoneBar): the sheet is opened from the bar and closes back to it — the handle (tap, or a
+   * drag down) and "Gotovo" close it instead of folding it
+   */
+  onClose?: () => void;
 }) {
   const reduce = useReducedMotionSafe();
   const drag = useRef<{ y: number; id: number } | null>(null);
@@ -244,7 +250,9 @@ export function MobileSheet({
     const dy = e.clientY - d.y;
     if (Math.abs(dy) > 28) {
       dragged.current = true;
-      onOpen(dy < 0);
+      if (onClose) {
+        if (dy > 0) onClose();
+      } else onOpen(dy < 0);
     }
   };
 
@@ -276,15 +284,26 @@ export function MobileSheet({
               dragged.current = false;
               return;
             }
-            onOpen(!open);
+            if (onClose) onClose();
+            else onOpen(!open);
           }}
-          aria-expanded={open}
-          aria-controls="studio-sheet-body"
-          aria-label={open ? "Spusti ploču s postavkama" : "Podigni ploču s postavkama"}
-          className="flex h-6 w-full touch-none items-center justify-center"
+          aria-expanded={onClose ? undefined : open}
+          aria-controls={onClose ? undefined : "studio-sheet-body"}
+          aria-label={onClose ? "Zatvori postavke i vrati se na 3D prikaz" : open ? "Spusti ploču s postavkama" : "Podigni ploču s postavkama"}
+          className={`flex w-full touch-none items-center justify-center ${onClose ? "h-10" : "h-6"}`}
         >
           <span aria-hidden="true" className="h-1 w-10 rounded-full bg-white/25" />
         </button>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-2 top-0 inline-flex h-10 items-center gap-1 rounded-full px-3 text-[12.5px] font-medium text-fg/80 transition-colors active:text-accent"
+          >
+            Gotovo
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        )}
 
         <div className="px-4 pb-3">
           <StepNav step={step} onStep={onStep} variant="mobile" />

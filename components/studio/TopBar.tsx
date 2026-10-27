@@ -9,6 +9,7 @@ import { useReducedMotionSafe } from "./hooks";
 import { CloseIcon, ListIcon, MoonIcon, SunIcon } from "./icons";
 import { EASE, STEPS } from "./meta";
 import { PdfButton, type PdfExportApi } from "./PdfExport";
+import { AiTopButton } from "./ai/AiChat";
 
 export const TOPBAR_H = { desktop: 72, mobile: 56 } as const;
 
@@ -20,6 +21,7 @@ export function TopBar({
   controls,
   onSummary,
   pdf,
+  ai,
 }: {
   desktop: boolean;
   step: number;
@@ -30,6 +32,8 @@ export function TopBar({
   onSummary: () => void;
   /** "Preuzmi PDF" (also without 3D — the PDF then has no 3D pages); null = not yet */
   pdf?: PdfExportApi | null;
+  /** "Opišite kuhinju" (AI) — only when the helper is enabled for this visitor (not on a phone: its bar has it) */
+  ai?: { onOpen: () => void; open: boolean; busy: boolean } | null;
 }) {
   // known only after mount (hooks.ts useReducedMotionSafe): the server and the hydrating render agree
   const reduce = useReducedMotionSafe();
@@ -57,21 +61,31 @@ export function TopBar({
       </div>
 
       {desktop && (
-        <motion.p
-          {...fade}
-          aria-hidden="true"
-          className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-3 whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.26em]"
-        >
-          <span className="text-accent">3D studio</span>
-          <span className="h-px w-6 bg-white/20" />
-          <span className="tabular-nums text-mut">
-            {String(step + 1).padStart(2, "0")} / {String(STEPS.length).padStart(2, "0")}
-          </span>
-          <span className="text-fg">{st.title}</span>
-        </motion.p>
+        // centred by this wrapper: framer-motion writes its own transform on the line itself (its y), which used to cancel
+        // the centring translate — the line started at the middle and ran into the right-hand controls. Shown only where
+        // those controls leave it room.
+        <div aria-hidden="true" className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 xl:block">
+          <motion.p {...fade} className="flex items-center gap-3 whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.26em]">
+            <span className="text-accent">3D studio</span>
+            <span className="h-px w-6 bg-white/20" />
+            <span className="tabular-nums text-mut">
+              {String(step + 1).padStart(2, "0")} / {String(STEPS.length).padStart(2, "0")}
+            </span>
+            <span className="text-fg">{st.title}</span>
+          </motion.p>
+        </div>
       )}
 
       <div className="pointer-events-auto flex items-center gap-2">
+        {ai && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: reduce ? 0 : 0.9, ease: EASE }}
+          >
+            <AiTopButton onOpen={ai.onOpen} open={ai.open} busy={ai.busy} desktop={desktop} />
+          </motion.div>
+        )}
         {pdf && (
           <motion.div
             initial={{ opacity: 0, y: -6 }}
