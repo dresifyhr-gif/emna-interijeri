@@ -1,13 +1,16 @@
 import Link from "next/link";
 import { Reveal } from "@/components/ui/Reveal";
+import { showTodos } from "@/components/site/Fill";
 
 /**
- * Honest placeholder where project photos will go: an empty image frame drawn the way
+ * Reminder where the owner's project photos will go: an empty image frame drawn the way
  * architects mark a picture to come (crop marks + diagonals). No stock imagery.
+ * Like <Fill>, it shows in development only — customers never see an empty frame.
  */
-export function SoonNote({ subject }: { subject: string }) {
+export function SoonNote({ subject, className = "" }: { subject: string; className?: string }) {
+  if (!showTodos) return null;
   return (
-    <Reveal>
+    <Reveal className={className}>
       <div className="relative grid items-center gap-8 rounded-[20px] border border-dashed border-graphite/20 bg-card/60 p-6 sm:grid-cols-[minmax(0,220px)_1fr] sm:p-8">
         <svg viewBox="0 0 220 150" aria-hidden className="w-full max-w-[220px] text-bronze" fill="none" stroke="currentColor" strokeWidth="1">
           <path d="M18 18h184v114H18Z" strokeOpacity=".45" />

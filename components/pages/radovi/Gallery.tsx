@@ -1,16 +1,16 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { gallery, styleLabel, type Photo, type Shape, type Style } from "@/lib/gallery";
+import { kitchenCount, photoCount, projects, styleLabel, type Project, type Shape, type Style } from "@/lib/gallery";
 import { Lightbox } from "./Lightbox";
 import { shapeLabel } from "./labels";
 
 const EASE = [0.2, 0.8, 0.2, 1] as const;
 const STYLES = Object.keys(styleLabel) as Style[];
 // only shapes that actually appear in the gallery get a filter
-const SHAPES = (["ravna", "L", "U", "otok"] as Shape[]).filter((s) => gallery.some((p) => p.shape === s));
+const SHAPES = (["ravna", "L", "U", "otok"] as Shape[]).filter((s) => projects.some((p) => p.shape === s));
 
 type Cell = { span: 4 | 5 | 6 | 7; stretch: boolean };
 
@@ -84,30 +84,53 @@ function Chip({
   );
 }
 
+const kitchenFromHash = () => {
+  const id = decodeURIComponent(window.location.hash.slice(1));
+  return projects.some((p) => p.id === id) ? id : null;
+};
+
+/** One card per kitchen (its cover photo and how many photos it has); the lightbox browses that kitchen's photos. */
 export function Gallery() {
   const reduce = useReducedMotion();
   const [style, setStyle] = useState<Style | null>(null);
   const [shape, setShape] = useState<Shape | null>(null);
-  const [open, setOpen] = useState<number | null>(null);
+  const [open, setOpen] = useState<{ id: string; index: number } | null>(null);
   const thumbs = useRef(new Map<string, HTMLButtonElement>());
 
   const items = useMemo(
-    () => gallery.filter((p) => (!style || p.style === style) && (!shape || p.shape === shape)),
+    () => projects.filter((p) => (!style || p.style === style) && (!shape || p.shape === shape)),
     [style, shape],
   );
   const cells = useMemo(() => layout(items.length), [items.length]);
+  const openProject: Project | undefined = open ? projects.find((p) => p.id === open.id) : undefined;
 
   const styleCount = (s: Style | null) =>
-    gallery.filter((p) => (!s || p.style === s) && (!shape || p.shape === shape)).length;
+    projects.filter((p) => (!s || p.style === s) && (!shape || p.shape === shape)).length;
   const shapeCount = (s: Shape | null) =>
-    gallery.filter((p) => (!s || p.shape === s) && (!style || p.style === style)).length;
+    projects.filter((p) => (!s || p.shape === s) && (!style || p.style === style)).length;
+
+  // "/radovi#<kuhinja>" (the homepage tiles) opens that kitchen; after the first paint, so the server HTML stays the same
+  useEffect(() => {
+    const fromHash = () => {
+      const id = kitchenFromHash();
+      if (id) setOpen({ id, index: 0 });
+    };
+    const raf = requestAnimationFrame(fromHash);
+    window.addEventListener("hashchange", fromHash);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("hashchange", fromHash);
+    };
+  }, []);
 
   const close = useCallback(() => {
-    const src = open !== null ? items[open]?.src : undefined;
+    const id = open?.id;
     setOpen(null);
-    // hand focus back to the photo that was being viewed
-    if (src) requestAnimationFrame(() => thumbs.current.get(src)?.focus());
-  }, [open, items]);
+    // a reload should not reopen the kitchen the visitor just closed
+    if (id && kitchenFromHash() === id) history.replaceState(history.state, "", window.location.pathname + window.location.search);
+    // hand focus back to the kitchen that was being viewed
+    if (id) requestAnimationFrame(() => thumbs.current.get(id)?.focus());
+  }, [open]);
 
   const reset = () => {
     setStyle(null);
@@ -150,8 +173,8 @@ export function Gallery() {
             })}
           </div>
         </div>
-        <p className="text-[13px] text-taupe" aria-live="polite">
-          Prikazano <span className="tabular-nums text-graphite">{items.length}</span> od {gallery.length} fotografija
+        <p className="text-[13px] text-taupe lg:shrink-0" aria-live="polite">
+          Prikazano <span className="tabular-nums text-graphite">{items.length}</span> od {kitchenCount(projects.length)}
         </p>
       </div>
 
@@ -165,31 +188,43 @@ export function Gallery() {
           exit={reduce ? undefined : { opacity: 0, y: -10, transition: { duration: 0.25, ease: EASE } }}
           transition={{ duration: 0.5, ease: EASE }}
         >
-          {items.map((p: Photo, i) => {
+          {items.map((p, i) => {
             const cell = cells[i];
+            const n = p.photos.length;
             return (
-              <li key={p.src} className={`col-span-1 ${spanClass[cell.span]}`}>
+              <li key={p.id} id={p.id} className={`col-span-1 scroll-mt-28 ${spanClass[cell.span]}`}>
                 <figure className="flex h-full flex-col">
                   <button
                     type="button"
                     ref={(el) => {
-                      if (el) thumbs.current.set(p.src, el);
-                      else thumbs.current.delete(p.src);
+                      if (el) thumbs.current.set(p.id, el);
+                      else thumbs.current.delete(p.id);
                     }}
-                    onClick={() => setOpen(i)}
-                    aria-label={`Otvori fotografiju: ${p.title}`}
+                    onClick={() => setOpen({ id: p.id, index: 0 })}
+                    aria-label={`Otvori kuhinju: ${p.title}${n > 1 ? `, ${photoCount(n)}` : ""}`}
                     className={`group relative block aspect-[4/3] w-full overflow-hidden rounded-[18px] bg-hairline ${
                       cell.stretch ? "lg:aspect-auto lg:flex-1" : ""
                     }`}
                   >
                     <Image
-                      src={p.src}
+                      src={p.cover.src}
                       alt={p.title}
                       fill
                       sizes={sizesFor[cell.span]}
                       loading={i < 2 ? "eager" : "lazy"}
                       className="object-cover transition-transform duration-[1400ms] ease-premium group-hover:scale-[1.035]"
                     />
+                    {n > 1 && (
+                      <span
+                        aria-hidden
+                        className="absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-white/[0.88] px-3 py-1.5 text-[11.5px] font-medium text-graphite backdrop-blur-md sm:bottom-3.5 sm:left-3.5 sm:text-[12px]"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className="text-taupe">
+                          <path d="M3.5 3.5V1.5h9v8h-2M1.5 4.5h9v8h-9Z" stroke="currentColor" strokeWidth="1.2" />
+                        </svg>
+                        {photoCount(n)}
+                      </span>
+                    )}
                     <span
                       aria-hidden
                       className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.88] text-graphite opacity-0 backdrop-blur-md transition-opacity duration-500 ease-premium group-hover:opacity-100 group-focus-visible:opacity-100"
@@ -215,7 +250,7 @@ export function Gallery() {
 
       {items.length === 0 && (
         <div className="mt-10 rounded-[20px] border border-dashed border-graphite/20 p-10 text-center">
-          <p className="heading text-2xl tracking-head-sm">Nema fotografija za ovaj odabir.</p>
+          <p className="heading text-2xl tracking-head-sm">Nema kuhinja za ovaj odabir.</p>
           <button
             type="button"
             onClick={reset}
@@ -227,8 +262,14 @@ export function Gallery() {
       )}
 
       <AnimatePresence>
-        {open !== null && items[open] && (
-          <Lightbox key="lightbox" items={items} index={open} onIndex={setOpen} onClose={close} />
+        {open && openProject && (
+          <Lightbox
+            key="lightbox"
+            project={openProject}
+            index={open.index}
+            onIndex={(index) => setOpen({ id: openProject.id, index })}
+            onClose={close}
+          />
         )}
       </AnimatePresence>
     </div>

@@ -4,16 +4,18 @@ import { PageHero } from "@/components/pages/PageHero";
 import { CtaPair } from "@/components/pages/CtaPair";
 import { JsonLd } from "@/components/pages/JsonLd";
 import { Accordion } from "@/components/pages/pitanja/Accordion";
-import { allFaqs, faq } from "@/components/pages/pitanja/faq";
+import { allFaqs, faq, type Faq } from "@/components/pages/pitanja/faq";
 import { pageMetadata } from "@/components/pages/meta";
+import { showTodos } from "@/components/site/Fill";
 
 export const metadata: Metadata = pageMetadata({
-  title: "Česta pitanja",
+  title: "Česta pitanja o kuhinjama po mjeri",
   description:
     "Odgovori na najčešća pitanja o kuhinjama, ormarima i interijerima po mjeri: suradnja, oblici kuhinja, materijali, cijene i 3D studio.",
   path: "/pitanja",
 });
 
+// the question and the answer only, never the owner's `todo` note
 const faqJsonLd = {
   "@context": "https://schema.org",
   "@type": "FAQPage",
@@ -23,6 +25,13 @@ const faqJsonLd = {
     acceptedAnswer: { "@type": "Answer", text: f.a },
   })),
 };
+
+/**
+ * What the client Accordion receives. The owner's "potvrditi …" notes (`todo`) are serialized into the page with
+ * everything else a client component gets, so they are passed only where <Fill> shows them: in development.
+ */
+const forClient = (items: Faq[]): Faq[] =>
+  items.map(({ id, q, a, link, todo }) => ({ id, q, a, ...(link && { link }), ...(showTodos && todo && { todo }) }));
 
 export default function PitanjaPage() {
   return (
@@ -73,7 +82,7 @@ export default function PitanjaPage() {
                     </h2>
                   </div>
                 </Reveal>
-                <Accordion items={g.items} groupId={g.id} />
+                <Accordion items={forClient(g.items)} groupId={g.id} />
               </section>
             ))}
           </div>
@@ -84,7 +93,7 @@ export default function PitanjaPage() {
         eyebrow="Niste našli odgovor?"
         title={
           <>
-            Pitajte nas
+            Pitajte nas{" "}
             <br />
             <span className="text-taupe">izravno.</span>
           </>
