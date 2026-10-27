@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Inter_Tight } from "next/font/google";
 import { site } from "@/lib/site";
+import { SHARE_IMAGE } from "@/components/pages/meta";
 import "./globals.css";
 
 /**
@@ -8,9 +9,14 @@ import "./globals.css";
  * Inter Tight for every heading, number and title (Tailwind `font-head`, and `font-display` / `.display`, which now
  * point at it too), Inter for text. Inter Tight is the display-size cut of Inter — the same letterforms, spaced for
  * large sizes — with full latin-ext (č ć đ š ž). Variable weight. (The kitchen PDF embeds its own fonts, lib/pdf.)
+ *
+ * Preloaded is only what a first screen needs (174 KB, was 262 KB): Inter in latin + latin-ext (Croatian body text uses
+ * both) and Inter Tight in latin (headlines and prices). Inter Tight's latin-ext (č ć đ š ž in a heading, 88 KB) is
+ * still declared — `subsets` only picks the preloads — and loads when a heading needs it; until then those letters
+ * show the size-matched Arial fallback next/font generates (adjustFontFallback, on by default), so nothing moves.
  */
 const head = Inter_Tight({
-  subsets: ["latin", "latin-ext"],
+  subsets: ["latin"],
   variable: "--font-head",
   display: "swap",
 });
@@ -22,6 +28,7 @@ const sans = Inter({
   display: "swap",
 });
 
+// icons: app/favicon.ico, app/icon.png and app/apple-icon.png (Next's file convention writes the <link> tags)
 export const metadata: Metadata = {
   metadataBase: new URL(site.url),
   title: {
@@ -29,15 +36,15 @@ export const metadata: Metadata = {
     template: `%s · ${site.name}`,
   },
   description: site.description,
-  icons: { icon: "/favicon.ico", apple: "/apple-touch-icon.png" },
   openGraph: {
     type: "website",
     locale: site.locale,
     siteName: site.name,
     title: `${site.name} · Kuhinje i namještaj po mjeri`,
     description: site.description,
-    images: [{ url: "/og-image.jpg", width: 1200, height: 630 }],
+    images: [SHARE_IMAGE],
   },
+  twitter: { card: "summary_large_image" },
 };
 
 export const viewport: Viewport = {

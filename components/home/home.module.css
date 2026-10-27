@@ -350,6 +350,11 @@
   animation: glow 2.6s ease-in-out infinite;
 }
 
+/* "Pokrenite 3D" after the tap, until the first frame: the label breathes like the live dot */
+.loading {
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
 @keyframes breathe {
   0%,
   100% {
@@ -439,6 +444,7 @@
   }
   .liveDot,
   .liveDot::after,
+  .loading,
   .cue::after {
     animation: none;
   }
